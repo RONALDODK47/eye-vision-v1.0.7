@@ -1,0 +1,135 @@
+import type { ActiveTab } from '../contabilfacil/types';
+import { pingBankingCalendarApi } from './bankingCalendarService';
+import { pingBcbApi } from './bcbService';
+import { getEmbeddedSerie11Count } from './bcbSeriesStorage';
+import { pingReceitaFederalApi } from './receitaFederalApi';
+import { pingSefazIcmsApi } from './sefazIcmsApi';
+import { pingSpedReceitaApi } from './spedReceitaApi';
+import { pingGeminiApi } from './geminiApi';
+
+const PING_TIMEOUT_MS = 2_500;
+
+async function pingWithTimeout(ping: () => Promise<boolean>, timeoutMs = PING_TIMEOUT_MS): Promise<boolean> {
+  try {
+    return await Promise.race([
+      ping(),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } catch {
+    return false;
+  }
+}
+
+export type ApiStatusValue = 'checking' | 'online' | 'offline';
+
+export interface ApiStatusEntry {
+  id: string;
+  /** Rótulo curto no cabeçalho (ex.: BCB, PDF). */
+  label: string;
+  /** Porta local, “remoto” ou “API” (Gemini via Vite). */
+  port?: string;
+  ping: () => Promise<boolean>;
+  timeoutMs?: number;
+}
+
+/** Todas as integrações HTTP usadas pelo sistema (ordem de exibição no cabeçalho). */
+export const API_STATUS_REGISTRY: ApiStatusEntry[] = [
+  {
+    id: 'bcb',
+    label: 'BCB',
+    port: 'remoto',
+    ping: async () => {
+      if (await pingBcbApi()) return true;
+      /** PRONAMPE / Selic Over: pacote embutido no build permite calcular sem API ao vivo. */
+      return getEmbeddedSerie11Count() > 0;
+    },
+  },
+  {
+    id: 'calendario',
+    label: 'Calendário',
+    port: 'remoto',
+    ping: pingBankingCalendarApi,
+  },
+  {
+    id: 'receita-federal',
+    label: 'Receita Federal',
+    port: '8780',
+    ping: pingReceitaFederalApi,
+  },
+  {
+    id: 'sefaz-icms',
+    label: 'SEFAZ ICMS',
+    port: '8780',
+    ping: pingSefazIcmsApi,
+  },
+  {
+    id: 'sped',
+    label: 'SPED',
+    port: '8780',
+    ping: pingSpedReceitaApi,
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini AI',
+    ping: pingGeminiApi,
+    timeoutMs: 8_000,
+  },
+];
+
+/** Escopo lógico de APIs — uma aba do launcher pode mapear para o mesmo escopo. */
+export type ApiStatusScope = 'manager' | 'pricing' | 'debug' | 'none';
+
+/** IDs de API visíveis por escopo (ordem preservada do registry). */
+export const API_IDS_BY_SCOPE: Record<Exclude<ApiStatusScope, 'none'>, readonly string[]> = {
+  manager: ['bcb', 'calendario', 'receita-federal', 'sped', 'gemini'],
+  pricing: ['receita-federal', 'sefaz-icms'],
+  debug: API_STATUS_REGISTRY.map((e) => e.id),
+};
+
+export function apiStatusScopeForTab(tab: ActiveTab): ApiStatusScope {
+  switch (tab) {
+    case 'manager':
+      return 'manager';
+    case 'pricing':
+      return 'pricing';
+    case 'debug':
+      return 'debug';
+    case 'admin':
+    case 'gestao':
+      return 'none';
+    default:
+      return 'none';
+  }
+}
+
+export function getApiStatusRegistryForTab(
+  tab: ActiveTab,
+  registry: ApiStatusEntry[] = API_STATUS_REGISTRY,
+): ApiStatusEntry[] {
+  const scope = apiStatusScopeForTab(tab);
+  if (scope === 'none') return [];
+  const allowed = new Set<string>(API_IDS_BY_SCOPE[scope]);
+  return registry.filter((entry) => allowed.has(entry.id));
+}
+
+export type ApiStatusMap = Record<string, ApiStatusValue>;
+
+export async function probeAllApiStatuses(
+  registry: ApiStatusEntry[] = API_STATUS_REGISTRY,
+): Promise<ApiStatusMap> {
+  const results = await Promise.all(
+    registry.map(async (entry) => {
+      const ok = await pingWithTimeout(() => entry.ping(), entry.timeoutMs ?? PING_TIMEOUT_MS);
+      return [entry.id, ok ? 'online' : 'offline'] as const;
+    }),
+  );
+  return Object.fromEntries(results) as ApiStatusMap;
+}
+
+export function initialApiStatusMap(
+  registry: ApiStatusEntry[] = API_STATUS_REGISTRY,
+): ApiStatusMap {
+  return Object.fromEntries(registry.map((e) => [e.id, 'checking'])) as ApiStatusMap;
+}

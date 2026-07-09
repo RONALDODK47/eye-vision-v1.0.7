@@ -1,0 +1,6 @@
+{
+  "name": "Simulador Master BCB",
+  "description": "Calculadora profissional de empréstimos (SAC/Price) com integração ao BCB para métricas Selic/CDI, cálculo avançado de carência e exportação PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

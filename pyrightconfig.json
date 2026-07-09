@@ -1,0 +1,19 @@
+{
+  "include": ["bank_pdf_extract"],
+  "exclude": [
+    "**/node_modules",
+    "**/dist",
+    "**/.venv/Lib",
+    "flowmind-rpa",
+    "ia flowmindo",
+    "(1)"
+  ],
+  "ignore": [
+    "**/flowmind-rpa/**",
+    "**/ia flowmindo/**",
+    "**/Nova pasta/**",
+    "C:/Users/ronaldo.silva/Desktop/Nova pasta/**"
+  ],
+  "pythonVersion": "3.11",
+  "reportMissingModuleSource": "none"
+}

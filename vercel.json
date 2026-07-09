@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/bcb/:path*",
+      "destination": "https://api.bcb.gov.br/:path*"
+    }
+  ]
+}

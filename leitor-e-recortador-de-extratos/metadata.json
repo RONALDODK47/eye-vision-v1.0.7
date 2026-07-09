@@ -1,0 +1,6 @@
+{
+  "name": "Leitor e Recortador de Extratos",
+  "description": "Importe PDFs ou imagens de extratos, defina as colunas de data, histórico e valor, visualize os recortes visuais exatos de cada linha e exporte os dados organizados para Excel ou CSV sem usar IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

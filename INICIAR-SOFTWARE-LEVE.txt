@@ -1,0 +1,19 @@
+EYE VISION - SOFTWARE LEVE (COM MODO CAPTURA INSTANTANEA)
+
+Pasta:
+- EYE-VISION-SOFTWARE-LEVE
+
+Como rodar:
+1) Abra esta pasta no Cursor/VSCode.
+2) No terminal, execute:
+   npm install
+3) Em seguida execute:
+   npm run dev
+
+Observacoes desta versao:
+- Extrato em modo captura instantanea (sem processamento pesado no clique de extracao).
+- Uso por colunas + delimitador + linhas ignoradas.
+- Pre-processamento do OCR de extrato no cliente desativado (skipClientPreprocess=true).
+
+Importante:
+- Se quiser extrair varias paginas em modo instantaneo, abra/navegue nas paginas para capturar cache.

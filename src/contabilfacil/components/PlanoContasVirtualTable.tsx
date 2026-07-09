@@ -1,0 +1,220 @@
+import { memo, useMemo, type ReactNode, type RefObject, type UIEventHandler } from 'react';
+import { Trash2 } from 'lucide-react';
+import { cn } from '../lib/utils';
+import {
+  DEFAULT_ROW_HEIGHT_PX,
+  useVirtualWindow,
+  VirtualSpacerRow,
+} from '../lib/useVirtualWindow';
+import {
+  planoNivelCodeClass,
+  planoNivelDescClass,
+  planoNivelIndentClass,
+} from '../logic/planoContasMapper';
+
+export const PLANO_CONTAS_TABLE_COLS = 6;
+
+export interface PlanoContaRow {
+  code: string;
+  name: string;
+  codigoReduzido?: string;
+  tipo?: 'S' | 'A';
+  nivel?: number;
+}
+
+interface PlanoContasVirtualTableProps {
+  rows: PlanoContaRow[];
+  codeLengthToLevel: (code: string) => number;
+  onDelete: (code: string) => void;
+}
+
+const TH =
+  'px-3 py-3 border-r border-brand-border bg-brand-sidebar text-[10px] font-bold uppercase tracking-wide whitespace-nowrap';
+
+function PlanoTableColGroup() {
+  return (
+    <colgroup>
+      <col />
+      <col />
+      <col />
+      <col />
+      <col />
+      <col />
+    </colgroup>
+  );
+}
+
+const PlanoRow = memo(function PlanoRow({
+  acc,
+  codeLengthToLevel,
+  onDelete,
+}: {
+  acc: PlanoContaRow;
+  codeLengthToLevel: (code: string) => number;
+  onDelete: (code: string) => void;
+}) {
+  const nivel = acc.nivel ?? codeLengthToLevel(acc.code);
+  return (
+    <tr className="technical-grid-row h-9 max-h-9">
+      <td className="px-3 py-2 border-r border-brand-border/10 text-center text-[10px] text-slate-500 whitespace-nowrap">
+        {acc.codigoReduzido?.trim() ? acc.codigoReduzido : '—'}
+      </td>
+      <td
+        className={cn(
+          'px-3 py-2 border-r border-brand-border/10 whitespace-nowrap',
+          planoNivelIndentClass(nivel),
+          planoNivelCodeClass(nivel),
+        )}
+      >
+        {acc.code}
+      </td>
+      <td
+        className={cn(
+          'px-3 py-2 border-r border-brand-border/10 italic text-brand-text truncate',
+          planoNivelIndentClass(nivel),
+          planoNivelDescClass(nivel),
+        )}
+        title={acc.name}
+      >
+        {acc.name}
+      </td>
+      <td className="px-3 py-2 border-r border-brand-border/10 text-center">
+        {acc.tipo === 'S' ? (
+          <span className="px-1.5 py-0.5 text-[8px] font-black bg-amber-100 text-amber-800 border border-amber-300">
+            S
+          </span>
+        ) : acc.tipo === 'A' ? (
+          <span className="px-1.5 py-0.5 text-[8px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+            A
+          </span>
+        ) : (
+          <span className="text-[10px] text-slate-400">—</span>
+        )}
+      </td>
+      <td className="px-3 py-2 border-r border-brand-border/10 text-center text-[10px] text-slate-500">
+        {nivel ?? '—'}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <button
+          type="button"
+          onClick={() => onDelete(acc.code)}
+          className="text-red-600 hover:text-red-800 p-1"
+          aria-label={`Excluir conta ${acc.code}`}
+        >
+          <Trash2 size={12} />
+        </button>
+      </td>
+    </tr>
+  );
+});
+
+function TableHead() {
+  return (
+    <thead className="technical-grid-header sticky top-0 z-10">
+      <tr>
+        <th className={cn(TH, 'w-[7.5rem] text-center')}>Código Reduzido</th>
+        <th className={cn(TH, 'w-[11rem]')}>Código de Classificação</th>
+        <th className={TH}>Descrição</th>
+        <th className={cn(TH, 'w-[4.5rem] text-center')}>Tipo</th>
+        <th className={cn(TH, 'w-[4.5rem] text-center')}>Nível</th>
+        <th className={cn(TH, 'w-[4.5rem] text-right border-r-0')}>Ação</th>
+      </tr>
+    </thead>
+  );
+}
+
+function PlanoTableShell({
+  children,
+  footer,
+  scrollRef,
+  onScroll,
+}: {
+  children: ReactNode;
+  footer?: ReactNode;
+  scrollRef?: RefObject<HTMLDivElement | null>;
+  onScroll?: UIEventHandler<HTMLDivElement>;
+}) {
+  return (
+    <div ref={scrollRef} className="module-table-viewport" onScroll={onScroll}>
+      <table className="w-full min-w-[920px] table-fixed text-left text-sm border-collapse">
+        <PlanoTableColGroup />
+        <TableHead />
+        {children}
+      </table>
+      {footer}
+    </div>
+  );
+}
+
+export default memo(function PlanoContasVirtualTable({
+  rows,
+  codeLengthToLevel,
+  onDelete,
+}: PlanoContasVirtualTableProps) {
+  const resetKey = useMemo(() => `${rows.length}:${rows[0]?.code ?? ''}`, [rows]);
+  const virtual = useVirtualWindow(rows.length, {
+    rowHeightPx: DEFAULT_ROW_HEIGHT_PX,
+    resetKey,
+  });
+
+  if (rows.length === 0) {
+    return (
+      <PlanoTableShell>
+        <tbody>
+          <tr>
+            <td
+              colSpan={PLANO_CONTAS_TABLE_COLS}
+              className="py-20 text-center font-bold text-slate-400 uppercase tracking-widest text-[10px] leading-relaxed px-6"
+            >
+              Sem Plano Carregado. Adicione ou importe o plano de contas para habilitar as demais telas do
+              Extrato Vision.
+            </td>
+          </tr>
+        </tbody>
+      </PlanoTableShell>
+    );
+  }
+
+  const visibleRows = virtual.useVirtual
+    ? rows.slice(virtual.startIndex, virtual.endIndex)
+    : rows;
+
+  const body = (
+    <tbody className="font-mono text-[11px] divide-y divide-brand-border/10">
+      {virtual.useVirtual && (
+        <VirtualSpacerRow colSpan={PLANO_CONTAS_TABLE_COLS} height={virtual.paddingTop} />
+      )}
+      {visibleRows.map((acc, i) => {
+        const index = virtual.useVirtual ? virtual.startIndex + i : i;
+        return (
+          <PlanoRow
+            key={`${acc.code}-${index}`}
+            acc={acc}
+            codeLengthToLevel={codeLengthToLevel}
+            onDelete={onDelete}
+          />
+        );
+      })}
+      {virtual.useVirtual && (
+        <VirtualSpacerRow colSpan={PLANO_CONTAS_TABLE_COLS} height={virtual.paddingBottom} />
+      )}
+    </tbody>
+  );
+
+  const footer = (
+    <p className="text-[9px] p-2 border-t border-brand-border/30 text-slate-500 font-mono sticky bottom-0 bg-brand-bg/95">
+      {rows.length.toLocaleString('pt-BR')} conta(s)
+      {virtual.useVirtual ? ' · renderizando janela visível (modo leve)' : ''}
+    </p>
+  );
+
+  if (!virtual.useVirtual) {
+    return <PlanoTableShell footer={footer}>{body}</PlanoTableShell>;
+  }
+
+  return (
+    <PlanoTableShell scrollRef={virtual.scrollRef} onScroll={virtual.onScroll} footer={footer}>
+      {body}
+    </PlanoTableShell>
+  );
+});

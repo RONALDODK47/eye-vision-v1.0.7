@@ -1,0 +1,28 @@
+/* Escopo do embed Gestão Empresarial dentro do Eye Vision */
+html.gestao-embed-active {
+  /* páginas @gestao no embed usam tema claro */
+}
+
+.gestao-embed-root {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  background: var(--brand-bg, #f4f0ea);
+  color: var(--brand-text, #141414);
+}
+
+.gestao-embed-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.gestao-embed-main.gestao-embed-force-light {
+  background: #fff;
+}
+
+.gestao-embed-root .gestao-embed-force-light {
+  color-scheme: light;
+}

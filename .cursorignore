@@ -1,0 +1,42 @@
+# Ignorados pelo Cursor — ver .cursorignore na raiz do workspace
+# Código principal: src/ | contabilfacil/ | extratoVision/ | lib/
+
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/site-packages/
+**/*.pyd
+**/*.dll
+**/*.so
+**/*.node
+**/*.exe
+**/*.map
+
+**/dist/
+**/build/
+**/coverage/
+**/.data/
+**/.cache/
+**/test-results/
+**/playwright-report/
+
+**/test/fixtures/**
+**/*-ocr-tmp/**
+**/test/**/*.png
+**/test/**/*.jpg
+**/test/**/*.jpeg
+
+**/*.pdf
+**/*.zip
+**/*.whl
+**/*.bin
+
+**/vendor/gestao-contabil/**
+**/flowmind-rpa/**
+**/ia flowmindo/**
+**/Nova pasta/**
+
+**/bank_pdf_extract/.venv/**
+**/doc_downloader/.venv/**
