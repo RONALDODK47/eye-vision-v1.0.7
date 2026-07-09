@@ -37,10 +37,13 @@ export function resolveExtratoRowContas(row: ExtratoBankRow): ExtratoRowContas {
   return { accountDebit: deb, accountCredit: cred };
 }
 
-/** Conciliado = débito e crédito preenchidos (partida dobrada completa). */
+/** Conciliado = débito e crédito preenchidos e diferentes (partida dobrada completa). */
 export function isExtratoLancamentoConciliado(row: ExtratoBankRow): boolean {
   const { accountDebit, accountCredit } = resolveExtratoRowContas(row);
-  return Boolean(accountDebit && accountCredit);
+  if (!accountDebit || !accountCredit) return false;
+  // Domínio / placar: mesma conta nos dois lados não conta como conciliado
+  if (accountDebit.replace(/\D/g, '') === accountCredit.replace(/\D/g, '')) return false;
+  return true;
 }
 
 export function syncExtratoConciliacaoStatus<T extends ExtratoBankRow>(rows: T[]): T[] {

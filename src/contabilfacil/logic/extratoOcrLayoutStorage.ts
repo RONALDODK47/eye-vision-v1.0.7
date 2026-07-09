@@ -162,7 +162,11 @@ export function deleteExtratoOcrLayout(companyName: string, layoutId: string): v
   writeStore(companyName, store);
 }
 
-/** Grava banco + conta contábil ao importar OFX (sem mapeamento OCR). */
+/**
+ * Grava/atualiza banco + conta contábil usada na conciliação.
+ * Preferência: atualizar o layout ativo (preserva colunas/faixas),
+ * em vez de criar um layout novo e “perder” a configuração.
+ */
 export function saveExtratoBancoParaImportacao(
   companyName: string,
   bancoNome: string,
@@ -171,21 +175,29 @@ export function saveExtratoBancoParaImportacao(
   const normBanco = bancoNome.trim();
   const normConta = contaBanco.trim();
   const store = readStore(companyName);
-  const existing = store.layouts.find(
+  const byPair = store.layouts.find(
     (l) => l.bancoNome === normBanco && l.contaBanco === normConta,
   );
-  const base = existing ?? getActiveExtratoOcrLayout(companyName);
+  const active = getActiveExtratoOcrLayout(companyName);
+  // Atualiza o ativo se existir (mesmo que a conta tenha mudado) — evita layout órfão.
+  const base = byPair ?? active ?? null;
   return saveExtratoOcrLayout(companyName, {
-    id: existing?.id,
+    id: base?.id,
     bancoNome: normBanco,
     contaBanco: normConta,
     ignoreLineWords: base?.ignoreLineWords ?? '',
     semDelimitacaoVertical: base?.semDelimitacaoVertical ?? true,
     columns: base?.columns ?? [],
+    columnsNorm: base?.columnsNorm,
     faixaStart: base?.faixaStart ?? 0,
     faixaEnd: base?.faixaEnd ?? 1,
+    faixaStartNorm: base?.faixaStartNorm,
+    faixaEndNorm: base?.faixaEndNorm,
     faixaInicioMarcado: base?.faixaInicioMarcado ?? false,
     faixaFimMarcado: base?.faixaFimMarcado ?? false,
+    faixaPorPagina: base?.faixaPorPagina,
+    faixaInicioPagina: base?.faixaInicioPagina,
+    faixaFimPagina: base?.faixaFimPagina,
     imgWidth: base?.imgWidth ?? 1,
     imgHeight: base?.imgHeight ?? 1,
   });

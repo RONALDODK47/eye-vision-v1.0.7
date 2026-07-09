@@ -52,33 +52,39 @@ describe('itauExtratoProfile', () => {
     expect(saldo).toBeCloseTo(4124.73, 2);
   });
 
-  it('não marca OK sem saldo final detectável (perfil Itaú)', () => {
+  it('OK só com lançamentos — nunca exige saldo do PDF/OCR', () => {
     const res = avaliarExtratoConciliacaoItau({
       items: Array.from({ length: 10 }, () => ({ nature: 'C', value: 100 })),
-      rawRows: [{ _linhaOcr: '31/03/2026 SALDO ANTERIOR 40.844,13' }],
-      saldoAnterior: 40844.13,
-      skipped: [],
-      perfilItau: true,
-    });
-    expect(res.ok).toBe(false);
-    expect(res.mensagem).toMatch(/Saldo final do PDF não detectado/i);
-  });
-
-  it('avaliarExtratoConciliacaoItau OK quando saldo bate', () => {
-    const res = avaliarExtratoConciliacaoItau({
-      items: [
-        { nature: 'C', value: 1000 },
-        { nature: 'D', value: 500 },
-      ],
       rawRows: [
         { _linhaOcr: '31/03/2026 SALDO ANTERIOR 40.844,13' },
-        { _linhaOcr: '30/04/2026 SALDO TOTAL DISPONÍVEL DIA 41.344,13' },
+        { _linhaOcr: '30/04/2026 SALDO TOTAL DISPONÍVEL DIA 28.370,27' },
       ],
-      saldoAnterior: 40844.13,
+      saldoAnterior: 0,
       skipped: [],
       perfilItau: true,
     });
     expect(res.ok).toBe(true);
-    expect(res.saldoConciliado).toBeCloseTo(41344.13, 2);
+    expect(res.saldoFinalOcr).toBeUndefined();
+    expect(res.mensagem).not.toMatch(/OCR|PDF|diverge/i);
+  });
+
+  it('avaliarExtratoConciliacaoItau calcula Anterior + C − D (ignora saldo nativo do PDF)', () => {
+    const res = avaliarExtratoConciliacaoItau({
+      items: [
+        { nature: 'C', value: 410_455.65 },
+        { nature: 'D', value: 410_455.65 },
+      ],
+      rawRows: [
+        { _linhaOcr: '30/04/2026 SALDO TOTAL DISPONÍVEL DIA 28.370,27' },
+      ],
+      saldoAnterior: 0,
+      saldoFinalEsperado: 28_370.27,
+      skipped: [],
+      perfilItau: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.saldoConciliado).toBe(0);
+    expect(res.saldoFinalOcr).toBeUndefined();
+    expect(res.mensagem).toMatch(/Conciliação OK/i);
   });
 });

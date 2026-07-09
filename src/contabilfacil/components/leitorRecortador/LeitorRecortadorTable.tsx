@@ -216,7 +216,12 @@ export function LeitorRecortadorTable({
             .reduce((sum, r) => sum + (r.parsedValue || 0), 0)
         );
 
-        const saldoFinal = (saldoAnterior || 0) + totalEntradas - totalSaidas;
+        const saldoFinalRaw = (saldoAnterior || 0) + totalEntradas - totalSaidas;
+        // Evita -0,00 por ponto flutuante quando entradas = saídas.
+        const saldoFinal =
+          Math.abs(saldoFinalRaw) < 0.005 ? 0 : Math.round(saldoFinalRaw * 100) / 100;
+        const saldoZerado = Math.abs(saldoFinal) < 0.005;
+        const saldoPositivo = saldoFinal > 0.005;
 
         return (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 px-6 py-5 bg-white border-b border-brand-border animate-fade-in">
@@ -276,20 +281,20 @@ export function LeitorRecortadorTable({
             </div>
 
             {/* Card 4: Saldo Final */}
-            <div className={`border p-4 flex flex-col justify-between gap-2.5 transition-all shadow-[2px_2px_0_0_#141414] ${ saldoFinal >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200' }`}>
+            <div className={`border p-4 flex flex-col justify-between gap-2.5 transition-all shadow-[2px_2px_0_0_#141414] ${ saldoZerado || saldoPositivo ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200' }`}>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <div className={`w-7 h-7 flex items-center justify-center border ${ saldoFinal >= 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200' }`}>
+                  <div className={`w-7 h-7 flex items-center justify-center border ${ saldoZerado || saldoPositivo ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200' }`}>
                     <DollarSign className="w-3.5 h-3.5" />
                   </div>
                   <span className="text-[10px] font-bold text-brand-text/80 uppercase tracking-wider">Saldo Final</span>
                 </div>
-                <span className={`text-[9px] font-bold px-2 py-0.5 border ${ saldoFinal >= 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200' }`}>
-                  {saldoFinal >= 0 ? 'Positivo' : 'Devedor'}
+                <span className={`text-[9px] font-bold px-2 py-0.5 border ${ saldoZerado || saldoPositivo ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200' }`}>
+                  {saldoZerado ? 'Zerado' : saldoPositivo ? 'Positivo' : 'Devedor'}
                 </span>
               </div>
               <div className="mt-1">
-                <span className={`text-lg font-mono font-bold ${saldoFinal >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                <span className={`text-lg font-mono font-bold ${saldoZerado || saldoPositivo ? 'text-emerald-700' : 'text-rose-600'}`}>
                   R$ {saldoFinal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>

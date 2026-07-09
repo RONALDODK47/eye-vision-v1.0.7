@@ -51,7 +51,30 @@ describe('extratoPlacarTotals', () => {
     expect(calcSaldoConciliadoAteMomento(1000, rows)).toBe(1100);
   });
 
-  it('resolveSaldoFinalExtrato prioriza arquivo', () => {
+  it('calcSaldoConciliadoAteMomento fica 0 sem nenhum conciliado (não repete saldo anterior/final)', () => {
+    const rows = [
+      {
+        id: '1',
+        date: '2026-04-01',
+        description: 'PIX',
+        value: 100,
+        nature: 'C' as const,
+      },
+      {
+        id: '2',
+        date: '2026-04-02',
+        description: 'TED',
+        value: 50,
+        nature: 'D' as const,
+        accountDebit: '1000',
+        accountCredit: '1000',
+      },
+    ];
+    expect(calcSaldoConciliadoAteMomento(6268.75, rows)).toBe(0);
+    expect(calcSaldoConciliadoAteMomento(6268.75, [])).toBe(0);
+  });
+
+  it('resolveSaldoFinalExtrato sempre calcula (nunca OCR/arquivo)', () => {
     expect(
       resolveSaldoFinalExtrato({
         saldoAnterior: 1000,
@@ -59,7 +82,7 @@ describe('extratoPlacarTotals', () => {
         debitos: 50,
         saldoFinalArquivo: 2000,
       }),
-    ).toEqual({ valor: 2000, origem: 'arquivo' });
+    ).toEqual({ valor: 1050, origem: 'calculado' });
     expect(
       resolveSaldoFinalExtrato({
         saldoAnterior: 1000,
@@ -67,5 +90,15 @@ describe('extratoPlacarTotals', () => {
         debitos: 50,
       }),
     ).toEqual({ valor: 1050, origem: 'calculado' });
+  });
+
+  it('sem natureza usa sinal do valor (negativo = débito)', () => {
+    const t = sumExtratoPlacarTotais([
+      { id: '1', description: 'ENTRADA', value: 200 },
+      { id: '2', description: 'SAIDA', value: -80 },
+    ]);
+    expect(t.creditos).toBe(200);
+    expect(t.debitos).toBe(80);
+    expect(t.lancamentosConsiderados).toBe(2);
   });
 });

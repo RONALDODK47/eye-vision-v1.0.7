@@ -16,6 +16,10 @@ import {
   type ExtratoConciliacaoResumo,
 } from '../logic/ocrImportMapper';
 import {
+  mapRecorteFielRowsToImportItems,
+  rowsSaoRecorteFiel,
+} from '../logic/extratoRecorteFielImport';
+import {
   extratoRowContemPalavraIgnorada,
   extratoHistoricoPreferidoDaLinhaOcr,
   inferDescricaoFromLinhaOcr,
@@ -636,6 +640,44 @@ export default function DataIngestionBox({
 
     const userIgnoreWords = parseOcrIgnoreLineWords(getOcrUserSettings().ignoreLineWords);
     const extratoRecorteLiteral = dataType === 'extrato';
+    // Recorte do leitor: mesmos lançamentos/Entradas/Saídas do placar → conciliação 1:1.
+    if (dataType === 'extrato' && rowsSaoRecorteFiel(rows)) {
+      const fiel = mapRecorteFielRowsToImportItems(rows, meta);
+      if (fiel.items.length === 0) {
+        const errText = 'Nenhum lançamento válido no recorte para conciliação.';
+        setErrorMsg(errText);
+        notifyValidationIssue('ocr', errText);
+        return;
+      }
+      onImport(fiel.items, fiel.saldoAnteriorDetectado);
+      setImportedLogs(fiel.logs);
+      setSuccessMsg(
+        `OCR CONCLUÍDO! ${fiel.items.length} registro(s) importado(s) (recorte fiel). ✓ ${fiel.conciliacao.mensagem}`,
+      );
+      onExtratoConciliacao?.(fiel.conciliacao);
+      onExtratoGeminiAuditStart?.();
+      void runExtratoGeminiAudit({
+        items: fiel.items,
+        skipped: [],
+        saldoAnterior: fiel.saldoAnteriorDetectado,
+        company: selectedCompany,
+        fileName: ocrFileName,
+      }).then((result) => {
+        onExtratoGeminiAudit?.(result);
+        if (result.ok && (result.summary || result.relatorio)) {
+          const hasErrors = geminiAuditHasCriticalIssues(result);
+          notifyAiInsight({
+            source: 'gemini-extrato',
+            message: hasErrors
+              ? `⚠️ ${geminiAuditExecutiveMessage(result)}`
+              : `💡 ${geminiAuditExecutiveMessage(result)}`,
+            severity: hasErrors ? 'warning' : 'info',
+            dedupeKey: `gemini-extrato-${fiel.items.length}-${(result.summary ?? result.relatorio ?? '').slice(0, 40)}`,
+          });
+        }
+      });
+      return;
+    }
     const mapped =
       dataType === 'plano'
         ? mapOcrRowsToImportItemsWithPlanoInfer(dataType, rows)
@@ -658,8 +700,9 @@ export default function DataIngestionBox({
                   ),
                   extratoPreserveSegmentRows: true,
                   extratoLiteralMode: true,
-                  extratoConciliacaoRawRows: meta?.conciliacaoRawRows,
-                  extratoSaldoFinalEsperado: meta?.saldoFinalEsperado ?? undefined,
+                  // Placar/OK: só lançamentos (Anterior + C − D). Não passa saldo de PDF/OCR.
+                  extratoConciliacaoRawRows: undefined,
+                  extratoSaldoFinalEsperado: undefined,
                   extratoSaldoAnteriorEsperado: meta?.saldoAnterior ?? undefined,
                 }
               : undefined,

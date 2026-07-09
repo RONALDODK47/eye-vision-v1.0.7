@@ -200,14 +200,19 @@ export function extrairSaldoFinalDisponivelDasRows(rows: OcrExtratoRow[]): numbe
   return undefined;
 }
 
-/** Avalia conciliação pós-import (Anterior + C − D vs saldo final OCR). */
+/**
+ * Avalia conciliação pós-import só com lançamentos:
+ * Anterior + créditos − débitos. Nunca compara com saldo do PDF/OCR.
+ */
 export function avaliarExtratoConciliacaoItau(params: {
   items: Array<{ nature?: string; value?: number }>;
   rawRows?: GenericOcrRow[];
   conciliacaoRawRows?: GenericOcrRow[];
   saldoAnterior?: number;
+  /** @deprecated Ignorado — não usa saldo de arquivo/OCR. */
   saldoFinalEsperado?: number;
   skipped?: ExtratoImportSkippedEntry[];
+  /** @deprecated Ignorado. */
   toleranciaSaldoFinal?: number;
   perfilItau?: boolean;
 }): ExtratoConciliacaoResumo {
@@ -216,16 +221,14 @@ export function avaliarExtratoConciliacaoItau(params: {
     rawRows = [],
     conciliacaoRawRows,
     saldoAnterior: saParam,
-    saldoFinalEsperado,
     skipped = [],
-    toleranciaSaldoFinal = ITAU_EXTRATO_SALDO_FINAL_TOLERANCE,
     perfilItau = detectItauExtratoFromRows(conciliacaoRawRows ?? rawRows),
   } = params;
 
   const rowsParaSaldo = (conciliacaoRawRows ?? rawRows) as OcrExtratoRow[];
 
   const saldoAnterior =
-    saParam != null && saParam > 0.0001
+    saParam != null && Number.isFinite(saParam)
       ? saParam
       : rowsParaSaldo.length > 0
         ? extrairSaldoAnteriorDasRows(rowsParaSaldo)
@@ -237,55 +240,26 @@ export function avaliarExtratoConciliacaoItau(params: {
   const debitos = items
     .filter((i) => i.nature === 'D')
     .reduce((s, i) => s + Math.abs(Number(i.value) || 0), 0);
-  const saldoConciliado = Math.round((saldoAnterior + creditos - debitos) * 100) / 100;
-
-  const saldoFinalOcr =
-    saldoFinalEsperado != null && saldoFinalEsperado > 0.0001
-      ? saldoFinalEsperado
-      : rowsParaSaldo.length > 0
-        ? extrairSaldoFinalDisponivelDasRows(rowsParaSaldo)
-        : undefined;
-
-  const deltaSaldoFinal =
-    saldoFinalOcr != null
-      ? Math.round(Math.abs(saldoConciliado - saldoFinalOcr) * 100) / 100
-      : undefined;
+  const saldoConciliadoRaw = saldoAnterior + creditos - debitos;
+  const saldoConciliado =
+    Math.abs(saldoConciliadoRaw) < 0.005
+      ? 0
+      : Math.round(saldoConciliadoRaw * 100) / 100;
 
   const alertasCriticos = skipped.filter(
     (e) => (e.severity ?? 'error') === 'error',
   ).length;
 
-  const saldoBate =
-    saldoFinalOcr != null &&
-    Math.abs(saldoConciliado - saldoFinalOcr) <= toleranciaSaldoFinal;
-
-  const saldoFinalIndeterminado =
-    perfilItau && saldoFinalOcr == null && items.length >= 8;
-
-  const ok =
-    items.length >= 1 &&
-    alertasCriticos === 0 &&
-    saldoBate &&
-    !saldoFinalIndeterminado &&
-    (!perfilItau || saldoAnterior >= 100);
+  // OK = há lançamentos. Alertas de linha vão no LOG, sem bloquear por saldo de PDF.
+  const ok = items.length >= 1;
 
   let mensagem: string;
-  if (ok) {
-    mensagem =
-      saldoFinalOcr != null
-        ? `Conciliação OK — saldo R$ ${saldoConciliado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (OCR final R$ ${saldoFinalOcr.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`
-        : `Conciliação OK — ${items.length} lançamento(s), saldo R$ ${saldoConciliado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
-  } else if (saldoFinalIndeterminado) {
-    mensagem =
-      'Saldo final do PDF não detectado — reimporte ou confira lançamentos faltantes (SISPAG/TED multilinha)';
-  } else if (alertasCriticos > 0) {
-    mensagem = `${alertasCriticos} alerta(s) crítico(s) no LOG — revise linhas sem histórico`;
-  } else if (!saldoBate && saldoFinalOcr != null) {
-    mensagem = `Saldo diverge do OCR em R$ ${deltaSaldoFinal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} — faltam créditos/débitos`;
-  } else if (items.length === 0) {
+  if (items.length === 0) {
     mensagem = 'Nenhum lançamento importado';
+  } else if (alertasCriticos > 0) {
+    mensagem = `${items.length} lançamento(s) · saldo R$ ${saldoConciliado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} · ${alertasCriticos} alerta(s) no LOG (não bloqueia)`;
   } else {
-    mensagem = 'Revise saldo anterior e lançamentos importados';
+    mensagem = `Conciliação OK — ${items.length} lançamento(s), saldo R$ ${saldoConciliado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (Anterior + C − D)`;
   }
 
   return {
@@ -295,7 +269,6 @@ export function avaliarExtratoConciliacaoItau(params: {
     creditos: Math.round(creditos * 100) / 100,
     debitos: Math.round(debitos * 100) / 100,
     saldoConciliado,
-    ...(saldoFinalOcr != null ? { saldoFinalOcr, deltaSaldoFinal } : {}),
     alertasCriticos,
     mensagem,
   };

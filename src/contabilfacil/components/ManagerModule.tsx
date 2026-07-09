@@ -377,6 +377,19 @@ export default function ManagerModule({
     };
   }, []);
 
+  useEffect(() => {
+    const onBanco = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ company?: string; contaBanco?: string }>).detail;
+      if (detail?.company && detail.company !== selectedCompany) return;
+      if (detail?.contaBanco?.trim()) {
+        saveExtratoRegrasBancoSelecionado(selectedCompany, detail.contaBanco.trim());
+      }
+      setContaBancoTick((n) => n + 1);
+    };
+    window.addEventListener('contabilfacil-extrato-banco-updated', onBanco);
+    return () => window.removeEventListener('contabilfacil-extrato-banco-updated', onBanco);
+  }, [selectedCompany]);
+
   useEffect(() => registerManagerTabBot(selectedCompany), [selectedCompany, storageVersion]);
 
   const reloadFolhaFromStorage = useCallback(() => {
@@ -913,9 +926,8 @@ export default function ManagerModule({
         saldoAnterior: saldoAnteriorExtrato,
         creditos: currentTotalInflows,
         debitos: currentTotalOutflows,
-        saldoFinalArquivo: extratoConciliacao?.saldoFinalOcr,
       }),
-    [saldoAnteriorExtrato, currentTotalInflows, currentTotalOutflows, extratoConciliacao?.saldoFinalOcr],
+    [saldoAnteriorExtrato, currentTotalInflows, currentTotalOutflows],
   );
 
   /** Saldo do que já foi conciliado até o momento (só linhas com D+C). */
@@ -1461,25 +1473,9 @@ export default function ManagerModule({
                           className={cn(CF_FORM_INPUT_MONEY, 'text-xl font-mono font-black w-full')}
                         />
                       </div>
-                      <div
-                        className={cn(
-                          'technical-panel p-6 shadow-[4px_4px_0_0_#141414]',
-                          extratoConciliacao?.ok === true && 'ring-2 ring-green-600',
-                          extratoConciliacao?.ok === false && 'ring-2 ring-orange-600',
-                        )}
-                      >
-                        <p className="text-[9px] font-black text-brand-text/40 uppercase tracking-widest mb-2 italic flex items-center gap-2">
+                      <div className="technical-panel p-6 shadow-[4px_4px_0_0_#141414]">
+                        <p className="text-[9px] font-black text-brand-text/40 uppercase tracking-widest mb-2 italic">
                           Saldo Final do Extrato
-                          {extratoConciliacao?.ok === true && (
-                            <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 bg-green-600 text-white">
-                              OK
-                            </span>
-                          )}
-                          {extratoConciliacao?.ok === false && (
-                            <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 bg-orange-600 text-white">
-                              Revisar
-                            </span>
-                          )}
                         </p>
                         <p
                           className={cn(
@@ -1490,23 +1486,15 @@ export default function ManagerModule({
                           {formatCurrency(saldoFinalExtratoInfo.valor)}
                         </p>
                         <p className="text-[8px] font-mono text-brand-text/45 mt-2 uppercase tracking-wide">
-                          {saldoFinalExtratoInfo.origem === 'arquivo'
-                            ? 'Do arquivo (OCR/OFX)'
-                            : 'Anterior + Créditos − Débitos'}
+                          Anterior + Créditos − Débitos
                         </p>
-                        {extratoConciliacao && (
-                          <p
-                            className={cn(
-                              'text-[9px] mt-2 leading-snug',
-                              extratoConciliacao.ok ? 'text-green-700 font-bold' : 'text-orange-700',
-                            )}
-                          >
-                            {extratoConciliacao.mensagem}
-                            {extratoConciliacao.perfilItau ? (
-                              <span className="block opacity-70 mt-0.5 normal-case">Perfil Itaú</span>
-                            ) : null}
-                          </p>
-                        )}
+                        <p className="text-[8px] font-mono text-brand-text/40 mt-1 normal-case">
+                          C {formatCurrency(currentTotalInflows)} · D{' '}
+                          {formatCurrency(currentTotalOutflows)}
+                          {placarTotais.lancamentosConsiderados > 0
+                            ? ` · ${placarTotais.lancamentosConsiderados} lanç.`
+                            : ''}
+                        </p>
                       </div>
                       <div className="technical-panel p-6 shadow-[4px_4px_0_0_#141414] sm:col-span-2 xl:col-span-2">
                         <p className="text-[9px] font-black text-brand-text/40 uppercase tracking-widest mb-2 italic">
@@ -1521,7 +1509,9 @@ export default function ManagerModule({
                           {formatCurrency(saldoConciliadoAteMomento)}
                         </p>
                         <p className="text-[8px] font-mono text-brand-text/45 mt-2 uppercase tracking-wide">
-                          Anterior + créditos conciliados − débitos conciliados
+                          {placarConciliados.lancamentosConsiderados === 0
+                            ? 'Sem lançamentos com débito e crédito'
+                            : 'Anterior + créditos conciliados − débitos conciliados'}
                         </p>
                         <p className="text-[9px] mt-2 text-brand-text/60 normal-case">
                           {extratoConciliacaoStats.conciliadas} de {extratoConciliacaoStats.total} lançamento(s)
@@ -1531,11 +1521,16 @@ export default function ManagerModule({
                               C {formatCurrency(placarConciliados.creditos)} · D{' '}
                               {formatCurrency(placarConciliados.debitos)}
                             </span>
-                          ) : null}
+                          ) : (
+                            <span className="block mt-0.5 text-amber-800/90">
+                              Preencha débito e crédito nas linhas para este saldo avançar.
+                            </span>
+                          )}
                         </p>
                         <p className="text-[8px] mt-2 leading-snug text-amber-800/80 normal-case border-t border-brand-border/40 pt-2">
                           Use <strong>Mandar para o balancete</strong> para publicar os conciliados no
-                          balancete/razão. Este card mostra só o que já foi conciliado até o momento.
+                          balancete/razão. Este card só soma o que já tem as duas contas — não copia o
+                          saldo final.
                         </p>
                       </div>
                     </div>

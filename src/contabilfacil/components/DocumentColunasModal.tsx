@@ -114,7 +114,7 @@ import {
   type OcrExtratoRow,
 } from '../../lib/ocrExtratoPositional';
 import type { ExtratoPlanoContaOption } from './ExtratoContaPicker';
-import { ExtratoOcrExtracaoReview, tagOcrRowsPagina } from './ExtratoOcrExtracaoReview';
+import { tagOcrRowsPagina } from '../logic/tagOcrRowsPagina';
 import {
   deleteExtratoOcrLayout,
   getActiveExtratoOcrLayout,
@@ -456,11 +456,6 @@ export function DocumentColunasModal({
     total: number;
     rows: number;
     log: string[];
-  } | null>(null);
-  const [extracaoReview, setExtracaoReview] = useState<{
-    rows: GenericOcrRow[];
-    meta?: OcrConfirmMeta;
-    skippedPages?: number[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const extractReporterRef = useRef<
@@ -1989,34 +1984,6 @@ export function DocumentColunasModal({
     return `A IA não extraiu ${entityLabel}. Tente modo Híbrido ou aguarde o OCR da página terminar.`;
   }
 
-  const confirmExtratoImport = () => {
-    if (!extracaoReview) return;
-    onConfirm?.(extracaoReview.rows, extracaoReview.meta);
-    setExtracaoReview(null);
-  };
-
-  const handleExtracaoReviewBack = useCallback(() => {
-    setExtracaoReview(null);
-    setExtracting(false);
-    setExtractProgress(null);
-    extractReporterRef.current = null;
-    const snap = mappingUiSnapshotRef.current;
-    if (snap) {
-      setZoomLevel(snap.zoomLevel);
-      pendingAutoFitRef.current = false;
-    }
-    const pdfDoc = doc?.pdfDoc;
-    const page = snap?.currentPage ?? currentPage;
-    if (pdfDoc) {
-      const scale = doc?.pdfRenderScale ?? pdfRenderScale;
-      const cached = getCachedPdfPagePreview(pdfDoc, page, scale);
-      if (cached && cached.itemCount > 0) {
-        applyPdfPageResult(cached);
-        if (page !== currentPage) setCurrentPage(page);
-      }
-    }
-  }, [applyPdfPageResult, currentPage, doc, pdfRenderScale]);
-
   const extractProgressPct = useMemo(() => {
     if (!extractProgress || extractProgress.total <= 0) return 0;
     if (extractProgress.page > 0) {
@@ -2211,7 +2178,6 @@ export function DocumentColunasModal({
 
     if (supportsValorModo && onConfirm) {
       mappingUiSnapshotRef.current = { zoomLevel, currentPage };
-      setExtracaoReview({ rows: [], meta: undefined, skippedPages: [] });
       literalCropRowsRef.current = [];
     }
 
@@ -2288,67 +2254,49 @@ export function DocumentColunasModal({
           _pagina: r._pagina ?? r._extratoPagina,
         }));
         if (extratoRecorteLiteral) literalCropRowsRef.current = prepared;
-        setExtracaoReview((prev) => ({
-          rows: prepared,
-          meta: prev?.meta,
-          skippedPages: patch?.skippedPages ?? prev?.skippedPages,
-        }));
+        // Sem tela de revisão — só acumula linhas para o confirm final.
       };
 
-      /** Publica cada lançamento na revisão assim que é extraído (OCR página a página, em ordem). */
+      /** Acumula lançamentos página a página (sem abrir revisão). */
       const appendExtratoRowsLive = (
         target: GenericOcrRow[],
         pageRows: GenericOcrRow[],
         pageNum: number,
-        skippedPages: number[],
+        _skippedPages: number[],
       ) => {
-        // Atualiza em lotes curtos para efeito cascata sem travar a UI.
-        const chunkSize = pageRows.length >= 18 ? 4 : 2;
-        for (let i = 0; i < pageRows.length; i += chunkSize) {
-          const chunk = pageRows.slice(i, i + chunkSize);
-          for (const row of chunk) {
-            extratoOrdemSeq += 1;
-            target.push({
-              ...row,
-              _extratoOrdem: String(extratoOrdemSeq),
-              _extratoPagina: String(pageNum),
-            });
-          }
-          pushExtracaoLiveRows([...target], {
-            skippedPages: skippedPages.length > 0 ? [...skippedPages] : undefined,
-          });
-          reportExtract(`Lançamentos ${target.length} (pág. ${pageNum})…`, {
-            page: pageNum,
-            total: docTotalPages,
-            rows: target.length,
+        for (const row of pageRows) {
+          extratoOrdemSeq += 1;
+          target.push({
+            ...row,
+            _extratoOrdem: String(extratoOrdemSeq),
+            _extratoPagina: String(pageNum),
           });
         }
+        if (extratoRecorteLiteral) literalCropRowsRef.current = [...target];
+        reportExtract(`Lançamentos ${target.length} (pág. ${pageNum})…`, {
+          page: pageNum,
+          total: docTotalPages,
+          rows: target.length,
+        });
       };
 
       const publishCropPreviewRows = (pageNum: number, pageRows: GenericOcrRow[]) => {
         if (!supportsValorModo || !onConfirm || pageRows.length === 0) return;
-        setExtracaoReview((prev) => {
-          const kept = (prev?.rows ?? []).filter(
-            (r) => Number(r._extratoPagina ?? r._pagina ?? 0) !== pageNum,
-          );
-          const tagged = pageRows.map((r, idx) => ({
-            ...r,
-            _extratoPagina: String(pageNum),
-            _pagina: String(pageNum),
-            _extratoOrdem: String(idx + 1),
-          }));
-          const merged = [...kept, ...tagged].sort((a, b) => {
-            const pa = Number(a._extratoPagina ?? a._pagina ?? 0) - Number(b._extratoPagina ?? b._pagina ?? 0);
-            if (pa !== 0) return pa;
-            return Number(a._extratoOrdem ?? 0) - Number(b._extratoOrdem ?? 0);
-          });
-          if (extratoRecorteLiteral) literalCropRowsRef.current = merged;
-          return {
-            rows: merged,
-            meta: prev?.meta,
-            skippedPages: prev?.skippedPages,
-          };
+        const kept = literalCropRowsRef.current.filter(
+          (r) => Number(r._extratoPagina ?? r._pagina ?? 0) !== pageNum,
+        );
+        const tagged = pageRows.map((r, idx) => ({
+          ...r,
+          _extratoPagina: String(pageNum),
+          _pagina: String(pageNum),
+          _extratoOrdem: String(idx + 1),
+        }));
+        const merged = [...kept, ...tagged].sort((a, b) => {
+          const pa = Number(a._extratoPagina ?? a._pagina ?? 0) - Number(b._extratoPagina ?? b._pagina ?? 0);
+          if (pa !== 0) return pa;
+          return Number(a._extratoOrdem ?? 0) - Number(b._extratoOrdem ?? 0);
         });
+        if (extratoRecorteLiteral) literalCropRowsRef.current = merged;
       };
 
       const buildLiteralFallbackRowsFromOcr = (ocrBlob?: string): GenericOcrRow[] => {
@@ -2436,11 +2384,7 @@ export function DocumentColunasModal({
             ...r,
             _pagina: r._pagina ?? r._extratoPagina,
           }));
-          setExtracaoReview({
-            rows: tagged,
-            meta,
-            skippedPages,
-          });
+          onConfirm(tagged, meta);
           return;
         }
         if (supportsValorModo && onConfirm) {
@@ -2522,14 +2466,13 @@ export function DocumentColunasModal({
               );
           const fallbackRowsFromOcr = withDates.length === 0 ? buildLiteralFallbackRowsFromOcr(ocrText) : [];
           const reviewRows = withDates.length > 0 ? withDates : fallbackRowsFromOcr;
-          setExtracaoReview({
-            rows: reviewRows.map((r) => ({
+          onConfirm(
+            reviewRows.map((r) => ({
               ...r,
               _pagina: r._pagina ?? r._extratoPagina,
             })),
-            meta: finalMeta,
-            skippedPages,
-          });
+            finalMeta,
+          );
           return;
         }
         onConfirm?.(rows, meta);
@@ -2779,36 +2722,23 @@ export function DocumentColunasModal({
         if (!aiResult.ok || !aiResult.rows?.length) {
           throw new Error(formatAiExtractError(aiResult));
         }
-        if (aiResult.conciliacao?.ok === false && (aiResult.conciliacao?.delta ?? 0) > 0.1) {
-          setError(
-            `IA extraiu ${aiResult.rows.length} lançamento(s), mas o saldo diverge R$ ${aiResult.conciliacao.delta?.toFixed(2)} do PDF. Revise na conciliação ou use modo Híbrido.`,
-          );
-        } else if (aiResult.detail?.includes('conciliado')) {
+        if (aiResult.detail?.includes('conciliado')) {
           setError(null);
         }
-        const conciliacaoRawRows = extratoLinhasSaldoInformativoDoTextoOcr(
-          ocrTextAgg || doc.ocrFullText || '',
-        );
         const rowsPosProcessados = prepararExtratoOcrRowsParaRevisao(marcarRowsExtracaoAi(aiResult.rows), {
           statementYear: stmtYearAi,
           ignoreLineWords: effectiveIgnoreLineWordsList,
           preserveSegmentRows: true,
         });
-        const saldoFinalAi =
-          aiResult.saldoFinal ??
-          aiResult.conciliacao?.saldoFinal ??
-          undefined;
         const saldoAnteriorAi = resolverSaldoAnteriorParaMetaExtrato({
           rows: rowsPosProcessados,
-          conciliacaoRawRows,
           ocrText: ocrTextAgg || doc.ocrFullText || '',
         });
         return {
           rows: rowsPosProcessados,
           meta: {
-            conciliacaoRawRows,
+            // Sem saldo de PDF/OCR — OK/placar usa só Anterior + C − D dos lançamentos.
             saldoAnterior: saldoAnteriorAi,
-            saldoFinalEsperado: saldoFinalAi,
           },
         };
       };
@@ -4287,30 +4217,6 @@ export function DocumentColunasModal({
         : 'border-brand-border/25 bg-brand-sidebar/20 hover:bg-brand-sidebar/60 hover:border-brand-border/50',
     );
 
-  if (extracaoReview) {
-    return (
-      <ExtratoOcrExtracaoReview
-        fileName={file.name}
-        rows={extracaoReview.rows}
-        meta={extracaoReview.meta}
-        skippedPages={extracaoReview.skippedPages}
-        isExtracting={extracting}
-        extractProgress={extractProgress}
-        hideMotorSteps={extratoRecorteLiteral}
-        literalStageColumns={
-          extratoRecorteLiteral
-            ? columns
-                .filter((c) => !c.id.startsWith('ignorar') && c.start !== c.end)
-                .map((c) => c.id)
-            : undefined
-        }
-        onConfirm={confirmExtratoImport}
-        onBack={handleExtracaoReviewBack}
-        onCancel={onCancel}
-      />
-    );
-  }
-
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-brand-bg text-brand-text">
       <header className="flex items-center justify-between px-6 py-4 border-b border-brand-border bg-white shrink-0 shadow-[0_2px_0_0_#141414]">
@@ -4742,6 +4648,16 @@ export function DocumentColunasModal({
                                 setBancoNome(layout.bancoNome);
                                 setContaBanco(layout.contaBanco);
                                 applyLayoutToState(layout);
+                                window.dispatchEvent(
+                                  new CustomEvent('contabilfacil-extrato-banco-updated', {
+                                    detail: {
+                                      company: companyName,
+                                      contaBanco: layout.contaBanco,
+                                      bancoNome: layout.bancoNome,
+                                    },
+                                  }),
+                                );
+                                refreshSavedLayouts();
                               }}
                             >
                               {isActiveLayout ? 'Reaplicar' : 'Usar este layout'}
@@ -4820,7 +4736,20 @@ export function DocumentColunasModal({
                     </div>
                     <button
                       type="button"
-                      onClick={() => persistCurrentExtratoLayout()}
+                      onClick={() => {
+                        persistCurrentExtratoLayout();
+                        if (companyName?.trim() && bancoNome.trim() && contaBanco.trim()) {
+                          window.dispatchEvent(
+                            new CustomEvent('contabilfacil-extrato-banco-updated', {
+                              detail: {
+                                company: companyName,
+                                contaBanco: contaBanco.trim(),
+                                bancoNome: bancoNome.trim(),
+                              },
+                            }),
+                          );
+                        }
+                      }}
                       disabled={!bancoNome.trim() || !contaBanco.trim() || !companyName?.trim()}
                       className="technical-button w-full text-[9px] py-1.5 flex items-center justify-center gap-1 disabled:opacity-40"
                     >

@@ -36,7 +36,6 @@ import {
   type ExtratoOcrLayoutSaved,
 } from '../logic/extratoOcrLayoutStorage';
 import ExtratoContaPicker, { type ExtratoPlanoContaOption } from './ExtratoContaPicker';
-import { ExtratoOcrExtracaoReview } from './ExtratoOcrExtracaoReview';
 import { GenericLeitorTable } from './leitorRecortador/GenericLeitorTable';
 import { GenericLeitorWorkspace } from './leitorRecortador/GenericLeitorWorkspace';
 
@@ -126,8 +125,6 @@ export function LeitorRecortadorModal({
   const [layoutEditId, setLayoutEditId] = useState<string | null>(null);
   const [savedLayouts, setSavedLayouts] = useState<ExtratoOcrLayoutSaved[]>([]);
   const [saldoAnterior, setSaldoAnterior] = useState(0);
-  const [reviewRows, setReviewRows] = useState<GenericOcrRow[] | null>(null);
-  const [reviewMeta, setReviewMeta] = useState<OcrConfirmMeta | undefined>(undefined);
 
   const saldoStorageKey = useMemo(
     () => (companyName.trim() ? `contabilfacil_${companyStorageSlug(companyName)}_extrato_saldo_anterior` : ''),
@@ -365,22 +362,11 @@ export function LeitorRecortadorModal({
   );
 
   const buildReviewMeta = useCallback((): OcrConfirmMeta => {
-    const filtered = getFilteredRows();
-    const totalEntradas = filtered
-      .map(genericToExtratoRow)
-      .filter((r) => !r.isNegative && r.parsedValue != null)
-      .reduce((s, r) => s + (r.parsedValue || 0), 0);
-    const totalSaidas = Math.abs(
-      filtered
-        .map(genericToExtratoRow)
-        .filter((r) => r.isNegative && r.parsedValue != null)
-        .reduce((s, r) => s + (r.parsedValue || 0), 0),
-    );
     return {
       saldoAnterior: saldoAnterior > 0.0001 ? saldoAnterior : null,
-      saldoFinalEsperado: saldoAnterior + totalEntradas - totalSaidas,
+      // Não envia saldo final “esperado” do PDF — OK usa só Anterior + C − D dos lançamentos.
     };
-  }, [getFilteredRows, saldoAnterior]);
+  }, [saldoAnterior]);
 
   const persistCurrentLayout = useCallback(() => {
     if (!companyName.trim() || !bancoNome.trim() || !contaBanco.trim()) {
@@ -392,7 +378,29 @@ export function LeitorRecortadorModal({
       return;
     }
     const refPage = pdfPages[0];
-    if (!refPage) return;
+    if (!refPage) {
+      if (isExtrato) {
+        const saved = saveExtratoBancoParaImportacao(
+          companyName,
+          bancoNome.trim(),
+          contaBanco.trim(),
+        );
+        setLayoutEditId(saved.id);
+        refreshSavedLayouts();
+        window.dispatchEvent(
+          new CustomEvent('contabilfacil-extrato-banco-updated', {
+            detail: {
+              company: companyName,
+              contaBanco: saved.contaBanco,
+              bancoNome: saved.bancoNome,
+            },
+          }),
+        );
+        setSuccess(`Banco "${saved.bancoNome}" · conta ${saved.contaBanco} salvos.`);
+        return;
+      }
+      return;
+    }
     const imgW = refPage.width;
     const imgH = refPage.height;
     const faixaPorPagina = buildFaixaPorPagina(cropStartPct, cropEndPct, cropStartPage, cropEndPage, pdfPages.length);
@@ -417,8 +425,14 @@ export function LeitorRecortadorModal({
       imgHeight: imgH,
     });
     setLayoutEditId(saved.id);
+    setActiveExtratoOcrLayout(companyName, saved.id);
     refreshSavedLayouts();
-    setSuccess(`Layout "${saved.bancoNome}" salvo.`);
+    window.dispatchEvent(
+      new CustomEvent('contabilfacil-extrato-banco-updated', {
+        detail: { company: companyName, contaBanco: saved.contaBanco, bancoNome: saved.bancoNome },
+      }),
+    );
+    setSuccess(`Layout "${saved.bancoNome}" · conta ${saved.contaBanco} salvo.`);
   }, [
     bancoNome,
     columnIds,
@@ -457,9 +471,25 @@ export function LeitorRecortadorModal({
             .filter(Boolean),
         );
       }
-      setSuccess(`Layout "${layout.bancoNome}" aplicado.`);
+      if (companyName.trim()) {
+        setActiveExtratoOcrLayout(companyName, layout.id);
+        if (isExtrato) {
+          saveExtratoBancoParaImportacao(companyName, layout.bancoNome, layout.contaBanco);
+        }
+        window.dispatchEvent(
+          new CustomEvent('contabilfacil-extrato-banco-updated', {
+            detail: {
+              company: companyName,
+              contaBanco: layout.contaBanco,
+              bancoNome: layout.bancoNome,
+            },
+          }),
+        );
+      }
+      refreshSavedLayouts();
+      setSuccess(`Layout "${layout.bancoNome}" · conta ${layout.contaBanco} aplicado.`);
     },
-    [dataType, isExtrato],
+    [companyName, dataType, isExtrato, refreshSavedLayouts],
   );
 
   const handleSaldoAnteriorChange = useCallback(
@@ -470,38 +500,28 @@ export function LeitorRecortadorModal({
     [saldoStorageKey],
   );
 
-  const handleOkToReview = () => {
+  const handleOk = () => {
     const filtered = getFilteredRows();
     if (filtered.length === 0) {
-      setError('Nenhuma linha válida para conciliação. Ajuste os recortes ou filtros.');
-      return;
-    }
-    setReviewRows(mapGenericRowsToOcrRows(filtered, columnIds));
-    setReviewMeta(buildReviewMeta());
-  };
-
-  const handleConfirmReview = () => {
-    if (!reviewRows?.length) return;
-    if (companyName.trim() && bancoNome.trim() && contaBanco.trim()) {
-      saveExtratoBancoParaImportacao(companyName, bancoNome, contaBanco);
-    }
-    onConfirm(reviewRows, reviewMeta);
-  };
-
-  const handleOkDirect = () => {
-    const filtered = getFilteredRows();
-    if (filtered.length === 0) {
-      setError('Nenhuma linha válida. Ajuste os recortes ou filtros.');
+      setError(
+        isExtrato
+          ? 'Nenhuma linha válida para conciliação. Ajuste os recortes ou filtros.'
+          : 'Nenhuma linha válida. Ajuste os recortes ou filtros.',
+      );
       return;
     }
     if (isInstallments) {
       onConfirmParcelamento?.(mapGenericRowsToParcelamento(filtered));
       return;
     }
-    onConfirm(mapGenericRowsToOcrRows(filtered, columnIds));
+    if (isExtrato && companyName.trim() && bancoNome.trim() && contaBanco.trim()) {
+      saveExtratoBancoParaImportacao(companyName, bancoNome, contaBanco);
+    }
+    onConfirm(
+      mapGenericRowsToOcrRows(filtered, columnIds),
+      isExtrato ? buildReviewMeta() : undefined,
+    );
   };
-
-  const handleOk = isExtrato ? handleOkToReview : handleOkDirect;
 
   useEffect(() => {
     if (!success && !error) return;
@@ -511,21 +531,6 @@ export function LeitorRecortadorModal({
     }, 5000);
     return () => clearTimeout(t);
   }, [success, error]);
-
-  if (reviewRows) {
-    return (
-      <ExtratoOcrExtracaoReview
-        fileName={file.name}
-        rows={reviewRows}
-        meta={reviewMeta}
-        hideMotorSteps
-        literalStageColumns={['data', 'descricao', 'valor']}
-        onConfirm={handleConfirmReview}
-        onBack={() => setReviewRows(null)}
-        onCancel={onCancel}
-      />
-    );
-  }
 
   const configSidebar = (
     <aside className="w-[280px] border-l border-brand-border bg-white flex flex-col shrink-0 h-full min-h-0 overflow-hidden">
@@ -649,8 +654,8 @@ export function LeitorRecortadorModal({
             </section>
             {isExtrato ? (
               <p className="text-[9px] opacity-70 leading-relaxed">
-                As regras de exclusão (SALDO ANTERIOR, etc.) ficam na aba Tabela. Após OK, você revisa na tela de
-                conciliação antes de colar no software.
+                As regras de exclusão (SALDO ANTERIOR, etc.) ficam na aba Tabela. Após OK, os lançamentos vão
+                direto para a conciliação.
               </p>
             ) : (
               <p className="text-[9px] opacity-70 leading-relaxed">
@@ -684,11 +689,10 @@ export function LeitorRecortadorModal({
                           type="button"
                           className="technical-button text-[8px] py-0.5 px-2 flex-1"
                           onClick={() => {
-                            setActiveExtratoOcrLayout(companyName, layout.id);
                             applyLayout(layout);
                           }}
                         >
-                          Usar
+                          {isActive ? 'Reaplicar' : 'Usar'}
                         </button>
                         <button
                           type="button"

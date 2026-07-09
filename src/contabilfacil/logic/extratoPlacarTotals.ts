@@ -26,9 +26,11 @@ function parsePlacarValor(value: unknown): number {
   return 0;
 }
 
-function normalizeNature(nature: unknown): 'D' | 'C' {
+function normalizeNature(nature: unknown): 'D' | 'C' | '' {
   const n = String(nature ?? '').trim().toUpperCase();
-  return n === 'D' || n === 'DEBITO' || n === 'DÉBITO' ? 'D' : 'C';
+  if (n === 'D' || n === 'DEBITO' || n === 'DÉBITO') return 'D';
+  if (n === 'C' || n === 'CREDITO' || n === 'CRÉDITO') return 'C';
+  return '';
 }
 
 function lancamentoEhSaldoInformativo(description: string): boolean {
@@ -43,7 +45,7 @@ function lancamentoEhSaldoInformativo(description: string): boolean {
 
 function chaveDedup(row: ExtratoPlacarRow): string {
   const v = parsePlacarValor(row.value).toFixed(2);
-  const nat = normalizeNature(row.nature);
+  const nat = normalizeNature(row.nature) || 'X';
   const desc = String(row.description ?? '').trim().toUpperCase().slice(0, 40);
   const date = String(row.date ?? '').trim();
   return `${date}|${v}|${nat}|${desc}`;
@@ -63,6 +65,10 @@ export function sumExtratoPlacarTotais(rows: ExtratoPlacarRow[]): {
     const desc = String(row.description ?? '').trim();
     if (lancamentoEhSaldoInformativo(desc)) continue;
 
+    const rawNum =
+      typeof row.value === 'number'
+        ? row.value
+        : Number(String(row.value ?? '').trim().replace(/\./g, '').replace(',', '.'));
     const value = parsePlacarValor(row.value);
     if (value <= 0.0001) continue;
 
@@ -70,7 +76,11 @@ export function sumExtratoPlacarTotais(rows: ExtratoPlacarRow[]): {
     if (vistos.has(key)) continue;
     vistos.add(key);
 
-    const nature = normalizeNature(row.nature);
+    // Natureza explícita D/C; se faltar, sinal do valor (negativo = saída/D).
+    let nature = normalizeNature(row.nature);
+    if (!nature) {
+      nature = Number.isFinite(rawNum) && rawNum < 0 ? 'D' : 'C';
+    }
     if (nature === 'D') debitos += value;
     else creditos += value;
     lancamentosConsiderados += 1;
@@ -92,42 +102,54 @@ export function calcExtratoSaldoConciliado(
   return Math.round((sa + creditos - debitos) * 100) / 100;
 }
 
-/** Totais só das linhas já conciliadas (débito + crédito preenchidos). */
+/**
+ * Linha conta para o placar "Saldo Conciliado" só se já tem as duas contas
+ * preenchidas na linha (não basta accountCode legado / só banco).
+ */
+export function isExtratoLinhaConciliadaParaPlacar(row: ExtratoBankRow): boolean {
+  const deb = row.accountDebit?.trim() || '';
+  const cred = row.accountCredit?.trim() || '';
+  if (!deb || !cred) return false;
+  if (deb.replace(/\D/g, '') === cred.replace(/\D/g, '')) return false;
+  return isExtratoLancamentoConciliado(row);
+}
+
+/** Totais só das linhas já conciliadas (débito + crédito preenchidos e distintos). */
 export function sumExtratoPlacarTotaisConciliados(rows: ExtratoBankRow[]): {
   creditos: number;
   debitos: number;
   lancamentosConsiderados: number;
 } {
-  const conciliados = rows.filter(isExtratoLancamentoConciliado);
+  const conciliados = rows.filter(isExtratoLinhaConciliadaParaPlacar);
   return sumExtratoPlacarTotais(conciliados);
 }
 
 /**
- * Saldo do que já foi conciliado até o momento:
- * saldo anterior + créditos conciliados − débitos conciliados.
+ * Saldo do que já foi conciliado até o momento.
+ * Sem nenhum lançamento com contas → R$ 0 (não repete o saldo final / anterior).
+ * Com conciliados → anterior + créditos conciliados − débitos conciliados.
  */
 export function calcSaldoConciliadoAteMomento(
   saldoAnterior: number,
   rows: ExtratoBankRow[],
 ): number {
-  const { creditos, debitos } = sumExtratoPlacarTotaisConciliados(rows);
+  const { creditos, debitos, lancamentosConsiderados } =
+    sumExtratoPlacarTotaisConciliados(rows);
+  if (lancamentosConsiderados === 0) return 0;
   return calcExtratoSaldoConciliado(saldoAnterior, creditos, debitos);
 }
 
 /**
- * Saldo final do extrato: prioriza o valor do arquivo (OCR/OFX);
- * se não houver, usa anterior + todos os créditos − todos os débitos.
+ * Saldo final do extrato no placar: SEMPRE calculado.
+ * Anterior + créditos − débitos (nunca OCR / saldo lido do PDF).
  */
 export function resolveSaldoFinalExtrato(params: {
   saldoAnterior: number;
   creditos: number;
   debitos: number;
+  /** @deprecated Ignorado — placar não usa saldo de arquivo/OCR. */
   saldoFinalArquivo?: number | null;
-}): { valor: number; origem: 'arquivo' | 'calculado' } {
-  const arquivo = params.saldoFinalArquivo;
-  if (arquivo != null && Number.isFinite(arquivo)) {
-    return { valor: Math.round(arquivo * 100) / 100, origem: 'arquivo' };
-  }
+}): { valor: number; origem: 'calculado' } {
   return {
     valor: calcExtratoSaldoConciliado(params.saldoAnterior, params.creditos, params.debitos),
     origem: 'calculado',

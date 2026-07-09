@@ -26,6 +26,7 @@ import {
 import { exportExtractedRowsToOfx } from '../../lib/leitorRecortador/ofxExport';
 import { parseAndRenderAllPDFPages, parseAndRenderImage } from '../../lib/leitorRecortador/pdfParser';
 import type { DocMetadata, DocumentColumns, ExtractedRow } from '../../lib/leitorRecortador/types';
+import { mapExtractedRowsToRecorteFielOcr } from '../logic/extratoRecorteFielImport';
 import {
   deleteExtratoOcrLayout,
   getActiveExtratoOcrLayout,
@@ -36,7 +37,6 @@ import {
   type ExtratoOcrLayoutSaved,
 } from '../logic/extratoOcrLayoutStorage';
 import ExtratoContaPicker, { type ExtratoPlanoContaOption } from './ExtratoContaPicker';
-import { ExtratoOcrExtracaoReview } from './ExtratoOcrExtracaoReview';
 import { LeitorRecortadorTable } from './leitorRecortador/LeitorRecortadorTable';
 import { LeitorRecortadorUploader } from './leitorRecortador/LeitorRecortadorUploader';
 import { LeitorRecortadorWorkspace } from './leitorRecortador/LeitorRecortadorWorkspace';
@@ -93,8 +93,6 @@ export function ExtratoLeitorRecortadorModal({
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [reviewRows, setReviewRows] = useState<GenericOcrRow[] | null>(null);
-  const [reviewMeta, setReviewMeta] = useState<OcrConfirmMeta | undefined>(undefined);
   const [bancoNome, setBancoNome] = useState('');
   const [contaBanco, setContaBanco] = useState('');
   const [layoutEditId, setLayoutEditId] = useState<string | null>(null);
@@ -376,8 +374,24 @@ export function ExtratoLeitorRecortadorModal({
       return;
     }
     const refPage = pdfPages[0];
+    // Sem documento: ainda salva banco + conta (necessário para a conciliação).
     if (!refPage) {
-      setErrorMessage('Carregue um documento antes de salvar a configuração.');
+      const saved = saveExtratoBancoParaImportacao(
+        companyName,
+        bancoNome.trim(),
+        contaBanco.trim(),
+      );
+      setLayoutEditId(saved.id);
+      refreshSavedLayouts();
+      window.dispatchEvent(
+        new CustomEvent('contabilfacil-extrato-banco-updated', {
+          detail: { company: companyName, contaBanco: saved.contaBanco, bancoNome: saved.bancoNome },
+        }),
+      );
+      setSuccessMessage(
+        `Banco "${saved.bancoNome}" · conta ${saved.contaBanco} salvos para a conciliação.`,
+      );
+      setSideTab('layouts');
       return;
     }
     const imgW = refPage.width;
@@ -412,7 +426,15 @@ export function ExtratoLeitorRecortadorModal({
     setLayoutEditId(saved.id);
     setActiveExtratoOcrLayout(companyName, saved.id);
     refreshSavedLayouts();
-    setSuccessMessage(`Configuração "${saved.bancoNome}" salva. Extratos parecidos usarão as mesmas colunas.`);
+    window.dispatchEvent(
+      new CustomEvent('contabilfacil-extrato-banco-updated', {
+        detail: { company: companyName, contaBanco: saved.contaBanco, bancoNome: saved.bancoNome },
+      }),
+    );
+    setSuccessMessage(
+      `Configuração "${saved.bancoNome}" · conta ${saved.contaBanco} salva. Ao usar o layout, a conciliação usa esta conta banco.`,
+    );
+    setSideTab('layouts');
   };
 
   const applyLayout = (layout: ExtratoOcrLayoutSaved) => {
@@ -421,6 +443,16 @@ export function ExtratoLeitorRecortadorModal({
     setLayoutEditId(layout.id);
     if (layout.columnsNorm?.length) {
       const restored = normColumnsToLeitorColumns(layout.columnsNorm);
+      if (restored) setColumns(restored);
+    } else if (layout.columns?.length && layout.imgWidth > 0) {
+      // Fallback: reconstrói % a partir das colunas em pixels salvas
+      const restored = normColumnsToLeitorColumns(
+        layout.columns.map((c) => ({
+          id: c.id,
+          startNorm: c.start / layout.imgWidth,
+          endNorm: c.end / layout.imgWidth,
+        })),
+      );
       if (restored) setColumns(restored);
     }
     if (layout.faixaStartNorm != null) setCropStartPct(layout.faixaStartNorm * 100);
@@ -435,8 +467,25 @@ export function ExtratoLeitorRecortadorModal({
           .filter(Boolean),
       );
     }
-    if (companyName.trim()) setActiveExtratoOcrLayout(companyName, layout.id);
-    setSuccessMessage(`Configuração "${layout.bancoNome}" aplicada.`);
+    if (companyName.trim()) {
+      setActiveExtratoOcrLayout(companyName, layout.id);
+      // Garante conta banco ativa na conciliação
+      saveExtratoBancoParaImportacao(companyName, layout.bancoNome, layout.contaBanco);
+      window.dispatchEvent(
+        new CustomEvent('contabilfacil-extrato-banco-updated', {
+          detail: {
+            company: companyName,
+            contaBanco: layout.contaBanco,
+            bancoNome: layout.bancoNome,
+          },
+        }),
+      );
+    }
+    refreshSavedLayouts();
+    setSideTab('config');
+    setSuccessMessage(
+      `Layout "${layout.bancoNome}" · conta ${layout.contaBanco} aplicado e ativo na conciliação.`,
+    );
   };
 
   const handleExportOfx = () => {
@@ -465,47 +514,20 @@ export function ExtratoLeitorRecortadorModal({
       const text = [row.dateText, row.historyText, row.valueText].join(' ').toUpperCase();
       return !exclusionRules.some((rule) => rule.trim() && text.includes(rule.trim().toUpperCase()));
     });
-    return visibleRows.map((r, idx) => {
-      const row: GenericOcrRow = {
-        data: r.dateText || '',
-        descricao: r.historyText || '',
-        valorMisto: r.valueText || '',
-        _linhaOcr: [r.dateText, r.historyText, r.valueText].filter(Boolean).join(' | '),
-        _extratoOrdem: String(idx + 1),
-      };
-      if (r.valueText) {
-        if (r.isNegative) {
-          row.valorDebito = r.valueText;
-          row.valorCredito = '';
-        } else {
-          row.valorCredito = r.valueText;
-          row.valorDebito = '';
-        }
-      }
-      return row;
-    });
+    // Mesmos lançamentos/natureza do placar Entradas/Saídas → conciliação 1:1.
+    return mapExtractedRowsToRecorteFielOcr(visibleRows);
   };
 
   const buildReviewMeta = (): OcrConfirmMeta => {
-    const filtered = rows.filter((row) => {
-      const text = [row.dateText, row.historyText, row.valueText].join(' ').toUpperCase();
-      return !exclusionRules.some((rule) => rule.trim() && text.includes(rule.trim().toUpperCase()));
-    });
     const saldoRaw = localStorage.getItem('saldo_anterior');
     const saldoAnterior = saldoRaw ? parseFloat(saldoRaw) || 0 : 0;
-    const totalEntradas = filtered
-      .filter((r) => !r.isNegative && r.parsedValue != null)
-      .reduce((s, r) => s + (r.parsedValue || 0), 0);
-    const totalSaidas = Math.abs(
-      filtered.filter((r) => r.isNegative && r.parsedValue != null).reduce((s, r) => s + (r.parsedValue || 0), 0),
-    );
     return {
       saldoAnterior: saldoAnterior > 0.0001 ? saldoAnterior : null,
-      saldoFinalEsperado: saldoAnterior + totalEntradas - totalSaidas,
+      // Não envia saldo final “esperado” do PDF — OK usa só Anterior + C − D dos lançamentos.
     };
   };
 
-  const handleOkToReview = () => {
+  const handleOkConciliacao = () => {
     const mapped = mapVisibleRowsToGeneric();
     if (mapped.length === 0) {
       setErrorMessage('Nenhuma linha válida para conciliação. Ajuste os recortes ou filtros.');
@@ -514,8 +536,7 @@ export function ExtratoLeitorRecortadorModal({
     if (companyName.trim() && bancoNome.trim() && contaBanco.trim()) {
       saveExtratoBancoParaImportacao(companyName, bancoNome, contaBanco);
     }
-    setReviewRows(mapped);
-    setReviewMeta(buildReviewMeta());
+    onConfirm(mapped, buildReviewMeta());
   };
 
   useEffect(() => {
@@ -523,22 +544,6 @@ export function ExtratoLeitorRecortadorModal({
     const timer = setTimeout(() => setSuccessMessage(null), 5000);
     return () => clearTimeout(timer);
   }, [successMessage, errorMessage]);
-
-  if (reviewRows) {
-    return (
-      <ExtratoOcrExtracaoReview
-        fileName={file.name}
-        rows={reviewRows}
-        meta={reviewMeta}
-        hideMotorSteps
-        literalStageColumns={['data', 'descricao', 'valor']}
-        companyName={companyName}
-        onConfirm={() => onConfirm(reviewRows, reviewMeta)}
-        onBack={() => setReviewRows(null)}
-        onCancel={onCancel}
-      />
-    );
-  }
 
   return (
     <div className="fixed inset-0 z-[120] bg-brand-bg font-sans text-brand-text flex flex-col antialiased overflow-hidden">
@@ -894,15 +899,29 @@ export function ExtratoLeitorRecortadorModal({
                                   layoutEditId === layout.id || isActive ? 'bg-brand-sidebar/40' : 'bg-white'
                                 }`}
                               >
-                                <p className="text-[11px] font-black uppercase truncate text-brand-text">{layout.bancoNome}</p>
-                                <p className="text-[10px] font-mono text-brand-text/70">{layout.contaBanco}</p>
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-[11px] font-black uppercase truncate text-brand-text">
+                                    {layout.bancoNome}
+                                  </p>
+                                  {isActive ? (
+                                    <span className="text-[7px] font-black uppercase tracking-wider opacity-60 shrink-0">
+                                      Ativo
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="text-[10px] font-mono text-brand-text/70">
+                                  Conta banco: {layout.contaBanco}
+                                </p>
+                                <p className="text-[8px] text-brand-text/45">
+                                  {new Date(layout.updatedAt).toLocaleString('pt-BR')}
+                                </p>
                                 <div className="flex gap-1.5 pt-1">
                                   <button
                                     type="button"
                                     className="technical-button text-[9px] py-1 px-2 flex-1"
                                     onClick={() => applyLayout(layout)}
                                   >
-                                    Usar
+                                    {isActive ? 'Reaplicar' : 'Usar este layout'}
                                   </button>
                                   <button
                                     type="button"
@@ -993,7 +1012,7 @@ export function ExtratoLeitorRecortadorModal({
           </button>
           <button
             type="button"
-            onClick={handleOkToReview}
+            onClick={handleOkConciliacao}
             disabled={rows.length === 0}
             className="technical-button-primary px-4 py-2 text-xs font-bold disabled:opacity-40"
           >

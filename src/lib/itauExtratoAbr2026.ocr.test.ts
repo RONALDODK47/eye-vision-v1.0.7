@@ -223,7 +223,7 @@ describe('Itaú abr/2026 — pipeline OCR puro (UI)', () => {
   });
 
   it(
-    'detecta saldo final OCR na última linha do fixture abr/2026',
+    'não usa saldo final do PDF/OCR na conciliação (só Anterior + C − D)',
     () => {
     const raw = buildItauAbr2026OcrRows();
     const { conciliacao, saldoAnteriorDetectado } = mapOcrRowsToImportItems('extrato', raw, {
@@ -231,7 +231,9 @@ describe('Itaú abr/2026 — pipeline OCR puro (UI)', () => {
       extratoPreserveSegmentRows: true,
     });
     expect(saldoAnteriorDetectado).toBeCloseTo(EXPECTED_SA, 2);
-    expect(conciliacao?.saldoFinalOcr).toBeCloseTo(EXPECTED_FINAL, 0);
+    expect(conciliacao?.saldoFinalOcr).toBeUndefined();
+    expect(conciliacao?.ok).toBe(true);
+    expect(conciliacao?.mensagem).not.toMatch(/OCR|diverge|PDF/i);
   },
   15_000,
   );
