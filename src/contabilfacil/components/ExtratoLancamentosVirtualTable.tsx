@@ -10,7 +10,7 @@ import ExtratoContaPicker, {
   type ExtratoPlanoContaOption,
 } from './ExtratoContaPicker';
 
-const COL_SPAN = 10;
+const COL_SPAN = 9;
 const DESC_CLS =
   'px-2 py-3 border-r border-brand-border/10 text-[9px] uppercase whitespace-normal break-words min-w-[100px] max-w-[200px] align-top leading-snug text-slate-600';
 const ROW_HEIGHT_PX = 52;
@@ -55,6 +55,7 @@ const ExtratoLancamentoTableRow = memo(function ExtratoLancamentoTableRow({
   onDelete,
   onUpdate,
   planoOptions = EMPTY_PLANO,
+  planoParaNome = EMPTY_PLANO,
   planoNomeLookup = EMPTY_PLANO_LOOKUP,
   fixedHeight,
 }: {
@@ -62,13 +63,14 @@ const ExtratoLancamentoTableRow = memo(function ExtratoLancamentoTableRow({
   onDelete: (id: string) => void;
   onUpdate?: (id: string, patch: Partial<ExtratoLancamentoRow>) => void;
   planoOptions?: ExtratoPlanoContaOption[];
+  planoParaNome?: ExtratoPlanoContaOption[];
   planoNomeLookup?: Map<string, string>;
   fixedHeight?: boolean;
 }) {
   const debValue = contaDebito(item);
   const credValue = contaCredito(item);
-  const debNome = resolveContaNome(planoNomeLookup, debValue);
-  const credNome = resolveContaNome(planoNomeLookup, credValue);
+  const debNome = resolveContaNome(planoNomeLookup, debValue, planoParaNome);
+  const credNome = resolveContaNome(planoNomeLookup, credValue, planoParaNome);
   return (
     <tr className={cn('technical-grid-row', fixedHeight && 'min-h-[52px]')}>
       <td className="px-4 py-3 border-r border-brand-border/10 whitespace-nowrap">{formatDate(item.date)}</td>
@@ -108,9 +110,6 @@ const ExtratoLancamentoTableRow = memo(function ExtratoLancamentoTableRow({
       <td className={DESC_CLS} title={credNome || undefined}>
         {credNome || '—'}
       </td>
-      <td className="px-4 py-3 border-r border-brand-border/10 uppercase text-[10px] whitespace-normal break-words min-w-[120px] max-w-[320px] align-top leading-snug">
-        {item.operationName || item.description}
-      </td>
       <td className="px-4 py-3 text-right">
         <button
           type="button"
@@ -138,7 +137,6 @@ function TableHead() {
         <th className="px-2 py-3 border-r border-brand-border bg-brand-sidebar">Desc. débito</th>
         <th className="px-2 py-3 border-r border-brand-border bg-brand-sidebar">Conta crédito</th>
         <th className="px-2 py-3 border-r border-brand-border bg-brand-sidebar">Desc. crédito</th>
-        <th className="px-4 py-3 border-r border-brand-border bg-brand-sidebar">Nome da operação (TXT)</th>
         <th className="px-4 py-3 text-right w-16 bg-brand-sidebar">Ação</th>
       </tr>
     </thead>
@@ -149,7 +147,10 @@ interface ExtratoLancamentosVirtualTableProps {
   rows: ExtratoLancamentoRow[];
   onDelete: (id: string) => void;
   onUpdate?: (id: string, patch: Partial<ExtratoLancamentoRow>) => void;
+  /** Contas analíticas — select Conta débito/crédito. */
   planoOptions?: ExtratoPlanoContaOption[];
+  /** Plano completo para resolver nomes (Desc. débito/crédito). */
+  planoNomeOptions?: ExtratoPlanoContaOption[];
 }
 
 export default memo(function ExtratoLancamentosVirtualTable({
@@ -157,14 +158,20 @@ export default memo(function ExtratoLancamentosVirtualTable({
   onDelete,
   onUpdate,
   planoOptions,
+  planoNomeOptions,
 }: ExtratoLancamentosVirtualTableProps) {
   const planoDeduped = useMemo(
     () => dedupePlanoOptions(planoOptions ?? []),
     [planoOptions],
   );
+  const planoParaNome = useMemo(() => {
+    // Sem dedupe: o mapa de nomes precisa de todas as chaves (reduzido + classificação).
+    if (planoNomeOptions?.length) return planoNomeOptions;
+    return planoDeduped;
+  }, [planoNomeOptions, planoDeduped]);
   const planoNomeLookup = useMemo(
-    () => buildPlanoNomeLookup(planoDeduped),
-    [planoDeduped],
+    () => buildPlanoNomeLookup(planoParaNome),
+    [planoParaNome],
   );
   const resetKey = useMemo(() => `${rows.length}:${rows[0]?.id ?? ''}`, [rows]);
   const virtual = useVirtualWindow(rows.length, { rowHeightPx: ROW_HEIGHT_PX, resetKey });
@@ -172,7 +179,7 @@ export default memo(function ExtratoLancamentosVirtualTable({
   if (rows.length === 0) {
     return (
       <div className="module-table-viewport">
-        <table className="w-full min-w-[1320px] text-left text-sm border-collapse">
+        <table className="w-full min-w-[1180px] text-left text-sm border-collapse">
           <TableHead />
           <tbody>
             <tr>
@@ -191,20 +198,18 @@ export default memo(function ExtratoLancamentosVirtualTable({
   const body = (
     <tbody className="font-mono text-[11px] divide-y divide-brand-border/10">
       {virtual.useVirtual && <VirtualSpacerRow colSpan={COL_SPAN} height={virtual.paddingTop} />}
-      {visibleRows.map((item, i) => {
-        const index = virtual.useVirtual ? virtual.startIndex + i : i;
-        return (
+      {visibleRows.map((item) => (
           <ExtratoLancamentoTableRow
-            key={`${item.id}-${index}`}
+            key={item.id}
             item={item}
             onDelete={onDelete}
             onUpdate={onUpdate}
             planoOptions={planoDeduped}
+            planoParaNome={planoParaNome}
             planoNomeLookup={planoNomeLookup}
             fixedHeight={virtual.useVirtual}
           />
-        );
-      })}
+      ))}
       {virtual.useVirtual && <VirtualSpacerRow colSpan={COL_SPAN} height={virtual.paddingBottom} />}
     </tbody>
   );
@@ -212,7 +217,7 @@ export default memo(function ExtratoLancamentosVirtualTable({
   if (!virtual.useVirtual) {
     return (
       <div className="module-table-viewport">
-        <table className="w-full min-w-[1320px] text-left text-sm border-collapse">
+        <table className="w-full min-w-[1180px] text-left text-sm border-collapse">
           <TableHead />
           {body}
         </table>
@@ -222,7 +227,7 @@ export default memo(function ExtratoLancamentosVirtualTable({
 
   return (
     <div ref={virtual.scrollRef} className="module-table-viewport" onScroll={virtual.onScroll}>
-      <table className="w-full min-w-[1320px] text-left text-sm border-collapse">
+      <table className="w-full min-w-[1180px] text-left text-sm border-collapse">
         <TableHead />
         {body}
       </table>

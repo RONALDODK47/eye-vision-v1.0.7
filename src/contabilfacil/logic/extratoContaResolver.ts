@@ -1,5 +1,9 @@
-import { derivePlanoGroupFromCode } from './planoContasMapper';
-import { isClassificacaoHierarquica, sanitizeCodigoReduzido } from './planoContasMapper';
+import {
+  derivePlanoGroupFromCode,
+  isClassificacaoHierarquica,
+  normalizeExtratoContaParaGravacao,
+  sanitizeCodigoReduzido,
+} from './planoContasMapper';
 import type { ExtratoFiscalContext } from './extratoFiscalContext';
 import type { FiscalContaMap } from '../../extratoVision/utils/fiscalContaMapping';
 import type { ReceitaFederalRegrasStore } from '../../extratoVision/utils/receitaFederalRegras';
@@ -19,6 +23,7 @@ import {
   matchColigadaNoHistorico,
   type AiColigada,
 } from './aiInteligenciaStorage';
+import { yieldToMain } from '../lib/deferIdle';
 
 export type { ExtratoOperacaoLogica };
 
@@ -76,14 +81,22 @@ const REGRAS_LOGICA: RegraLogicaExtrato[] = [
     hintsNome: [/CLIENTE|DUPLICATA|COBRANCA|RECEBIVEL/i],
   },
   {
+    // Amortização / pagamento de empréstimo tomado → reduz passivo.
     logica: 'EMPRESTIMO_PAGAMENTO',
     gruposContrapartida: ['PASSIVO'],
-    hintsNome: [/EMPRESTIMO|FINANCIAMENTO/i],
+    hintsNome: [/EMPRESTIMO|FINANCIAMENTO|MUTUO|M[UÚ]TUO/i],
   },
   {
+    // Liberação / entrada de empréstimo tomado → aumenta passivo.
     logica: 'EMPRESTIMO_RECEBIMENTO',
     gruposContrapartida: ['PASSIVO'],
-    hintsNome: [/EMPRESTIMO|FINANCIAMENTO/i],
+    hintsNome: [/EMPRESTIMO|FINANCIAMENTO|MUTUO|M[UÚ]TUO/i],
+  },
+  {
+    // Saída concedendo empréstimo/mútuo → ativo (a receber), nunca passivo.
+    logica: 'EMPRESTIMO_CONCESSAO',
+    gruposContrapartida: ['ATIVO'],
+    hintsNome: [/EMPRESTIMO|FINANCIAMENTO|MUTUO|M[UÚ]TUO|A\s+RECEBER|COLIGAD|PARTES?\s+RELACIONAD/i],
   },
   {
     logica: 'SAQUE',
@@ -286,12 +299,18 @@ function sanitizeManualConta(
 ): string {
   const raw = code?.trim();
   if (!raw) return '';
-  const canon = canonizarContaPlano(raw, index) || raw;
-  if (!isContaManualValida(canon, index)) return '';
+  const canon =
+    normalizeExtratoContaParaGravacao(raw, plano) ||
+    canonizarContaPlano(raw, index);
+  if (!canon || !isContaManualValida(canon, index)) return '';
   if (side === 'banco') return canon;
   const normBanco = normCls(bancoCanon);
   if (normBanco && normCls(canon) === normBanco) return '';
-  const row = plano.find((p) => normCls(p.code) === normCls(canon));
+  const row = plano.find(
+    (p) =>
+      normCls(p.code) === normCls(canon) ||
+      sanitizeCodigoReduzido(p.codigoReduzido) === canon,
+  );
   if (row && isContaDisponibilidadeExtrato(row)) return '';
   return canon;
 }
@@ -314,14 +333,17 @@ function contrapartidaCacheInvalida(
 export function findContaBancoNoPlano(
   plano: ExtratoContaPlanoLike[],
   contaPreferida?: string,
+  codeIndex?: Map<string, string>,
 ): string {
   const pref = contaPreferida?.trim();
   if (!pref) return '';
-  const index = buildPlanoCodeIndex(plano);
+  // SEMPRE código reduzido quando o plano tiver.
+  const red = normalizeExtratoContaParaGravacao(pref, plano);
+  if (red) return red;
+  const index = codeIndex ?? buildPlanoCodeIndex(plano);
   const canon = canonizarContaPlano(pref, index);
-  if (canon) return canon;
-  if (isContaManualValida(pref, index)) return pref;
-  return pref;
+  if (canon && !isClassificacaoHierarquica(canon)) return canon;
+  return '';
 }
 
 /** Une regras de vários códigos de banco (reduzido + canônico do plano). */
@@ -471,8 +493,18 @@ export function classificarOperacaoExtrato(significado: string, nature: 'D' | 'C
   }
 
   if (nature === 'D') {
-    if (/DEB\.?\s*EMPREST|PARCELA\s+EMPREST|SEGURO\s+EMPREST|AMORT/.test(s)) {
+    // Só pagamento/amortização explícita de empréstimo tomado → passivo.
+    // "DEB EMPREST" genérico NÃO entra aqui: saída de empréstimo = ativo (concessão).
+    if (
+      /AMORT|PARCELA\s+EMPREST|SEGURO\s+EMPREST|PAGTO?\s+EMPREST|PAGAMENTO\s+EMPREST|LIQUIDAC\w*\s+EMPREST/.test(
+        s,
+      )
+    ) {
       return 'EMPRESTIMO_PAGAMENTO';
+    }
+    // Saída de empréstimo/mútuo (concessão / mútuo ativo) → ativo.
+    if (/EMPREST|MUTUO|M[UÚ]TUO|FINANCIAMENTO\s+CONCED|EMPRESTIMO\s+CONCED/.test(s)) {
+      return 'EMPRESTIMO_CONCESSAO';
     }
     if (/SAQ\.?\s*DIG|SAQS\/CARTAO|SAQUE/.test(s)) return 'SAQUE';
     if (/TARIFA|TAR\s|ANUIDADE|MANUTENCAO\s+CONTA|PACOTE\s+SERV|CESTA|COBRANCA\s+DOC/.test(s)) {
@@ -697,6 +729,13 @@ function contaPadraoPorLogica(
   return fallback;
 }
 
+/** Contexto pré-computado para aplicar o resolver em lote sem O(n×plano) por linha. */
+export type ResolveExtratoContasSharedCtx = {
+  codeIndex: Map<string, string>;
+  bancoCanon: string;
+  regrasDoBanco: ExtratoRegraConta[];
+};
+
 export type ResolveExtratoContasInput = {
   description: string;
   operationName?: string;
@@ -719,6 +758,8 @@ export type ResolveExtratoContasInput = {
   /** Coligadas cadastradas — NÃO são clientes (AJTF etc.). */
   coligadas?: AiColigada[] | null;
   rowId?: string;
+  /** Índices/regras já montados (lote) — evita rebuild por linha. */
+  shared?: ResolveExtratoContasSharedCtx;
 };
 
 export type ResolveExtratoContasResult = {
@@ -759,8 +800,10 @@ export function resolveExtratoContasDebitoCredito(
   const significado = normalizeSignificadoExtrato(
     input.operationName?.trim() || input.description?.trim() || '',
   );
-  const codeIndex = buildPlanoCodeIndex(input.plano);
-  const bancoCanon = findContaBancoNoPlano(input.plano, input.contaBancoPreferida);
+  const codeIndex = input.shared?.codeIndex ?? buildPlanoCodeIndex(input.plano);
+  const bancoCanon =
+    input.shared?.bancoCanon ??
+    findContaBancoNoPlano(input.plano, input.contaBancoPreferida, codeIndex);
   const debManualRaw = input.contaDebitoManual?.trim();
   const credManualRaw = input.contaCreditoManual?.trim();
 
@@ -775,25 +818,32 @@ export function resolveExtratoContasDebitoCredito(
       logica === 'PAGAMENTO_FORNECEDOR')
       ? input.nature === 'C'
         ? 'EMPRESTIMO_RECEBIMENTO'
-        : 'EMPRESTIMO_PAGAMENTO'
+        : 'EMPRESTIMO_CONCESSAO'
       : logica;
 
   /** Contrapartida só via regra cadastrada; lado D/C das contas vem da natureza do extrato (coluna), não do texto. */
   // Filtra pelo código preferido (reduzido do layout) E pelo canônico do plano —
   // evita perder regras quando um lado está em reduzido e o outro em classificação.
-  const regrasDoBanco = filterExtratoRegrasPorBancoMulti(
-    input.regrasContas,
-    input.contaBancoPreferida,
-    bancoCanon,
-  );
+  const regrasDoBanco =
+    input.shared?.regrasDoBanco ??
+    filterExtratoRegrasPorBancoMulti(
+      input.regrasContas,
+      input.contaBancoPreferida,
+      bancoCanon,
+    );
   const regraHit = matchExtratoRegraConta(significado, input.nature, regrasDoBanco);
   if (regraHit) {
     // Conta banco da regra (ou preferida do layout) — lado certo pela natureza:
     // Entrada (C) → banco no DÉBITO · Saída (D) → banco no CRÉDITO.
     const bancoDaRegra =
-      findContaBancoNoPlano(input.plano, regraHit.contaBanco) || bancoCanon;
+      findContaBancoNoPlano(input.plano, regraHit.contaBanco, codeIndex) ||
+      bancoCanon ||
+      findContaBancoNoPlano(input.plano, input.contaBancoPreferida, codeIndex);
+    // Contrapartida da regra = exatamente a conta cadastrada (código reduzido).
     let contraCanon =
+      normalizeExtratoContaParaGravacao(regraHit.contaContrapartida, input.plano) ||
       canonizarContaPlano(regraHit.contaContrapartida, codeIndex) ||
+      sanitizeCodigoReduzido(regraHit.contaContrapartida) ||
       regraHit.contaContrapartida.trim();
     // Coligada no histórico: nunca aceitar conta de FORNECEDOR/CLIENTE da regra
     if (coligadaHit && contraCanon) {
@@ -815,37 +865,29 @@ export function resolveExtratoContasDebitoCredito(
         }
       }
     }
-    if (
-      contraCanon &&
-      bancoDaRegra &&
-      normCls(contraCanon) !== normCls(bancoDaRegra) &&
-      isContaManualValida(contraCanon, codeIndex)
-    ) {
-      const contraPlano = input.plano.find((p) => normCls(p.code) === normCls(contraCanon));
-      if (!contraPlano || isContaContrapartidaValida(contraPlano)) {
-        const par = enforceBancoSide(
-          input.nature,
-          bancoDaRegra,
-          input.nature === 'D' ? contraCanon : bancoDaRegra,
-          input.nature === 'C' ? contraCanon : bancoDaRegra,
-        );
-        // Nunca exportar/aplicar Débito = Crédito
-        if (normCls(par.contaDebito) === normCls(par.contaCredito)) {
-          /* cai para próximos fallbacks */
-        } else {
-          return {
-            contaDebito: canonizarContaPlano(par.contaDebito, codeIndex) || par.contaDebito,
-            contaCredito: canonizarContaPlano(par.contaCredito, codeIndex) || par.contaCredito,
-            significado,
-            logica: coligadaHit
-              ? input.nature === 'C'
-                ? 'EMPRESTIMO_RECEBIMENTO'
-                : 'EMPRESTIMO_PAGAMENTO'
-              : logicaFinal,
-            fromCache: false,
-            regraContaId: regraHit.id,
-          };
-        }
+    if (contraCanon && bancoDaRegra && normCls(contraCanon) !== normCls(bancoDaRegra)) {
+      const par = enforceBancoSide(
+        input.nature,
+        bancoDaRegra,
+        input.nature === 'D' ? contraCanon : bancoDaRegra,
+        input.nature === 'C' ? contraCanon : bancoDaRegra,
+      );
+      // Nunca exportar/aplicar Débito = Crédito
+      if (normCls(par.contaDebito) !== normCls(par.contaCredito)) {
+        return {
+          contaDebito:
+            normalizeExtratoContaParaGravacao(par.contaDebito, input.plano) || par.contaDebito,
+          contaCredito:
+            normalizeExtratoContaParaGravacao(par.contaCredito, input.plano) || par.contaCredito,
+          significado,
+          logica: coligadaHit
+            ? input.nature === 'C'
+              ? 'EMPRESTIMO_RECEBIMENTO'
+              : 'EMPRESTIMO_CONCESSAO'
+            : logicaFinal,
+          fromCache: false,
+          regraContaId: regraHit.id,
+        };
       }
     }
   }
@@ -869,10 +911,10 @@ export function resolveExtratoContasDebitoCredito(
       );
       if (normCls(par.contaDebito) !== normCls(par.contaCredito)) {
         return {
-          contaDebito: canonizarContaPlano(par.contaDebito, codeIndex) || par.contaDebito,
-          contaCredito: canonizarContaPlano(par.contaCredito, codeIndex) || par.contaCredito,
+          contaDebito: normalizeExtratoContaParaGravacao(par.contaDebito, input.plano),
+          contaCredito: normalizeExtratoContaParaGravacao(par.contaCredito, input.plano),
           significado,
-          logica: input.nature === 'C' ? 'EMPRESTIMO_RECEBIMENTO' : 'EMPRESTIMO_PAGAMENTO',
+          logica: input.nature === 'C' ? 'EMPRESTIMO_RECEBIMENTO' : 'EMPRESTIMO_CONCESSAO',
           fromCache: false,
         };
       }
@@ -895,8 +937,8 @@ export function resolveExtratoContasDebitoCredito(
     );
     if (normCls(par.contaDebito) !== normCls(par.contaCredito)) {
       return {
-        contaDebito: par.contaDebito,
-        contaCredito: par.contaCredito,
+        contaDebito: normalizeExtratoContaParaGravacao(par.contaDebito, input.plano),
+        contaCredito: normalizeExtratoContaParaGravacao(par.contaCredito, input.plano),
         significado,
         logica: logicaFinal,
         fromCache: false,
@@ -906,8 +948,8 @@ export function resolveExtratoContasDebitoCredito(
 
   const par = buildExtratoParSoBanco(input.nature, bancoCanon);
   return {
-    contaDebito: par.contaDebito,
-    contaCredito: par.contaCredito,
+    contaDebito: normalizeExtratoContaParaGravacao(par.contaDebito, input.plano),
+    contaCredito: normalizeExtratoContaParaGravacao(par.contaCredito, input.plano),
     significado,
     logica: logicaFinal,
     fromCache: false,
@@ -962,12 +1004,24 @@ export function applyExtratoContaResolver<T extends ExtratoRowComContas>(
 ): { rows: T[]; cache: ExtratoContaMappingCache; pendingSemNota: ExtratoSemNotaPendingRow[] } {
   if (plano.length === 0) return { rows, cache, pendingSemNota: [] };
   const pendingSemNota: ExtratoSemNotaPendingRow[] = [];
-  const bancoCanon = findContaBancoNoPlano(plano, options?.contaBancoPreferida);
+  const codeIndex = buildPlanoCodeIndex(plano);
+  const bancoCanon = findContaBancoNoPlano(plano, options?.contaBancoPreferida, codeIndex);
+  const regrasDoBanco = filterExtratoRegrasPorBancoMulti(
+    options?.regrasContas,
+    options?.contaBancoPreferida,
+    bancoCanon,
+  );
+  const shared: ResolveExtratoContasSharedCtx = {
+    codeIndex,
+    bancoCanon,
+    regrasDoBanco,
+  };
   const normBanco = bancoCanon.replace(/\D/g, '');
   const isBanco = (code: string) => {
     const n = code.replace(/\D/g, '');
     return Boolean(normBanco && n && n === normBanco);
   };
+  let nextCache = cache;
 
   const out = rows.map((row) => {
     // Preserva conciliação manual já gravada na linha (não apagar no auto-reapply).
@@ -976,7 +1030,7 @@ export function applyExtratoContaResolver<T extends ExtratoRowComContas>(
       operationName: row.operationName,
       nature: row.nature,
       plano,
-      cache: {},
+      cache: nextCache,
       contaDebitoManual: row.accountDebit,
       contaCreditoManual: row.accountCredit,
       contaBancoPreferida: options?.contaBancoPreferida,
@@ -985,12 +1039,37 @@ export function applyExtratoContaResolver<T extends ExtratoRowComContas>(
       rowId: row.id,
       value: row.value,
       date: row.date,
+      shared,
     });
+
+    if (resolved.significado && (resolved.contaDebito || resolved.contaCredito)) {
+      nextCache = mergeExtratoContaCache(nextCache, resolved.significado, {
+        contaDebito: resolved.contaDebito,
+        contaCredito: resolved.contaCredito,
+      });
+    }
 
     let deb = resolved.contaDebito;
     let cred = resolved.contaCredito;
     const prevDeb = row.accountDebit?.trim() ?? '';
     const prevCred = row.accountCredit?.trim() ?? '';
+
+    // Regra cadastrada venceu: usa EXATAMENTE as contas da regra (não preserva digitado antigo).
+    if (resolved.regraContaId) {
+      if (bancoCanon) {
+        const fixed = enforceBancoSide(row.nature, bancoCanon, deb, cred);
+        deb = fixed.contaDebito;
+        cred = fixed.contaCredito;
+      }
+      deb = normalizeExtratoContaParaGravacao(deb, plano) || deb;
+      cred = normalizeExtratoContaParaGravacao(cred, plano) || cred;
+      return {
+        ...row,
+        accountCode: '',
+        accountDebit: deb,
+        accountCredit: cred,
+      };
+    }
 
     // Se o usuário já digitou contrapartida e o resolver só devolveu o banco, mantém o digitado.
     if (row.nature === 'D') {
@@ -1026,6 +1105,10 @@ export function applyExtratoContaResolver<T extends ExtratoRowComContas>(
       }
     }
 
+    // SEMPRE código reduzido na gravação — nunca classificação.
+    deb = normalizeExtratoContaParaGravacao(deb, plano);
+    cred = normalizeExtratoContaParaGravacao(cred, plano);
+
     return {
       ...row,
       accountCode: '',
@@ -1033,5 +1116,57 @@ export function applyExtratoContaResolver<T extends ExtratoRowComContas>(
       accountCredit: cred,
     };
   });
-  return { rows: out, cache, pendingSemNota };
+  return { rows: out, cache: nextCache, pendingSemNota };
+}
+
+const RESOLVER_CHUNK_SIZE = 120;
+
+/**
+ * Mesma lógica de `applyExtratoContaResolver`, mas cede a main thread a cada lote
+ * para o navegador não travar em extratos grandes.
+ */
+export async function applyExtratoContaResolverAsync<T extends ExtratoRowComContas>(
+  rows: T[],
+  plano: ExtratoContaPlanoLike[],
+  cache: ExtratoContaMappingCache,
+  options?: {
+    contaBancoPreferida?: string;
+    fiscalContext?: ExtratoFiscalContext | null;
+    rfStore?: ReceitaFederalRegrasStore | null;
+    fiscalMap?: FiscalContaMap;
+    fiscalContas?: FiscalContasImpostoConfig;
+    semNotaDecisions?: ExtratoSemNotaDecisions;
+    regrasContas?: ExtratoRegraConta[] | null;
+    coligadas?: AiColigada[] | null;
+    chunkSize?: number;
+    signal?: AbortSignal;
+  },
+): Promise<{ rows: T[]; cache: ExtratoContaMappingCache; pendingSemNota: ExtratoSemNotaPendingRow[] }> {
+  if (plano.length === 0 || rows.length === 0) {
+    return { rows, cache, pendingSemNota: [] };
+  }
+  if (rows.length <= RESOLVER_CHUNK_SIZE) {
+    return applyExtratoContaResolver(rows, plano, cache, options);
+  }
+
+  const chunkSize = Math.max(40, options?.chunkSize ?? RESOLVER_CHUNK_SIZE);
+  const pendingSemNota: ExtratoSemNotaPendingRow[] = [];
+  let nextCache = cache;
+  const out: T[] = [];
+
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    if (options?.signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    const slice = rows.slice(i, i + chunkSize);
+    const part = applyExtratoContaResolver(slice, plano, nextCache, options);
+    out.push(...part.rows);
+    nextCache = part.cache;
+    pendingSemNota.push(...part.pendingSemNota);
+    if (i + chunkSize < rows.length) {
+      await yieldToMain();
+    }
+  }
+
+  return { rows: out, cache: nextCache, pendingSemNota };
 }

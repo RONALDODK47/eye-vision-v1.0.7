@@ -4,12 +4,11 @@
  */
 
 import React, { useRef, useState } from 'react';
-import { Upload, FileText, Image as ImageIcon, Sparkles, Check, AlertCircle } from 'lucide-react';
+import { Upload, FileText, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import type { DocMetadata } from '../../../lib/leitorRecortador/types';
 
 interface UploaderProps {
   onFileLoaded: (file: File) => void;
-  onLoadSample: () => void;
   metadata: DocMetadata | null;
   isProcessing: boolean;
   onPageChange?: (page: number) => void;
@@ -17,7 +16,6 @@ interface UploaderProps {
 
 export function LeitorRecortadorUploader({
   onFileLoaded,
-  onLoadSample,
   metadata,
   isProcessing,
   onPageChange,
@@ -101,20 +99,6 @@ export function LeitorRecortadorUploader({
           <span>{errorMsg}</span>
         </div>
       )}
-
-      {/* Quick Play Sample Button */}
-      <button
-        id="load-sample-btn"
-        onClick={(e) => {
-          e.stopPropagation();
-          onLoadSample();
-        }}
-        disabled={isProcessing}
-        className="technical-button w-full flex items-center justify-center gap-2 py-2 px-4 text-xs font-semibold disabled:opacity-50"
-      >
-        <Sparkles className="w-3.5 h-3.5 text-brand-text" />
-        Carregar Extrato de Exemplo
-      </button>
 
       {/* File metadata & controls */}
       {metadata && (

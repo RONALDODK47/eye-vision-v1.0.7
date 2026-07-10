@@ -178,6 +178,11 @@ type Props = {
   companyName?: string;
   /** Contas analíticas do plano (para escolher conta banco). */
   planoContaOptions?: ExtratoPlanoContaOption[];
+  /**
+   * Força o motor inicial (ex.: 'ai' para PDF scanner/imagem).
+   * Sobrescreve a preferência salva na aba IA.
+   */
+  initialExtractEngine?: AiExtractEngine;
 };
 
 const FAIXA_INICIO_ID = '__delimitacao_inicio__';
@@ -417,6 +422,7 @@ export function DocumentColunasModal({
   onCancel,
   companyName = '',
   planoContaOptions = [],
+  initialExtractEngine,
 }: Props) {
   useEffect(() => {
     notifyDebugModuleLoaded();
@@ -502,7 +508,9 @@ export function DocumentColunasModal({
     () => getOcrUserSettings().ignoreLineWords,
   );
   const [itauProfileActive, setItauProfileActive] = useState(false);
-  const [aiExtractEngine, setAiExtractEngine] = useState<AiExtractEngine>('hybrid');
+  const [aiExtractEngine, setAiExtractEngine] = useState<AiExtractEngine>(
+    () => initialExtractEngine ?? 'hybrid',
+  );
   const ignoreLineWordsList = useMemo(
     () => parseOcrIgnoreLineWords(ignoreLineWordsText),
     [ignoreLineWordsText],
@@ -612,15 +620,19 @@ export function DocumentColunasModal({
     });
   }, [file.name, isExtratoOcr, persistIgnoreLineWords]);
 
-  /** Carrega motor de extração IA (aba Contábil → IA). */
+  /** Carrega motor de extração IA (aba Contábil → IA). Scanner/imagem força 'ai'. */
   useEffect(() => {
     if (!isExtratoOcr) return;
+    if (initialExtractEngine) {
+      setAiExtractEngine(normalizeExtractEngine(initialExtractEngine));
+      return;
+    }
     void fetchAiConfig().then((cfg) => {
       if (cfg?.config?.extractEngine) {
         setAiExtractEngine(normalizeExtractEngine(cfg.config.extractEngine));
       }
     });
-  }, [isExtratoOcr]);
+  }, [isExtratoOcr, initialExtractEngine]);
 
   /** Auto-detecta Itaú na página 1 e aplica perfil (ignore words + OCR extrato). */
   useEffect(() => {
@@ -1044,13 +1056,18 @@ export function DocumentColunasModal({
         setClickStep('start');
         setActiveId(firstCampoId);
 
-        let loadEngine: AiExtractEngine = 'hybrid';
+        let loadEngine: AiExtractEngine = initialExtractEngine ?? 'hybrid';
         if (isExtratoOcr) {
-          const aiCfg = await fetchAiConfig();
-          if (cancelled) return;
-          if (aiCfg?.config?.extractEngine) {
-            loadEngine = normalizeExtractEngine(aiCfg.config.extractEngine);
+          if (initialExtractEngine) {
+            loadEngine = normalizeExtractEngine(initialExtractEngine);
             setAiExtractEngine(loadEngine);
+          } else {
+            const aiCfg = await fetchAiConfig();
+            if (cancelled) return;
+            if (aiCfg?.config?.extractEngine) {
+              loadEngine = normalizeExtractEngine(aiCfg.config.extractEngine);
+              setAiExtractEngine(loadEngine);
+            }
           }
         }
 

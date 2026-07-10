@@ -39,6 +39,15 @@ export function sanitizeCodigoReduzido(raw: string | undefined | null): string |
   return v;
 }
 
+/** Compara reduzidos ignorando zeros à esquerda (0000008 ≡ 8). */
+export function sameCodigoReduzido(a: string | undefined | null, b: string | undefined | null): boolean {
+  const sa = sanitizeCodigoReduzido(a);
+  const sb = sanitizeCodigoReduzido(b);
+  if (!sa || !sb) return false;
+  if (sa === sb) return true;
+  return String(parseInt(sa, 10)) === String(parseInt(sb, 10));
+}
+
 /**
  * Resolve qualquer código (reduzido ou classificação) para o CÓDIGO REDUZIDO do plano.
  * Retorna '' se for classificação sem reduzido correspondente (proibido na conciliação).
@@ -52,8 +61,11 @@ export function resolveCodigoReduzidoDoPlano(
 
   const asReduzido = sanitizeCodigoReduzido(input);
   if (asReduzido) {
-    const hit = plano.find((p) => sanitizeCodigoReduzido(p.codigoReduzido) === asReduzido);
-    if (hit) return asReduzido;
+    const hit = plano.find((p) => sameCodigoReduzido(p.codigoReduzido, asReduzido));
+    if (hit) {
+      // Devolve o reduzido canônico do plano (como está cadastrado).
+      return sanitizeCodigoReduzido(hit.codigoReduzido) ?? asReduzido;
+    }
   }
 
   const norm = (s: string) => s.replace(/[^\d]/g, '');
@@ -72,6 +84,63 @@ export function resolveCodigoReduzidoDoPlano(
   // Classificação sem reduzido → proibido
   if (isClassificacaoHierarquica(input)) return '';
   return '';
+}
+
+/**
+ * Normaliza conta do extrato para gravação/exibição.
+ * - Se o plano tem código reduzido: SEMPRE devolve o reduzido (nunca classificação).
+ * - Se o plano não tem reduzido (legado): mantém o código canônico do plano.
+ */
+export function normalizeExtratoContaParaGravacao(
+  raw: string,
+  plano: Array<{ code: string; name?: string; codigoReduzido?: string }>,
+): string {
+  const input = String(raw ?? '').trim();
+  if (!input) return '';
+
+  const red = resolveCodigoReduzidoDoPlano(input, plano);
+  if (red) return red;
+
+  // Plano sem reduzido: aceita classificação do próprio plano (modo legado).
+  const planoTemReduzido = plano.some((p) => Boolean(sanitizeCodigoReduzido(p.codigoReduzido)));
+  if (planoTemReduzido) {
+    // Classificação ou lixo sem reduzido correspondente → não grava.
+    return '';
+  }
+
+  const norm = (s: string) => s.replace(/[^\d]/g, '');
+  const inputNorm = norm(input);
+  const byClassif = plano.find((p) => {
+    const code = p.code.trim();
+    return code === input || norm(code) === inputNorm;
+  });
+  return byClassif?.code.trim() || '';
+}
+
+/**
+ * Migra linhas do extrato que ainda têm classificação → código reduzido.
+ * Retorna as mesmas linhas se nada mudou.
+ */
+export function migrateExtratoContasParaCodigoReduzido<
+  T extends { accountDebit?: string; accountCredit?: string; accountCode?: string },
+>(
+  rows: T[],
+  plano: Array<{ code: string; name?: string; codigoReduzido?: string }>,
+): T[] {
+  if (!rows.length || !plano.length) return rows;
+  let changed = false;
+  const next = rows.map((row) => {
+    const debRaw = String(row.accountDebit ?? '').trim();
+    const credRaw = String(row.accountCredit ?? '').trim();
+    const finalDeb = debRaw ? normalizeExtratoContaParaGravacao(debRaw, plano) : '';
+    const finalCred = credRaw ? normalizeExtratoContaParaGravacao(credRaw, plano) : '';
+    if (finalDeb !== debRaw || finalCred !== credRaw || Boolean(row.accountCode)) {
+      changed = true;
+      return { ...row, accountDebit: finalDeb, accountCredit: finalCred, accountCode: '' };
+    }
+    return row;
+  });
+  return changed ? next : rows;
 }
 
 /** Reduzido em export TXT largura fixa Domínio: 7 dígitos com zero à esquerda (ex.: 0000147). */

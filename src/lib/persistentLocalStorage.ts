@@ -16,11 +16,7 @@ export function writePersistedLocalStorageJson(key: string, value: unknown): voi
   if (!ok) {
     console.warn(`[storage] ${key} não coube no localStorage — mantido em memória / pasta.`);
   }
-  void import('../contabilfacil/logic/eyeVisionCloudPush').then(({ scheduleEyeVisionCloudPush }) => {
-    scheduleEyeVisionCloudPush();
-  });
-  // Espelha na pasta (e acende “Salvando” no header).
-  void import('./localFolderDatabase').then(({ scheduleLocalDatabaseSave }) => {
-    scheduleLocalDatabaseSave(600);
+  void import('../contabilfacil/logic/eyeVisionOperationalSave').then(({ scheduleEyeVisionOperationalSave }) => {
+    scheduleEyeVisionOperationalSave();
   });
 }

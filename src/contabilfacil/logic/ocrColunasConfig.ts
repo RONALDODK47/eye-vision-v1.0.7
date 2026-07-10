@@ -1,6 +1,14 @@
 import { PARCELAMENTO_CAMPOS } from '../../lib/parcelamentoColunasExtract';
 
-export type DataIngestionType = 'loans' | 'installments' | 'apps' | 'extrato' | 'plano' | 'balancete' | 'folha';
+export type DataIngestionType =
+  | 'loans'
+  | 'installments'
+  | 'apps'
+  | 'extrato'
+  | 'plano'
+  | 'balancete'
+  | 'folha'
+  | 'fiscal';
 
 export type OcrColunaCampoDef = {
   id: string;
@@ -21,7 +29,45 @@ export type OcrColunasModuleConfig = {
   supportsValorModo?: boolean;
   /** Plano de contas (e similares): seletor DocTR / IA / Híbrido na extração. */
   supportsExtractEngine?: boolean;
+  /** Tag padrão do modelo de layout (variant de PDF). */
+  layoutTag?: string;
 };
+
+export type PdfIngestVariant = {
+  id: string;
+  label: string;
+};
+
+export const FOLHA_PDF_VARIANTS: PdfIngestVariant[] = [
+  { id: 'folha', label: 'Folha / holerite' },
+  { id: 'folha_impostos', label: 'Impostos da folha' },
+  { id: 'folha_prolabore', label: 'Pró-labore' },
+];
+
+export const FISCAL_PDF_VARIANTS: PdfIngestVariant[] = [
+  { id: 'fiscal_impostos', label: 'Guias / impostos' },
+  { id: 'fiscal', label: 'Documento fiscal' },
+];
+
+export function folhaVariantDescriptionPrefix(variantId: string): string {
+  switch (variantId) {
+    case 'folha_impostos':
+      return '[IMPOSTOS FOLHA]';
+    case 'folha_prolabore':
+      return '[PROLABORE]';
+    default:
+      return '[FOLHA]';
+  }
+}
+
+export function fiscalVariantDescriptionPrefix(variantId: string): string {
+  switch (variantId) {
+    case 'fiscal_impostos':
+      return '[IMPOSTOS]';
+    default:
+      return '[FISCAL]';
+  }
+}
 
 const IGNORAR_CAMPOS: OcrColunaCampoDef[] = [
   {
@@ -62,12 +108,91 @@ const COMMON_HEADERS = [
   'vencimento',
 ];
 
-export function getOcrColunasConfig(dataType: DataIngestionType): OcrColunasModuleConfig {
+const DC_CAMPOS: OcrColunaCampoDef[] = [
+  { id: 'data', name: 'Data', color: 'bg-violet-500', borderColor: 'border-violet-500' },
+  { id: 'descricao', name: 'Descrição / Histórico', color: 'bg-blue-500', borderColor: 'border-blue-500' },
+  { id: 'debito', name: 'Débito (R$)', color: 'bg-red-500', borderColor: 'border-red-500' },
+  { id: 'credito', name: 'Crédito (R$)', color: 'bg-emerald-600', borderColor: 'border-emerald-600' },
+  { id: 'valorDc', name: 'Valor (D/C)', color: 'bg-orange-500', borderColor: 'border-orange-500' },
+  ...IGNORAR_CAMPOS,
+];
+
+function folhaProfileConfig(profile?: string): OcrColunasModuleConfig {
+  const tag = (profile || 'folha').trim() || 'folha';
+  if (tag === 'folha_impostos') {
+    return {
+      title: 'Mapear colunas — impostos da folha',
+      confirmLabel: 'Importar impostos da folha',
+      layoutTag: tag,
+      dataColIds: ['data', 'descricao', 'debito', 'credito', 'valorDc'],
+      headerKeywords: [...COMMON_HEADERS, 'inss', 'fgts', 'irrf', 'imposto', 'debito', 'credito'],
+      campos: DC_CAMPOS,
+    };
+  }
+  if (tag === 'folha_prolabore') {
+    return {
+      title: 'Mapear colunas — pró-labore',
+      confirmLabel: 'Importar pró-labore',
+      layoutTag: tag,
+      dataColIds: ['data', 'descricao', 'debito', 'credito', 'valorDc'],
+      headerKeywords: [...COMMON_HEADERS, 'prolabore', 'pro-labore', 'socio', 'debito', 'credito'],
+      campos: DC_CAMPOS,
+    };
+  }
+  return {
+    title: 'Mapear colunas — folha / relatório',
+    confirmLabel: 'Importar lançamentos',
+    layoutTag: 'folha',
+    dataColIds: ['data', 'descricao', 'debito', 'credito', 'valorDc'],
+    headerKeywords: [...COMMON_HEADERS, 'colaborador', 'salario', 'funcionario', 'debito', 'credito'],
+    campos: DC_CAMPOS,
+  };
+}
+
+function fiscalProfileConfig(profile?: string): OcrColunasModuleConfig {
+  const tag = (profile || 'fiscal').trim() || 'fiscal';
+  if (tag === 'fiscal_impostos') {
+    return {
+      title: 'Mapear colunas — guias / impostos',
+      confirmLabel: 'Importar impostos',
+      layoutTag: tag,
+      dataColIds: ['data', 'descricao', 'debito', 'credito', 'valorDc'],
+      headerKeywords: [
+        ...COMMON_HEADERS,
+        'pis',
+        'cofins',
+        'icms',
+        'irrf',
+        'csll',
+        'simples',
+        'das',
+        'imposto',
+        'debito',
+        'credito',
+      ],
+      campos: DC_CAMPOS,
+    };
+  }
+  return {
+    title: 'Mapear colunas — documento fiscal',
+    confirmLabel: 'Importar lançamentos fiscais',
+    layoutTag: 'fiscal',
+    dataColIds: ['data', 'descricao', 'debito', 'credito', 'valorDc'],
+    headerKeywords: [...COMMON_HEADERS, 'fiscal', 'imposto', 'debito', 'credito'],
+    campos: DC_CAMPOS,
+  };
+}
+
+export function getOcrColunasConfig(
+  dataType: DataIngestionType,
+  profile?: string,
+): OcrColunasModuleConfig {
   switch (dataType) {
     case 'loans':
       return {
         title: 'Mapear colunas — contratos',
         confirmLabel: 'Importar contratos',
+        layoutTag: 'loans',
         dataColIds: [
           'empresa',
           'contrato',
@@ -103,6 +228,7 @@ export function getOcrColunasConfig(dataType: DataIngestionType): OcrColunasModu
       return {
         title: 'Mapear colunas — cronograma',
         confirmLabel: 'Importar cronograma',
+        layoutTag: 'installments',
         dataColIds: ['numero', 'vencimento', 'valor', 'pagamento', 'juros', 'encargos', 'honorarios', 'multa'],
         headerKeywords: [
           ...COMMON_HEADERS,
@@ -128,6 +254,7 @@ export function getOcrColunasConfig(dataType: DataIngestionType): OcrColunasModu
       return {
         title: 'Mapear colunas — aplicações',
         confirmLabel: 'Importar aplicações',
+        layoutTag: 'apps',
         dataColIds: ['nomeAtivo', 'valorAplicado', 'taxa', 'indexador', 'dataAplicacao'],
         headerKeywords: [...COMMON_HEADERS, 'ativo', 'aplicacao', 'indexador'],
         campos: [
@@ -144,6 +271,7 @@ export function getOcrColunasConfig(dataType: DataIngestionType): OcrColunasModu
         title: 'Leitor e recortador — extrato',
         confirmLabel: 'Colar extrato na tabela',
         supportsValorModo: true,
+        layoutTag: 'extrato',
         dataColIds: [
           'data',
           'descricao',
@@ -179,6 +307,7 @@ export function getOcrColunasConfig(dataType: DataIngestionType): OcrColunasModu
         title: 'Mapear colunas — plano de contas',
         confirmLabel: 'Importar contas',
         supportsExtractEngine: true,
+        layoutTag: 'plano',
         dataColIds: ['codigoReduzido', 'codigoClassificacao', 'descricao', 'tipo', 'nivel'],
         headerKeywords: [
           'classifica',
@@ -221,6 +350,7 @@ export function getOcrColunasConfig(dataType: DataIngestionType): OcrColunasModu
       return {
         title: 'Mapear colunas — razão / balancete',
         confirmLabel: 'Importar lançamentos',
+        layoutTag: 'balancete',
         dataColIds: ['data', 'codigo', 'classificacao', 'descricao', 'debito', 'credito', 'valorDc'],
         headerKeywords: [
           ...COMMON_HEADERS,
@@ -248,19 +378,8 @@ export function getOcrColunasConfig(dataType: DataIngestionType): OcrColunasModu
         ],
       };
     case 'folha':
-      return {
-        title: 'Mapear colunas — folha / relatório',
-        confirmLabel: 'Importar lançamentos',
-        dataColIds: ['data', 'descricao', 'debito', 'credito', 'valorDc'],
-        headerKeywords: [...COMMON_HEADERS, 'colaborador', 'salario', 'funcionario', 'debito', 'credito'],
-        campos: [
-          { id: 'data', name: 'Data', color: 'bg-violet-500', borderColor: 'border-violet-500' },
-          { id: 'descricao', name: 'Descrição / Histórico', color: 'bg-blue-500', borderColor: 'border-blue-500' },
-          { id: 'debito', name: 'Débito (R$)', color: 'bg-red-500', borderColor: 'border-red-500' },
-          { id: 'credito', name: 'Crédito (R$)', color: 'bg-emerald-600', borderColor: 'border-emerald-600' },
-          { id: 'valorDc', name: 'Valor (D/C)', color: 'bg-orange-500', borderColor: 'border-orange-500' },
-          ...IGNORAR_CAMPOS,
-        ],
-      };
+      return folhaProfileConfig(profile);
+    case 'fiscal':
+      return fiscalProfileConfig(profile);
   }
 }

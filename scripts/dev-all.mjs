@@ -1,5 +1,5 @@
 /**
- * Desenvolvimento — API fiscal (:8780) + Vite (:3000) + doc-downloader (:8766).
+ * Desenvolvimento — API fiscal (:8780) + agent-api (:8790, Postgres/MinIO) + Vite (:3000) + doc-downloader (:8766).
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -11,6 +11,7 @@ import './load-env.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fiscalScript = path.join(root, 'scripts', 'fiscal-nfe-api.mjs');
+const agentApiScript = path.join(root, 'scripts', 'agent-api-server.mjs');
 const docDownloaderScript = path.join(root, 'scripts', 'start-doc-downloader.mjs');
 const docVenvPython =
   process.platform === 'win32'
@@ -26,6 +27,11 @@ const spawnOpts = { cwd: root, stdio: 'inherit', windowsHide: false };
 
 log('Iniciando API fiscal :8780…');
 const fiscal = spawn(process.execPath, [fiscalScript], spawnOpts);
+
+log('Iniciando agent-api :8790 (Postgres/MinIO)…');
+const agentApi = existsSync(agentApiScript)
+  ? spawn(process.execPath, [agentApiScript], spawnOpts)
+  : null;
 
 const vite = existsSync(viteBin)
   ? spawn(process.execPath, [viteBin], spawnOpts)
@@ -47,7 +53,7 @@ let exiting = false;
 function shutdown(code = 0) {
   if (exiting) return;
   exiting = true;
-  for (const proc of [fiscal, vite, docDownloader].filter(Boolean)) {
+  for (const proc of [fiscal, agentApi, vite, docDownloader].filter(Boolean)) {
     try {
       if (process.platform === 'win32' && proc.pid) {
         spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
@@ -72,6 +78,16 @@ function onChildExit(name, code) {
 }
 
 fiscal.on('exit', (code) => onChildExit('API fiscal', code));
+if (agentApi) {
+  // agent-api offline não derruba o Vite (Gemini/IA ainda pode falhar), mas avisa.
+  agentApi.on('exit', (code) => {
+    if (!exiting) {
+      console.error(
+        `[dev] agent-api encerrou (código ${code ?? '?'}). Workspace Postgres fica indisponível até reiniciar.`,
+      );
+    }
+  });
+}
 vite.on('exit', (code) => {
   if (!exiting) shutdown(code ?? 0);
 });

@@ -1,7 +1,9 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Trash2, Upload } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
+import MandarParaBalanceteButton from './MandarParaBalanceteButton';
 import { readManagerData, writeManagerData } from '../logic/companyWorkspace';
+import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import {
   formatSpedPeriodoLabel,
   loadSpedFiscalFromFiles,
@@ -213,29 +215,36 @@ export default function FiscalSpedImportPanel({
     { debito: 0, credito: 0 },
   );
 
-  const postBalanceteSeAutomacao = useCallback(
-    (mergedSped: FiscalSpedArquivoSalvo[], mergedPgdas: FiscalPgdasArquivoSalvo[]) => {
-      if (!automationEnabled || (mergedSped.length === 0 && mergedPgdas.length === 0)) return;
-      const faltando = fiscalContasProntasParaAutomacao(contasImposto);
-      if (faltando.length === FISCAL_IMPOSTOS.length) {
-        setErro('Configure ao menos um par débito/crédito na subaba Contas para lançar no balancete.');
-        return;
-      }
-      const posted = postFiscalImportsNoRazao(selectedCompany, mergedSped, mergedPgdas, contasImposto);
+  const handleMandarSpedBalancete = useCallback(() => {
+    if (arquivos.length === 0 && arquivosPgdas.length === 0) {
+      setErro('Nenhum SPED/PGDAS importado para enviar ao balancete.');
+      return;
+    }
+    const faltando = fiscalContasProntasParaAutomacao(contasImposto);
+    if (faltando.length === FISCAL_IMPOSTOS.length) {
+      setErro('Configure ao menos um par débito/crédito na subaba Contas para lançar no balancete.');
+      return;
+    }
+    try {
+      const posted = postFiscalImportsNoRazao(selectedCompany, arquivos, arquivosPgdas, contasImposto);
+      void flushPersistenceAfterCriticalWrite();
       if (posted.gerados > 0) {
-        setSucesso(`${posted.gerados} lançamento(s) gerado(s) no balancete.`);
-      }
-      if (posted.pendencias.length > 0) {
+        setSucesso(`${posted.gerados} lançamento(s) enviados ao balancete.`);
+        setErro(null);
+      } else if (posted.pendencias.length > 0) {
         setErro(posted.pendencias.slice(0, 4).join(' · '));
+      } else {
+        setSucesso('Nada novo para enviar — já estavam no balancete (ou não geraram partidas).');
       }
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('contabilfacil-fiscal-sped-updated', { detail: { company: selectedCompany } }),
         );
       }
-    },
-    [automationEnabled, contasImposto, selectedCompany],
-  );
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao enviar para o balancete.');
+    }
+  }, [arquivos, arquivosPgdas, contasImposto, selectedCompany]);
 
   const onFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -278,7 +287,7 @@ export default function FiscalSpedImportPanel({
 
       const merged = [...arquivos, ...novos];
       persist(merged);
-      postBalanceteSeAutomacao(merged, arquivosPgdas);
+      setSucesso(`${novos.length} arquivo(s) SPED importado(s). Use «Mandar para o balancete» para publicar.`);
       if (avisos.length) {
         setErro((prev) => [prev, avisos.slice(0, 3).join(' · ')].filter(Boolean).join(' · '));
       }
@@ -305,7 +314,7 @@ export default function FiscalSpedImportPanel({
         postRazao: false,
       });
       persistPgdas(merged);
-      postBalanceteSeAutomacao(arquivos, merged);
+      setSucesso('PGDAS importado. Use «Mandar para o balancete» para publicar.');
       if (messages.length) {
         setErro((prev) => [prev, messages.slice(0, 3).join(' · ')].filter(Boolean).join(' · '));
       }
@@ -350,8 +359,8 @@ export default function FiscalSpedImportPanel({
           <div>
             <h3 className="text-[10px] font-black uppercase tracking-widest">Importar SPED</h3>
             <p className="text-[9px] font-bold uppercase opacity-50 mt-1 max-w-2xl">
-              Arquivos TXT do SPED Fiscal (EFD-Contribuições ou EFD ICMS/IPI). Com automação ligada, lança no
-              balancete ao importar.
+              Arquivos TXT do SPED Fiscal (EFD-Contribuições ou EFD ICMS/IPI). Use o botão para enviar ao
+              balancete após importar.
               {temImportados ? (
                 <span className="block mt-1 normal-case">
                   {totalImpostos} linha(s) de impostos — consulte a aba <strong>Impostos</strong>.
@@ -360,6 +369,11 @@ export default function FiscalSpedImportPanel({
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <MandarParaBalanceteButton
+              onClick={handleMandarSpedBalancete}
+              disabled={!temImportados}
+              count={totalImpostos || undefined}
+            />
             <input
               ref={inputRef}
               type="file"

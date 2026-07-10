@@ -1,3 +1,14 @@
+/**
+ * Fallback local — só usado se Postgres/Docker estiver desligado.
+ * Com VITE_STORAGE_BACKEND=postgres o dbClient NÃO grava workspace aqui no navegador.
+ */
+import {
+  listMemoryFallbackEntries,
+  safeLocalStorageGetItem,
+  safeLocalStorageRemoveItem,
+  safeLocalStorageSetItem,
+} from '../lib/safeLocalStorage';
+
 type GenericRecord = Record<string, unknown>;
 
 const CLOUD_ACCESS_CONFIG_KEY = 'gc_cloud_access_config';
@@ -7,7 +18,7 @@ const WORKSPACE_MANAGER_PREFIX = 'gc_cloud_workspace_manager_';
 
 function safeRead<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeLocalStorageGetItem(key);
     if (!raw) return fallback;
     return JSON.parse(raw) as T;
   } catch {
@@ -16,7 +27,8 @@ function safeRead<T>(key: string, fallback: T): T {
 }
 
 function safeWrite(key: string, value: unknown): void {
-  localStorage.setItem(key, JSON.stringify(value));
+  // Workspace keys são operacionais — com Docker ativo ficam só em memória.
+  safeLocalStorageSetItem(key, JSON.stringify(value));
 }
 
 function nowIso(): string {
@@ -144,15 +156,39 @@ async function listManagerByOffice(officeToken: string): Promise<GenericRecord[]
   if (!token) return [];
 
   const prefix = `${WORKSPACE_MANAGER_PREFIX}${token}::`;
+  const keys = new Set<string>();
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) keys.add(key);
+    }
+  } catch {
+    /* ignore */
+  }
+  for (const [key] of listMemoryFallbackEntries()) {
+    if (key.startsWith(prefix)) keys.add(key);
+  }
+
   const rows: GenericRecord[] = [];
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
-    if (!key || !key.startsWith(prefix)) continue;
+  for (const key of keys) {
     const row = safeRead<GenericRecord | null>(key, null);
     if (row) rows.push(row);
   }
   rows.sort((a, b) => String(a.company_slug || '').localeCompare(String(b.company_slug || ''), 'pt-BR'));
   return rows;
+}
+
+async function deleteManager(
+  officeToken: string,
+  companySlug: string,
+  _uid: string,
+): Promise<{ updated_at: string }> {
+  const token = String(officeToken || '').trim();
+  const slug = String(companySlug || '').trim();
+  const updated_at = nowIso();
+  if (!token || !slug) return { updated_at };
+  safeLocalStorageRemoveItem(managerKey(token, slug));
+  return { updated_at };
 }
 
 async function listAllProfiles(): Promise<GenericRecord[]> {
@@ -169,6 +205,7 @@ export const dbClient = {
       getOffice,
       setManager,
       listManagerByOffice,
+      deleteManager,
     },
     UserProfile: {
       listAll: listAllProfiles,

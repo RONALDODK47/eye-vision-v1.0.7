@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: eye-vision-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: eye
+      POSTGRES_PASSWORD: eye
+      POSTGRES_DB: eye_vision
+    ports:
+      - '5432:5432'
+    volumes:
+      - eye_vision_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U eye -d eye_vision']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: eye-vision-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: eyevision
+      MINIO_ROOT_PASSWORD: eyevisionsecret
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - eye_vision_minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: eye-vision-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 eyevision eyevisionsecret;
+      mc mb -p local/eye-vision || true;
+      mc anonymous set download local/eye-vision || true;
+      exit 0;
+      "
+
+volumes:
+  eye_vision_pg_data:
+  eye_vision_minio_data:

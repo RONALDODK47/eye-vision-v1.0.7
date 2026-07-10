@@ -33,7 +33,10 @@ import LoanCalcParamsPanel from './LoanCalcParamsPanel';
 import { LoanAmortizationInfoHint } from './LoanAmortizationInfoHint';
 import LoanContasTab from './LoanContasTab';
 import LoanScheduleVirtualTable from './LoanScheduleVirtualTable';
+import MandarParaBalanceteButton from './MandarParaBalanceteButton';
 import { useLoanModuleState } from '../logic/useLoanModuleState';
+import { postEmprestimoNoRazao } from '../logic/loanBalanceteAutomation';
+import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import { parseCurrency } from '../../lib/simTabFields';
 import {
   SIM_VAR_MODE_OPTIONS,
@@ -154,7 +157,8 @@ export default function LoanModule({
     const paymentRows = rawSchedule.filter((r) => r.month > 0);
     const paymentAmount = (r: (typeof paymentRows)[0]) => {
       if (r.installment > 0) return r.installment;
-      if (r.isGrace) return r.interest + r.monthlyCost;
+      // Carência capitalizada: sem pagamento (juros capitalizam no saldo).
+      if (r.isGrace) return 0;
       return r.amortization + r.interest + r.monthlyCost;
     };
     const withPayment = paymentRows.filter((r) => paymentAmount(r) > 0);
@@ -181,6 +185,50 @@ export default function LoanModule({
 
   const handleExportDomínio = () => {
     handleExportDominio();
+  };
+
+  const handleMandarEmprestimoBalancete = () => {
+    if (!canExport || !selectedId || !activeTab) {
+      alert('Calcule o empréstimo e configure as contas antes de enviar ao balancete.');
+      return;
+    }
+    try {
+      const exportConfig = {
+        accJurosAproDebit: activeTab.accJurosAproDebit,
+        accJurosAproCredit: activeTab.accJurosAproCredit,
+        accApropriacaoDebit: activeTab.accApropriacaoDebit,
+        accApropriacaoCredit: activeTab.accApropriacaoCredit,
+        accTransferenciaDebit: activeTab.accTransferenciaDebit,
+        accTransferenciaCredit: activeTab.accTransferenciaCredit,
+        accEmprestimoDebit: activeTab.accEmprestimoDebit,
+        accEmprestimoCredit: activeTab.accEmprestimoCredit,
+        valorIof: parseCurrency(activeTab.valorIofStr),
+        accIofDebit: activeTab.accIofDebit,
+        accIofCredit: activeTab.accIofCredit,
+        codigoHistoricoDominio: activeTab.dominioCodigoHistoricoStr,
+        complementoHistoricoDominio: activeTab.dominioComplementoHistoricoStr,
+        dataGerarLancamentosAPartirStr: activeTab.dataGerarLancamentosAPartirStr?.trim() || undefined,
+        omitTransferenciaLongoParaCurto: false,
+      };
+      const { gerados, pendencias } = postEmprestimoNoRazao(
+        selectedCompany,
+        selectedId,
+        rawSchedule,
+        exportConfig,
+      );
+      void flushPersistenceAfterCriticalWrite();
+      if (pendencias.length && gerados <= 0) {
+        alert(pendencias.join('\n'));
+        return;
+      }
+      alert(
+        gerados > 0
+          ? `${gerados} lançamento(s) do empréstimo enviados ao balancete.\n\nAbra a aba Balancete para conferir.`
+          : 'Nada novo para enviar — já estavam no balancete (ou não geraram partidas).',
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Falha ao enviar para o balancete.');
+    }
   };
 
   const loanMainTabs: { id: LoanMainTab; label: string }[] = [
@@ -805,6 +853,11 @@ export default function LoanModule({
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-4 justify-center">
+                    <MandarParaBalanceteButton
+                      onClick={handleMandarEmprestimoBalancete}
+                      disabled={!canExport}
+                      className="technical-button-primary disabled:opacity-40 text-[10px] py-2 px-3"
+                    />
                     <button 
                       onClick={handleExportDomínio}
                       disabled={!canExport}
@@ -863,6 +916,7 @@ export default function LoanModule({
           ? renderSimulacaoTab()
           : (
             <LoanContasTab
+              selectedCompany={selectedCompany}
               contracts={contracts}
               selectedId={selectedId}
               onSelectContract={(id) => {

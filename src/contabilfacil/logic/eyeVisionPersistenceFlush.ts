@@ -1,41 +1,46 @@
 import { flushManagerDataWrites } from './companyWorkspace';
-import { flushEyeVisionCloudPushSafe } from './eyeVisionCloudPush';
+import { flushEyeVisionCloudPushSafe, scheduleEyeVisionCloudPush } from './eyeVisionCloudPush';
 import { isEyeVisionCloudPushPaused } from './eyeVisionCloudSync';
+import { scheduleEyeVisionOperationalSave } from './eyeVisionOperationalSave';
 import {
   flushLocalDatabaseSave,
   isLocalFolderDbConfigured,
 } from '../../lib/localFolderDatabase';
 
+function runWhenIdle(fn: () => void, timeoutMs = 4000): void {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(fn, { timeout: timeoutMs });
+  } else {
+    setTimeout(fn, 0);
+  }
+}
+
 /** Grava localStorage pendente + pasta selecionada. Nuvem só se não estiver pausada. */
 export async function flushAllEyeVisionPersistence(): Promise<void> {
   flushManagerDataWrites();
   if (isLocalFolderDbConfigured()) {
-    await flushLocalDatabaseSave();
+    await flushLocalDatabaseSave({ light: true, force: true });
   }
   if (!isEyeVisionCloudPushPaused()) {
-    await flushEyeVisionCloudPushSafe();
+    await flushEyeVisionCloudPushSafe({ force: true });
   }
 }
 
-/** Após importações (plano, extrato, regras): força disco na pasta agora. */
+/**
+ * Após salvar layout/importar — grava memória imediata e agenda sync pesado em idle.
+ */
 export async function flushPersistenceAfterCriticalWrite(): Promise<void> {
   flushManagerDataWrites();
-  if (isLocalFolderDbConfigured()) {
-    await flushLocalDatabaseSave();
-  }
+  scheduleEyeVisionOperationalSave();
+  return new Promise((resolve) => {
+    runWhenIdle(() => resolve(), 1200);
+  });
 }
 
-const PERIODIC_FLUSH_MS = 120_000;
+const PERIODIC_FLUSH_MS = 180_000;
 
 function schedulePersistenceFlush(): void {
-  const run = () => {
-    void flushAllEyeVisionPersistence();
-  };
-  if (typeof requestIdleCallback === 'function') {
-    requestIdleCallback(run, { timeout: 5000 });
-  } else {
-    setTimeout(run, 0);
-  }
+  scheduleEyeVisionOperationalSave();
 }
 
 /**

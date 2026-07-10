@@ -19,6 +19,8 @@ export type ExtratoOperacaoLogica =
   | 'LIQUIDACAO_COBRANCA'
   | 'EMPRESTIMO_PAGAMENTO'
   | 'EMPRESTIMO_RECEBIMENTO'
+  /** Saída de caixa concedendo empréstimo/mútuo → contrapartida no ATIVO. */
+  | 'EMPRESTIMO_CONCESSAO'
   | 'TRANSFERENCIA'
   | 'FOLHA_PAGAMENTO'
   | 'PAGAMENTO_SOCIO'
@@ -322,13 +324,54 @@ export function escolherContrapartidaContabilSenior(
         )
       );
 
+    case 'EMPRESTIMO_CONCESSAO':
+      // Dinheiro saindo = empréstimo a receber / mútuo ativo (não passivo).
+      return (
+        pickConta(
+          plano,
+          (c) => {
+            const g = c.group ?? derivePlanoGroupFromCode(c.code);
+            const n = normNome(c.name);
+            return (
+              g === 'ATIVO' &&
+              /EMPRESTIMO|FINANCIAMENTO|MUTUO|M[UÚ]TUO|A\s+RECEBER|COLIGAD|PARTES?\s+RELACIONAD|INTERCOMPANY/.test(
+                n,
+              )
+            );
+          },
+          logica,
+          significado,
+        ) ||
+        pickConta(
+          plano,
+          (c) => {
+            const g = c.group ?? derivePlanoGroupFromCode(c.code);
+            return g === 'ATIVO' && /EMPRESTIMO|MUTUO|M[UÚ]TUO/.test(normNome(c.name));
+          },
+          logica,
+          significado,
+        )
+      );
+
     case 'EMPRESTIMO_PAGAMENTO':
-    case 'EMPRESTIMO_RECEBIMENTO':
+      // Amortização / pagamento de dívida de empréstimo → passivo.
       return pickConta(
         plano,
         (c) => {
           const g = c.group ?? derivePlanoGroupFromCode(c.code);
-          return g === 'PASSIVO' && /EMPRESTIMO|FINANCIAMENTO/.test(normNome(c.name));
+          return g === 'PASSIVO' && /EMPRESTIMO|FINANCIAMENTO|MUTUO|M[UÚ]TUO/.test(normNome(c.name));
+        },
+        logica,
+        significado,
+      );
+
+    case 'EMPRESTIMO_RECEBIMENTO':
+      // Liberação / entrada de empréstimo tomado → passivo.
+      return pickConta(
+        plano,
+        (c) => {
+          const g = c.group ?? derivePlanoGroupFromCode(c.code);
+          return g === 'PASSIVO' && /EMPRESTIMO|FINANCIAMENTO|MUTUO|M[UÚ]TUO/.test(normNome(c.name));
         },
         logica,
         significado,
@@ -437,6 +480,7 @@ const LOGICAS_SEM_PERGUNTA_NF = new Set<ExtratoOperacaoLogica>([
   'IMPOSTO_TRIBUTO',
   'EMPRESTIMO_PAGAMENTO',
   'EMPRESTIMO_RECEBIMENTO',
+  'EMPRESTIMO_CONCESSAO',
   'FOLHA_PAGAMENTO',
   'PAGAMENTO_SOCIO',
   'SAQUE',

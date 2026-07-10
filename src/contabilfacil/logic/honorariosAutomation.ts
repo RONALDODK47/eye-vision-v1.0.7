@@ -75,12 +75,9 @@ export function sincronizarHonorariosAutomacao(
   const merged = mesclarLancamentosHonorarios(manuais, automaticos);
   saveHonorariosLancamentos(companyName, merged);
 
-  const posted = postHonorariosNoRazao(companyName, contas);
-  return {
-    ok: posted.gerados > 0 || posted.pendencias.length === 0,
-    pendencias: posted.pendencias,
-    gerados: posted.gerados,
-  };
+  // Só gera lançamentos locais — postagem ao balancete é explícita pelo botão.
+  void contas;
+  return { ok: true, pendencias: [], gerados: automaticos.length };
 }
 
 export function atualizarValoresHonorariosMeses(
@@ -135,7 +132,6 @@ export function salvarConfigHonorariosAutomacao(
   if (!next.automationEnabled) {
     const semAuto = loadHonorariosLancamentos(companyName).filter((l) => !isHonorariosLancamentoAuto(l.id));
     saveHonorariosLancamentos(companyName, semAuto);
-    postHonorariosNoRazao(companyName, contas);
     return { ok: true, pendencias: [] };
   }
 
@@ -173,11 +169,15 @@ export function registrarHonorario(
   const existentes = loadHonorariosLancamentos(companyName);
   saveHonorariosLancamentos(companyName, [...existentes, lancamento]);
 
-  const posted = postHonorariosNoRazao(companyName, cfg);
-  if (posted.gerados <= 0 && posted.pendencias.length) {
-    return { ok: false, pendencias: posted.pendencias, lancamento };
+  // Só grava o lançamento — postagem ao balancete é explícita pelo botão.
+  if (!cfg.debito.trim() || !cfg.credito.trim()) {
+    return {
+      ok: true,
+      pendencias: ['Lançamento salvo. Configure as contas e use «Mandar para o balancete».'],
+      lancamento,
+    };
   }
-  return { ok: true, pendencias: posted.pendencias, lancamento };
+  return { ok: true, pendencias: [], lancamento };
 }
 
 export function removerHonorario(companyName: string, id: string): void {
@@ -194,7 +194,6 @@ export function removerHonorario(companyName: string, id: string): void {
       if (settings.valorPadrao < 0.0001) {
         const next = loadHonorariosLancamentos(companyName).filter((l) => l.id !== id);
         saveHonorariosLancamentos(companyName, next);
-        postHonorariosNoRazao(companyName);
         return;
       }
     }
@@ -206,8 +205,6 @@ export function removerHonorario(companyName: string, id: string): void {
   const settings = loadHonorariosAutomacaoSettings(companyName);
   if (settings.automationEnabled) {
     sincronizarHonorariosAutomacao(companyName);
-  } else {
-    postHonorariosNoRazao(companyName);
   }
 }
 

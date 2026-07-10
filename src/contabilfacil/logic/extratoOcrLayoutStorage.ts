@@ -1,6 +1,9 @@
 import type { GenericColunaDef } from '../../lib/parcelamentoColunasExtract';
 import { companyStorageSlug } from './companyWorkspace';
-import { writePersistedLocalStorageJson } from '../../lib/persistentLocalStorage';
+import {
+  readPersistedLocalStorageJson,
+  writePersistedLocalStorageJson,
+} from '../../lib/persistentLocalStorage';
 
 export type ExtratoFaixaPaginaSaved = {
   faixaStartNorm: number;
@@ -54,17 +57,14 @@ function storageKey(companyName: string): string {
 }
 
 function readStore(companyName: string): ExtratoOcrLayoutStore {
-  try {
-    const raw = localStorage.getItem(storageKey(companyName));
-    if (!raw?.trim()) return { layouts: [], activeLayoutId: null };
-    const parsed = JSON.parse(raw) as Partial<ExtratoOcrLayoutStore>;
-    return {
-      layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [],
-      activeLayoutId: parsed.activeLayoutId ?? null,
-    };
-  } catch {
-    return { layouts: [], activeLayoutId: null };
-  }
+  const parsed = readPersistedLocalStorageJson<Partial<ExtratoOcrLayoutStore>>(
+    storageKey(companyName),
+    { layouts: [], activeLayoutId: null },
+  );
+  return {
+    layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [],
+    activeLayoutId: parsed.activeLayoutId ?? null,
+  };
 }
 
 function writeStore(companyName: string, store: ExtratoOcrLayoutStore): void {

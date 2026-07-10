@@ -2,7 +2,8 @@ import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef
 
 export const DEFAULT_ROW_HEIGHT_PX = 36;
 export const DEFAULT_OVERSCAN = 10;
-export const DEFAULT_VIRTUAL_THRESHOLD = 60;
+/** Extrato com pickers pesados: virtualiza cedo para não montar dezenas de linhas. */
+export const DEFAULT_VIRTUAL_THRESHOLD = 24;
 
 export interface VirtualWindow {
   startIndex: number;

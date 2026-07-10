@@ -5,6 +5,13 @@ import {
   resolveCodigoReduzidoDoPlano,
   sanitizeCodigoReduzido,
 } from './planoContasMapper';
+import type { AiColigada } from './aiInteligenciaStorage';
+import { listAiColigadasParaIa } from './aiInteligenciaStorage';
+import { safeLocalStorageGetItem, safeLocalStorageSetItem } from '../../lib/safeLocalStorage';
+import {
+  consolidateExtratoRegras,
+  mergeSugestoesIntoRegras,
+} from './extratoRegrasEntity';
 
 export type ExtratoRegraContaNature = 'D' | 'C';
 
@@ -121,7 +128,7 @@ export function migrateExtratoRegrasParaCodigoReduzido(
 
 function readLegacyV1(company: string, defaultBanco: string): ExtratoRegraConta[] {
   try {
-    const raw = localStorage.getItem(legacyStorageKey(company));
+    const raw = safeLocalStorageGetItem(legacyStorageKey(company));
     if (!raw?.trim()) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -141,7 +148,7 @@ export function loadExtratoRegrasContas(
   defaultContaBanco = '',
 ): ExtratoRegraConta[] {
   try {
-    const raw = localStorage.getItem(storageKey(company));
+    const raw = safeLocalStorageGetItem(storageKey(company));
     if (raw?.trim()) {
       const parsed = JSON.parse(raw) as unknown;
       if (Array.isArray(parsed)) {
@@ -163,10 +170,16 @@ export function loadExtratoRegrasContas(
   }
 }
 
-export function saveExtratoRegrasContas(company: string, regras: ExtratoRegraConta[]): ExtratoRegraConta[] {
-  const next = regras
+export function saveExtratoRegrasContas(
+  company: string,
+  regras: ExtratoRegraConta[],
+  coligadas?: AiColigada[],
+): ExtratoRegraConta[] {
+  const coligs = coligadas ?? listAiColigadasParaIa(company);
+  const sanitized = regras
     .map((r) => sanitizeRegra(r))
     .filter((r): r is ExtratoRegraConta => Boolean(r));
+  const next = consolidateExtratoRegras(sanitized, coligs);
   writePersistedLocalStorageJson(storageKey(company), next);
   void import('./eyeVisionPersistenceFlush').then(({ flushPersistenceAfterCriticalWrite }) => {
     void flushPersistenceAfterCriticalWrite();
@@ -176,7 +189,7 @@ export function saveExtratoRegrasContas(company: string, regras: ExtratoRegraCon
 
 export function loadExtratoRegrasBancoSelecionado(company: string, fallback = ''): string {
   try {
-    const raw = localStorage.getItem(selectedBancoKey(company));
+    const raw = safeLocalStorageGetItem(selectedBancoKey(company));
     if (!raw?.trim()) return fallback;
     // Aceita string pura ou JSON stringificado (legado gravava com JSON.stringify).
     try {
@@ -193,7 +206,7 @@ export function loadExtratoRegrasBancoSelecionado(company: string, fallback = ''
 
 export function saveExtratoRegrasBancoSelecionado(company: string, contaBanco: string): void {
   try {
-    localStorage.setItem(selectedBancoKey(company), contaBanco.trim());
+    safeLocalStorageSetItem(selectedBancoKey(company), contaBanco.trim());
     void import('./eyeVisionCloudPush')
       .then(({ scheduleEyeVisionCloudPush }) => {
         scheduleEyeVisionCloudPush();
@@ -222,13 +235,39 @@ export function addExtratoRegraConta(
 ): ExtratoRegraConta[] {
   const regra = sanitizeRegra({ ...draft, id: draft.id ?? crypto.randomUUID() });
   if (!regra) return loadExtratoRegrasContas(company);
-  return saveExtratoRegrasContas(company, [...loadExtratoRegrasContas(company), regra]);
+  const coligs = listAiColigadasParaIa(company);
+  const merged = mergeSugestoesIntoRegras({
+    current: loadExtratoRegrasContas(company),
+    sugestoes: [
+      {
+        descricao: regra.descricao,
+        nature: regra.nature,
+        contaContrapartida: regra.contaContrapartida,
+      },
+    ],
+    contaBanco: regra.contaBanco,
+    resolveContra: (raw) => sanitizeCodigoReduzido(raw) || raw,
+    coligadas: coligs,
+  });
+  return saveExtratoRegrasContas(company, merged.next, coligs);
 }
 
 export function removeExtratoRegraConta(company: string, id: string): ExtratoRegraConta[] {
   return saveExtratoRegrasContas(
     company,
     loadExtratoRegrasContas(company).filter((r) => r.id !== id),
+  );
+}
+
+export function removeExtratoRegrasPorBanco(
+  company: string,
+  contaBanco: string,
+): ExtratoRegraConta[] {
+  const norm = normContaBancoCode(contaBanco);
+  if (!norm) return loadExtratoRegrasContas(company);
+  return saveExtratoRegrasContas(
+    company,
+    loadExtratoRegrasContas(company).filter((r) => normContaBancoCode(r.contaBanco) !== norm),
   );
 }
 

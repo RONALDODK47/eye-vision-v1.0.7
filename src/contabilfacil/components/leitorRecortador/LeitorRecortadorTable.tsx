@@ -38,18 +38,22 @@ export function LeitorRecortadorTable({
   });
   
   // Filter rows based on exclusion rules (case-insensitive substring match on all fields)
-  const filteredRows = rows.filter(row => {
-    const textToSearch = [
-      row.dateText || '',
-      row.historyText || '',
-      row.valueText || ''
-    ].join(' ').toUpperCase();
-    
-    return !exclusionRules.some(rule => {
-      if (!rule.trim()) return false;
-      return textToSearch.includes(rule.trim().toUpperCase());
+  const filteredRows = React.useMemo(() => {
+    const rules = exclusionRules
+      .map((rule) => rule.trim().toUpperCase())
+      .filter(Boolean);
+    if (rules.length === 0) return rows;
+    return rows.filter((row) => {
+      const textToSearch = [
+        row.dateText || '',
+        row.historyText || '',
+        row.valueText || '',
+      ]
+        .join(' ')
+        .toUpperCase();
+      return !rules.some((rule) => textToSearch.includes(rule));
     });
-  });
+  }, [rows, exclusionRules]);
 
   const excludedRowsCount = rows.length - filteredRows.length;
 

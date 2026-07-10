@@ -1,10 +1,14 @@
 import { format } from 'date-fns';
 import {
-  collectSimuladorFullBackupForFolder,
   importSimuladorFullBackupOverwrite,
   type SimuladorFullBackupImportSummary,
   type SimuladorFullBackupV1,
 } from './simuladorFullBackup';
+import { yieldToMain } from '../contabilfacil/lib/deferIdle';
+import {
+  hasOperationalStorageDirty,
+  markOperationalFolderFlushed,
+} from '../contabilfacil/logic/eyeVisionOperationalSave';
 import {
   clearFolderHandle,
   loadFolderHandle,
@@ -12,14 +16,21 @@ import {
 } from './localFolderDbHandleStore';
 
 export const LOCAL_DB_MAIN_FILE = 'eye-vision-dados.json';
+export const LOCAL_DB_LATEST_POINTER = 'eye-vision-latest.json';
+export const LOCAL_DB_SAVE_PREFIX = 'eye-vision-dados_';
 export const LOCAL_FOLDER_DB_CHANGED = 'eye-vision-local-db-changed';
+const MAX_VERSIONED_SAVES = 120;
 const META_KEY = 'eye_vision_local_folder_db_v1';
 
 export type LocalFolderDbMeta = {
   folderLabel: string;
   lastSavedAt: string | null;
   lastLoadedAt: string | null;
-  /** Ativo após o primeiro Salvar — habilita auto-import e pausa Firebase */
+  lastSavedFile?: string | null;
+  /**
+   * Espelho local ativo (já salvou ao menos uma vez).
+   * NÃO pausa Postgres/MinIO — a pasta é backup paralelo de proteção.
+   */
   localDbActivated: boolean;
 };
 
@@ -77,6 +88,7 @@ function readMeta(): LocalFolderDbMeta | null {
       folderLabel: parsed.folderLabel ?? '',
       lastSavedAt: parsed.lastSavedAt ?? null,
       lastLoadedAt: parsed.lastLoadedAt ?? null,
+      lastSavedFile: parsed.lastSavedFile ?? null,
       localDbActivated: parsed.localDbActivated ?? Boolean(parsed.lastSavedAt),
     };
   } catch {
@@ -105,16 +117,21 @@ export function isLocalFolderDbConfigured(): boolean {
   return Boolean(readMeta()?.folderLabel);
 }
 
-/** Pasta configurada e primeiro salvamento concluído — fonte primária local. */
+/** Pasta configurada e já espelhada ao menos uma vez (backup paralelo). */
 export function isLocalFolderDbActivated(): boolean {
   const meta = readMeta();
   return Boolean(meta?.localDbActivated && meta.folderLabel);
 }
 
+/**
+ * Auto-load da pasta na abertura.
+ * Desligado: Postgres/MinIO são a fonte; a pasta só espelha (proteção).
+ */
 export function shouldAutoLoadLocalFolder(): boolean {
-  return isLocalFolderDbActivated();
+  return false;
 }
 
+/** @deprecated Preferir mirror — mantido para compat. */
 export function markLocalFolderDbActivated(): void {
   writeMeta({ localDbActivated: true });
 }
@@ -144,35 +161,116 @@ async function getWritableHandle(): Promise<FileSystemDirectoryHandle | null> {
   return stored;
 }
 
-async function readMainFile(handle: FileSystemDirectoryHandle): Promise<SimuladorFullBackupV1 | null> {
+async function readNamedJsonFile<T>(handle: FileSystemDirectoryHandle, name: string): Promise<T | null> {
   try {
-    const fileHandle = await handle.getFileHandle(LOCAL_DB_MAIN_FILE);
+    const fileHandle = await handle.getFileHandle(name);
     const file = await fileHandle.getFile();
     const text = await file.text();
     if (!text.trim()) return null;
-    return JSON.parse(text) as SimuladorFullBackupV1;
+    return JSON.parse(text) as T;
   } catch {
     return null;
   }
 }
 
-async function writeMainFile(
+async function writeNamedJsonFile(
   handle: FileSystemDirectoryHandle,
-  payload: SimuladorFullBackupV1,
+  name: string,
+  payload: unknown,
 ): Promise<void> {
-  const fileHandle = await handle.getFileHandle(LOCAL_DB_MAIN_FILE, { create: true });
+  await yieldToMain();
+  const serialized = JSON.stringify(payload);
+  await yieldToMain();
+  const fileHandle = await handle.getFileHandle(name, { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(payload, null, 2));
+  await writable.write(serialized);
   await writable.close();
 }
 
-async function writeHistoryCopy(handle: FileSystemDirectoryHandle, payload: SimuladorFullBackupV1): Promise<void> {
+async function readMainFile(handle: FileSystemDirectoryHandle): Promise<SimuladorFullBackupV1 | null> {
+  return readNamedJsonFile<SimuladorFullBackupV1>(handle, LOCAL_DB_MAIN_FILE);
+}
+
+type LatestSavePointer = {
+  file: string;
+  exportedAt: string;
+};
+
+async function readLatestPointer(handle: FileSystemDirectoryHandle): Promise<LatestSavePointer | null> {
+  return readNamedJsonFile<LatestSavePointer>(handle, LOCAL_DB_LATEST_POINTER);
+}
+
+async function writeLatestPointer(handle: FileSystemDirectoryHandle, pointer: LatestSavePointer): Promise<void> {
+  await writeNamedJsonFile(handle, LOCAL_DB_LATEST_POINTER, pointer);
+}
+
+function isVersionedSaveFile(name: string): boolean {
+  return name.startsWith(LOCAL_DB_SAVE_PREFIX) && name.endsWith('.json');
+}
+
+async function findNewestVersionedFile(handle: FileSystemDirectoryHandle): Promise<string | null> {
+  const names: string[] = [];
+  try {
+    for await (const entry of handle.values()) {
+      if (entry.kind === 'file' && isVersionedSaveFile(entry.name)) {
+        names.push(entry.name);
+      }
+    }
+  } catch {
+    return null;
+  }
+  if (names.length === 0) return null;
+  names.sort((a, b) => b.localeCompare(a));
+  return names[0] ?? null;
+}
+
+async function pruneOldVersionedSaves(handle: FileSystemDirectoryHandle): Promise<void> {
+  const names: string[] = [];
+  try {
+    for await (const entry of handle.values()) {
+      if (entry.kind === 'file' && isVersionedSaveFile(entry.name)) {
+        names.push(entry.name);
+      }
+    }
+  } catch {
+    return;
+  }
+  if (names.length <= MAX_VERSIONED_SAVES) return;
+  names.sort((a, b) => b.localeCompare(a));
+  for (const name of names.slice(MAX_VERSIONED_SAVES)) {
+    try {
+      await handle.removeEntry(name);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function writeVersionedSave(
+  handle: FileSystemDirectoryHandle,
+  payload: SimuladorFullBackupV1,
+): Promise<string> {
   const stamp = format(new Date(), 'yyyy-MM-dd_HHmmss');
-  const name = `eye-vision-dados_${stamp}.json`;
-  const fileHandle = await handle.getFileHandle(name, { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(payload, null, 2));
-  await writable.close();
+  const seq = String(Date.now() % 1000).padStart(3, '0');
+  const fileName = `${LOCAL_DB_SAVE_PREFIX}${stamp}_${seq}.json`;
+  await writeNamedJsonFile(handle, fileName, payload);
+  await writeLatestPointer(handle, { file: fileName, exportedAt: payload.exportedAt });
+  await pruneOldVersionedSaves(handle);
+  return fileName;
+}
+
+async function readLatestPayload(handle: FileSystemDirectoryHandle): Promise<SimuladorFullBackupV1 | null> {
+  const pointer = await readLatestPointer(handle);
+  if (pointer?.file) {
+    const fromPointer = await readNamedJsonFile<SimuladorFullBackupV1>(handle, pointer.file);
+    if (fromPointer) return fromPointer;
+  }
+  const newest = await findNewestVersionedFile(handle);
+  if (newest) {
+    const fromNewest = await readNamedJsonFile<SimuladorFullBackupV1>(handle, newest);
+    if (fromNewest) return fromNewest;
+  }
+  return readMainFile(handle);
 }
 
 export async function pickLocalDatabaseFolder(): Promise<FileSystemDirectoryHandle | null> {
@@ -194,21 +292,40 @@ export async function pickLocalDatabaseFolder(): Promise<FileSystemDirectoryHand
 }
 
 export async function saveLocalDatabaseToFolder(options?: {
+  /** @deprecated Cada gravação já gera arquivo versionado — não sobrescreve. */
   includeHistoryCopy?: boolean;
+  /** Auto-save: só localStorage/memória — sem IndexedDB nem PDFs base64. */
+  light?: boolean;
+  /** Ignora flag de dirty (fechar aba / backup manual). */
+  force?: boolean;
 }): Promise<string> {
+  if (!options?.force && !hasOperationalStorageDirty()) {
+    return readMeta()?.lastSavedAt ?? new Date().toISOString();
+  }
   const handle = await getWritableHandle();
   if (!handle) {
     throw new Error('Nenhuma pasta configurada. Use o botão Backup para escolher a pasta.');
   }
-  // Inclui textos completos da Inteligência IA (não só preview do localStorage)
-  const payload = await collectSimuladorFullBackupForFolder();
-  await writeMainFile(handle, payload);
-  if (options?.includeHistoryCopy) {
-    await writeHistoryCopy(handle, payload);
-  }
-  const at = new Date().toISOString();
-  writeMeta({ folderLabel: handle.name, lastSavedAt: at });
+  await yieldToMain();
+  const { collectSimuladorFullBackup, collectSimuladorFullBackupForFolder } = await import(
+    './simuladorFullBackup'
+  );
+  const payload = options?.light
+    ? await collectSimuladorFullBackupAsync(collectSimuladorFullBackup)
+    : await collectSimuladorFullBackupForFolder();
+  await yieldToMain();
+  const fileName = await writeVersionedSave(handle, payload);
+  const at = payload.exportedAt || new Date().toISOString();
+  writeMeta({ folderLabel: handle.name, lastSavedAt: at, lastSavedFile: fileName });
+  markOperationalFolderFlushed();
   return at;
+}
+
+async function collectSimuladorFullBackupAsync(
+  collect: () => SimuladorFullBackupV1,
+): Promise<SimuladorFullBackupV1> {
+  await yieldToMain();
+  return collect();
 }
 
 export async function loadLocalDatabaseFromFolder(): Promise<{
@@ -217,7 +334,7 @@ export async function loadLocalDatabaseFromFolder(): Promise<{
 } | null> {
   const handle = await getWritableHandle();
   if (!handle) return null;
-  const payload = await readMainFile(handle);
+  const payload = await readLatestPayload(handle);
   if (!payload) return null;
   const summary = importSimuladorFullBackupOverwrite(payload);
   writeMeta({
@@ -233,10 +350,9 @@ export async function loadLocalDatabaseFromFolder(): Promise<{
  * Agenda gravação na pasta selecionada.
  * Sempre sinaliza “Salvando” na UI; se a pasta estiver configurada, grava de verdade.
  */
-export function scheduleLocalDatabaseSave(delayMs = 800): void {
+export function scheduleLocalDatabaseSave(delayMs = 8000): void {
   setSavePhase('scheduled');
   if (!isLocalFolderDbConfigured()) {
-    // Dados já foram para o localStorage — feedback visual mesmo sem pasta.
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
@@ -247,12 +363,21 @@ export function scheduleLocalDatabaseSave(delayMs = 800): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    void flushLocalDatabaseSave();
+    const run = () => void flushLocalDatabaseSave({ light: true });
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(run, { timeout: 4000 });
+    } else {
+      run();
+    }
   }, delayMs);
 }
 
-export async function flushLocalDatabaseSave(): Promise<void> {
+export async function flushLocalDatabaseSave(options?: { light?: boolean; force?: boolean }): Promise<void> {
   if (!isLocalFolderDbConfigured()) return;
+  if (!options?.force && !hasOperationalStorageDirty()) {
+    setSavePhase('saved');
+    return;
+  }
   if (saveInFlight) {
     pendingSave = true;
     return;
@@ -260,7 +385,8 @@ export async function flushLocalDatabaseSave(): Promise<void> {
   saveInFlight = true;
   setSavePhase('saving');
   try {
-    await saveLocalDatabaseToFolder();
+    await saveLocalDatabaseToFolder({ light: options?.light ?? true, force: options?.force });
+    // Marca espelho ativo sem pausar cloud (Postgres/MinIO continuam).
     if (!isLocalFolderDbActivated()) {
       writeMeta({ localDbActivated: true });
     }
@@ -272,7 +398,7 @@ export async function flushLocalDatabaseSave(): Promise<void> {
     saveInFlight = false;
     if (pendingSave) {
       pendingSave = false;
-      void flushLocalDatabaseSave();
+      void flushLocalDatabaseSave({ light: true, force: hasOperationalStorageDirty() });
     }
   }
 }
@@ -287,18 +413,18 @@ export async function hydrateFromLocalDatabaseFolder(): Promise<boolean> {
   }
 }
 
-/** Escolhe a pasta de salvamento sem mover dados (Firebase continua ativo). */
+/** Escolhe a pasta de salvamento (espelho paralelo — Postgres/MinIO continuam ativos). */
 export async function configureLocalDatabaseFolder(): Promise<{
   folderName: string;
   hasExistingFile: boolean;
 }> {
   const handle = await pickLocalDatabaseFolder();
   if (!handle) throw new Error('Nenhuma pasta selecionada.');
-  const existing = await readMainFile(handle);
+  const existing = await readLatestPayload(handle);
   return { folderName: handle.name, hasExistingFile: Boolean(existing) };
 }
 
-/** Grava dados atuais na pasta e ativa banco local (pausa Firebase). */
+/** Grava snapshot completo na pasta (cópia histórica) — backup paralelo ao Postgres/MinIO. */
 export async function activateAndSaveLocalDatabase(): Promise<{
   folderName: string;
   savedAt: string;
@@ -307,12 +433,12 @@ export async function activateAndSaveLocalDatabase(): Promise<{
   if (!handle) {
     throw new Error('Nenhuma pasta configurada. Use Configurar para escolher a pasta.');
   }
-  const savedAt = await saveLocalDatabaseToFolder({ includeHistoryCopy: true });
+  const savedAt = await saveLocalDatabaseToFolder({ light: false, force: true });
   writeMeta({ localDbActivated: true });
   return { folderName: handle.name, savedAt };
 }
 
-/** Carrega da pasta e ativa banco local (para pasta que já tinha backup). */
+/** Carrega da pasta para o navegador (restauração manual). Cloud continua ativo. */
 export async function loadAndActivateLocalDatabase(): Promise<{
   summary: SimuladorFullBackupImportSummary;
   exportedAt: string;

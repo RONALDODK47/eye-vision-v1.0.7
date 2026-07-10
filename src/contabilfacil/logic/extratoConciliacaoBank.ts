@@ -69,3 +69,17 @@ export function countExtratoConciliados(rows: ExtratoBankRow[]): number {
 export function countExtratoPendentes(rows: ExtratoBankRow[]): number {
   return rows.length - countExtratoConciliados(rows);
 }
+
+/** Uma passagem: total / conciliadas / pendentes (evita 2–3 filters no placar). */
+export function summarizeExtratoConciliacao(rows: ExtratoBankRow[]): {
+  total: number;
+  conciliadas: number;
+  pendentes: number;
+} {
+  let conciliadas = 0;
+  for (const row of rows) {
+    if (isExtratoLancamentoConciliado(row)) conciliadas += 1;
+  }
+  const total = rows.length;
+  return { total, conciliadas, pendentes: total - conciliadas };
+}

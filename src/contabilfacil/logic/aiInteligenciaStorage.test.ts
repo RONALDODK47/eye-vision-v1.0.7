@@ -45,4 +45,14 @@ ECONOMICA COMERCIO
     expect(nomes.some((n) => n.includes('POLO SUL'))).toBe(true);
     expect(nomes.some((n) => n.includes('ECONOMICA'))).toBe(true);
   });
+
+  it('acha conta da coligada pelo nome no plano', async () => {
+    const { pickContaColigadaPorNomeNoPlano } = await import('./aiInteligenciaStorage');
+    const plano = [
+      { code: '114', name: 'A.J.T.F. LTDA', codigoReduzido: '1094', group: 'ATIVO' },
+      { code: '256', name: 'REAVALIACAO DE ATIVOS', codigoReduzido: '256', group: 'ATIVO' },
+    ];
+    const coligada = { id: '1', nome: 'AJTF', aliases: ['AJTF', 'A.J.T.F'] };
+    expect(pickContaColigadaPorNomeNoPlano(plano, coligada, 'D')).toBe('1094');
+  });
 });

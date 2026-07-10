@@ -18,6 +18,7 @@ import {
 } from './gemini-audit-prompts.mjs';
 import { handleAiExtractExtrato, handleAiExtractPlano, handleAiRefineOcrRows } from './ai-extract-handler.mjs';
 import { handleAiSuggestRegrasContas } from './ai-regras-contas-handler.mjs';
+import { handleAiSuggestModuloContas } from './ai-modulo-contas-handler.mjs';
 import { catalogForApi } from './ai-model-catalog.mjs';
 
 /** @param {{ deep?: boolean }} [opts] — deep=true faz ping real na API Google (lento). */
@@ -226,6 +227,9 @@ export async function dispatchGeminiApiRoute(pathname, method, body, search) {
   }
   if (pathname === '/ai/suggest-regras-contas' && method === 'POST') {
     return handleAiSuggestRegrasContas(body);
+  }
+  if (pathname === '/ai/suggest-modulo-contas' && method === 'POST') {
+    return handleAiSuggestModuloContas(body);
   }
   if (pathname === '/ai/models' && method === 'GET') {
     return { status: 200, body: catalogForApi() };

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, Suspense, lazy } from 'react';
 import { Download, Calendar, FileText, Upload, RefreshCw, CheckCircle, AlertCircle, HelpCircle, Loader2, Landmark, FileSpreadsheet } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { notifyImportIssue, notifyValidationIssue, notifyAiInsight } from '../../lib/aiProactiveNotify';
@@ -6,7 +6,7 @@ import { runExtratoGeminiAudit } from '../../lib/extratoGeminiAudit';
 import { geminiAuditExecutiveMessage, geminiAuditHasCriticalIssues } from '../../lib/geminiAuditReport';
 import type { ExtratoGeminiAuditResult } from '../../lib/geminiMonitorClient';
 import { canUseNativeConverter, ingestNativeFile } from '../logic/dataIngestionEngine';
-import { getOcrColunasConfig } from '../logic/ocrColunasConfig';
+import { getOcrColunasConfig, type PdfIngestVariant } from '../logic/ocrColunasConfig';
 import {
   mapOcrRowsToImportItems,
   mapOcrRowsToImportItemsWithPlanoInfer,
@@ -75,8 +75,20 @@ import {
   saveExtratoBancoParaImportacao,
 } from '../logic/extratoOcrLayoutStorage';
 
-import { ExtratoLeitorRecortadorModal } from './ExtratoLeitorRecortadorModal';
-import { LeitorRecortadorModal } from './LeitorRecortadorModal';
+const ExtratoLeitorRecortadorModal = lazy(() =>
+  import('./ExtratoLeitorRecortadorModal').then((m) => ({ default: m.ExtratoLeitorRecortadorModal })),
+);
+const LeitorRecortadorModal = lazy(() =>
+  import('./LeitorRecortadorModal').then((m) => ({ default: m.LeitorRecortadorModal })),
+);
+const DocumentColunasModal = lazy(() =>
+  import('./DocumentColunasModal').then((m) => ({ default: m.DocumentColunasModal })),
+);
+import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
+import {
+  classifyExtratoDocument,
+  type ExtratoDocumentKind,
+} from '../../lib/extratoPdfClassifier';
 
 type ExtratoImportItemLike = {
   id: string;
@@ -251,7 +263,7 @@ function buildExtratoItemsNoLoss(
 }
 
 interface DataIngestionBoxProps {
-  dataType: 'loans' | 'installments' | 'apps' | 'extrato' | 'plano' | 'balancete' | 'folha';
+  dataType: 'loans' | 'installments' | 'apps' | 'extrato' | 'plano' | 'balancete' | 'folha' | 'fiscal';
   title: string;
   onImport: (items: any[], saldoAnterior?: number) => void;
   /** Razão contábil bruta (VisionBalanceteRow[]) — substitui import anterior. */
@@ -268,6 +280,12 @@ interface DataIngestionBoxProps {
   onExtratoConciliacao?: (resumo: ExtratoConciliacaoResumo) => void;
   selectedCompany?: string;
   extratoPlanoOptions?: ExtratoPlanoContaOption[];
+  /** Só PDF/imagem via recortador (Folha, Fiscal, Apps, Parcelamento). */
+  ingestionMode?: 'all' | 'pdfOnly';
+  /** Tipos de PDF na mesma aba (ex.: folha / impostos / pró-labore). */
+  pdfVariants?: PdfIngestVariant[];
+  /** Notifica a aba quando o variant ativo muda. */
+  onPdfVariantChange?: (variantId: string) => void;
 }
 
 export default function DataIngestionBox({
@@ -282,6 +300,9 @@ export default function DataIngestionBox({
   onExtratoConciliacao,
   selectedCompany,
   extratoPlanoOptions,
+  ingestionMode = 'all',
+  pdfVariants,
+  onPdfVariantChange,
 }: DataIngestionBoxProps) {
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
@@ -290,12 +311,24 @@ export default function DataIngestionBox({
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [pendingOcrFile, setPendingOcrFile] = useState<File | null>(null);
+  /** Extrato: native_text → recorte; scanned_or_image → extração IA. */
+  const [extratoDocumentKind, setExtratoDocumentKind] = useState<ExtratoDocumentKind | null>(null);
   const [pendingOfxFile, setPendingOfxFile] = useState<File | null>(null);
   const [ofxBancoNome, setOfxBancoNome] = useState('');
   const [ofxContaBanco, setOfxContaBanco] = useState('');
+  const [selectedPdfVariant, setSelectedPdfVariant] = useState(
+    () => pdfVariants?.[0]?.id ?? dataType,
+  );
 
-  const ocrConfig = useMemo(() => getOcrColunasConfig(dataType), [dataType]);
-  const supportsExcelImport = dataTypeSupportsExcelImport(dataType);
+  const pdfOnly = ingestionMode === 'pdfOnly';
+  const activePdfVariant = pdfVariants?.length
+    ? selectedPdfVariant || pdfVariants[0]!.id
+    : dataType;
+  const ocrConfig = useMemo(
+    () => getOcrColunasConfig(dataType, activePdfVariant),
+    [dataType, activePdfVariant],
+  );
+  const supportsExcelImport = !pdfOnly && dataTypeSupportsExcelImport(dataType);
 
   const fileInputRefXlsx = useRef<HTMLInputElement>(null);
   const fileInputRefTxt = useRef<HTMLInputElement>(null);
@@ -343,9 +376,17 @@ export default function DataIngestionBox({
         };
       case 'folha':
         return {
-          cols: 'TXT nativo Domínio (01/02/03) ou TXT+ partida dobrada — também: Nome-Colaborador; Salario-Bruto-Nominal',
+          cols: pdfOnly
+            ? 'PDF/imagem via recorte — Folha, Impostos da folha ou Pró-labore'
+            : 'TXT nativo Domínio (01/02/03) ou TXT+ partida dobrada — também: Nome-Colaborador; Salario-Bruto-Nominal',
           example: '28/02/2026;6210100001;2110100001;3500,00;0;SALARIOS A PAGAR;',
-          filename: 'folha_dominio.txt'
+          filename: 'folha_dominio.txt',
+        };
+      case 'fiscal':
+        return {
+          cols: 'PDF/imagem via recorte — Guias/impostos ou documento fiscal (data, histórico, débito, crédito)',
+          example: '31/03/2026 · PIS A RECOLHER · Débito 1.200,00',
+          filename: 'fiscal_recorte.pdf',
         };
     }
   };
@@ -626,6 +667,7 @@ export default function DataIngestionBox({
   ) => {
     const ocrFileName = pendingOcrFile?.name;
     setPendingOcrFile(null);
+    setExtratoDocumentKind(null);
     if (dataType === 'balancete') {
       const { items, logs } = mapOcrRowsToRazaoVision(rows);
       if (items.length === 0) {
@@ -639,7 +681,6 @@ export default function DataIngestionBox({
     }
 
     const userIgnoreWords = parseOcrIgnoreLineWords(getOcrUserSettings().ignoreLineWords);
-    const extratoRecorteLiteral = dataType === 'extrato';
     // Recorte do leitor: mesmos lançamentos/Entradas/Saídas do placar → conciliação 1:1.
     if (dataType === 'extrato' && rowsSaoRecorteFiel(rows)) {
       const fiel = mapRecorteFielRowsToImportItems(rows, meta);
@@ -656,6 +697,7 @@ export default function DataIngestionBox({
       );
       onExtratoConciliacao?.(fiel.conciliacao);
       onExtratoGeminiAuditStart?.();
+      void flushPersistenceAfterCriticalWrite();
       void runExtratoGeminiAudit({
         items: fiel.items,
         skipped: [],
@@ -678,7 +720,7 @@ export default function DataIngestionBox({
       });
       return;
     }
-    const mapped =
+    const mappedRaw =
       dataType === 'plano'
         ? mapOcrRowsToImportItemsWithPlanoInfer(dataType, rows)
         : mapOcrRowsToImportItems(
@@ -707,8 +749,14 @@ export default function DataIngestionBox({
                 }
               : undefined,
           );
-    let { items, logs, saldoAnteriorDetectado, skipped = [], conciliacao } = mapped;
-    if (!extratoRecorteLiteral && dataType === 'extrato' && rows.length > 0 && items.length < rows.length) {
+    let items = mappedRaw.items as any[];
+    let logs = mappedRaw.logs;
+    const saldoAnteriorDetectado =
+      'saldoAnteriorDetectado' in mappedRaw ? mappedRaw.saldoAnteriorDetectado : undefined;
+    let skipped =
+      'skipped' in mappedRaw && Array.isArray(mappedRaw.skipped) ? mappedRaw.skipped : [];
+    const conciliacao = 'conciliacao' in mappedRaw ? mappedRaw.conciliacao : undefined;
+    if (dataType === 'extrato' && rows.length > 0 && items.length < rows.length) {
       const noLossItems = buildExtratoItemsNoLoss(rows, userIgnoreWords);
       if (noLossItems.length > 0 && noLossItems.length >= items.length) {
         logs = [
@@ -718,7 +766,7 @@ export default function DataIngestionBox({
         items = noLossItems;
       }
     }
-    if (!extratoRecorteLiteral && dataType === 'extrato' && rows.length > 0 && items.length > 0) {
+    if (dataType === 'extrato' && rows.length > 0 && items.length > 0) {
       const compared = motorComparacaoExtrato(items as ExtratoImportItemLike[], rows);
       items = compared.items;
       if (compared.logs.length > 0) logs = [...logs, ...compared.logs];
@@ -798,8 +846,24 @@ export default function DataIngestionBox({
     const effectiveFormat = resolveImportFormat(file, format);
 
     try {
+      if (pdfOnly) {
+        if (effectiveFormat === 'pdf' || isImageOrPdf(file)) {
+          setLoadingStep('Abrindo documento para recorte...');
+          setLoading(false);
+          setPendingOcrFile(file);
+          return;
+        }
+        setErrorMsg('Nesta aba só é permitido PDF ou imagem via sistema de recorte.');
+        setLoading(false);
+        return;
+      }
+
       // Planilhas estruturadas: conversão direta. PDF/imagem sempre abre o modal de colunas (OCR).
-      if (canUseNativeConverter(dataType, file) && effectiveFormat === 'xlsx') {
+      if (
+        dataType !== 'fiscal' &&
+        canUseNativeConverter(dataType, file) &&
+        effectiveFormat === 'xlsx'
+      ) {
         const { items, logs } = await ingestNativeFile(dataType, file, setLoadingStep);
         if (items.length === 0) {
           setErrorMsg('Nenhum registro convertido. Verifique o arquivo ou use o modelo TXT.');
@@ -821,7 +885,27 @@ export default function DataIngestionBox({
       }
 
       if (effectiveFormat === 'pdf' || isImageOrPdf(file)) {
-        setLoadingStep(dataType === 'extrato' ? 'Abrindo extrato para recorte...' : 'Limpando e convertendo em imagem...');
+        if (dataType === 'extrato') {
+          setLoadingStep('Identificando tipo do documento (texto nativo ou scanner)…');
+          setLoading(true);
+          try {
+            const kind = await classifyExtratoDocument(file);
+            setExtratoDocumentKind(kind);
+            setLoadingStep(
+              kind === 'scanned_or_image'
+                ? 'Abrindo extração com IA (scanner/imagem)…'
+                : 'Abrindo extrato para recorte…',
+            );
+            setPendingOcrFile(file);
+          } catch {
+            setExtratoDocumentKind('scanned_or_image');
+            setPendingOcrFile(file);
+          } finally {
+            setLoading(false);
+          }
+          return;
+        }
+        setLoadingStep('Limpando e convertendo em imagem...');
         setLoading(false);
         setPendingOcrFile(file);
         return;
@@ -1147,6 +1231,34 @@ export default function DataIngestionBox({
         )}
 
         {/* Action Buttons */}
+        {pdfVariants && pdfVariants.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/50">
+              Tipo de PDF
+            </p>
+            <div className="flex flex-col gap-1.5">
+              {pdfVariants.map((variant) => (
+                <button
+                  key={variant.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedPdfVariant(variant.id);
+                    onPdfVariantChange?.(variant.id);
+                  }}
+                  className={cn(
+                    'w-full px-3 py-2 border text-left text-[10px] font-bold uppercase tracking-widest transition-all',
+                    activePdfVariant === variant.id
+                      ? 'bg-brand-border text-brand-bg border-brand-border'
+                      : 'bg-brand-bg border-brand-border hover:bg-brand-sidebar/40',
+                  )}
+                >
+                  {variant.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {supportsExcelImport && (
           <button
             type="button"
@@ -1173,6 +1285,7 @@ export default function DataIngestionBox({
         </button>
         )}
 
+        {!pdfOnly && (
         <button 
           onClick={handleTxtUpload}
           className="w-full flex items-center justify-between px-4 py-3 bg-brand-bg border border-brand-border hover:bg-brand-border hover:text-brand-bg transition-all text-[10px] font-bold uppercase tracking-widest"
@@ -1180,8 +1293,9 @@ export default function DataIngestionBox({
           <span>Importar TXT (Texto)</span>
           <FileText size={14} />
         </button>
+        )}
 
-        {dataType === 'extrato' && (
+        {!pdfOnly && dataType === 'extrato' && (
           <button
             onClick={handleOfxUpload}
             className="w-full flex items-center justify-between px-4 py-3 bg-brand-bg border border-brand-border hover:bg-brand-border hover:text-brand-bg transition-all text-[10px] font-bold uppercase tracking-widest"
@@ -1195,10 +1309,15 @@ export default function DataIngestionBox({
           onClick={handlePdfUpload}
           className="w-full flex items-center justify-between px-4 py-3 bg-brand-bg border border-brand-border hover:bg-brand-border hover:text-brand-bg transition-all text-[10px] font-bold uppercase tracking-widest"
         >
-          <span>{dataType === 'extrato' ? 'Importar PDF / Imagem (Recorte)' : 'Digitalizar (OCR PDF / Imagem)'}</span>
+          <span>
+            {pdfOnly || dataType === 'extrato'
+              ? 'Importar PDF / Imagem (Recorte)'
+              : 'Digitalizar (OCR PDF / Imagem)'}
+          </span>
           <Calendar size={14} />
         </button>
 
+        {!pdfOnly && (
         <button 
           onClick={() => setShowDocModal(true)}
           className="w-full text-center text-[9px] font-bold uppercase tracking-widest text-brand-text/50 hover:text-brand-text flex items-center justify-center gap-1.5 pt-2"
@@ -1206,6 +1325,13 @@ export default function DataIngestionBox({
           <HelpCircle size={12} />
           Ver Instruções de Formato
         </button>
+        )}
+        {pdfOnly && (
+          <p className="text-[9px] font-mono text-brand-text/45 leading-relaxed pt-1">
+            Extração somente por recorte de PDF/imagem
+            {pdfVariants?.length ? ` · modelo: ${activePdfVariant}` : ''}.
+          </p>
+        )}
       </div>
 
       {/* Loading Status Overlay */}
@@ -1417,19 +1543,49 @@ export default function DataIngestionBox({
         </div>
       )}
 
-      {pendingOcrFile && dataType === 'extrato' ? (
-        <ExtratoLeitorRecortadorModal
+      {pendingOcrFile && dataType === 'extrato' && extratoDocumentKind === 'scanned_or_image' ? (
+        <Suspense fallback={null}>
+          <DocumentColunasModal
+          file={pendingOcrFile}
+          title="Extração com IA — extrato (scanner/imagem)"
+          confirmLabel={ocrConfig.confirmLabel}
+          campoDefs={ocrConfig.campos}
+          dataColIds={ocrConfig.dataColIds}
+          headerKeywords={ocrConfig.headerKeywords}
+          supportsValorModo={ocrConfig.supportsValorModo}
+          supportsExtractEngine
+          extractMode="generic"
+          companyName={selectedCompany}
+          planoContaOptions={extratoPlanoOptions}
+          initialExtractEngine="ai"
+          onCancel={() => {
+            setPendingOcrFile(null);
+            setExtratoDocumentKind(null);
+          }}
+          onConfirm={handleOcrConfirm}
+        />
+        </Suspense>
+      ) : null}
+
+      {pendingOcrFile && dataType === 'extrato' && extratoDocumentKind !== 'scanned_or_image' ? (
+        <Suspense fallback={null}>
+          <ExtratoLeitorRecortadorModal
           file={pendingOcrFile}
           title={ocrConfig.title}
           companyName={selectedCompany}
           planoContaOptions={extratoPlanoOptions}
-          onCancel={() => setPendingOcrFile(null)}
+          onCancel={() => {
+            setPendingOcrFile(null);
+            setExtratoDocumentKind(null);
+          }}
           onConfirm={handleOcrConfirm}
         />
+        </Suspense>
       ) : null}
 
       {pendingOcrFile && dataType !== 'extrato' ? (
-        <LeitorRecortadorModal
+        <Suspense fallback={null}>
+          <LeitorRecortadorModal
           file={pendingOcrFile}
           dataType={dataType}
           title={ocrConfig.title}
@@ -1437,12 +1593,14 @@ export default function DataIngestionBox({
           campoDefs={ocrConfig.campos}
           dataColIds={ocrConfig.dataColIds}
           companyName={selectedCompany}
+          layoutTag={ocrConfig.layoutTag || activePdfVariant}
           onCancel={() => setPendingOcrFile(null)}
           onConfirm={handleOcrConfirm}
           onConfirmParcelamento={
             dataType === 'installments' ? handleParcelamentoOcrConfirm : undefined
           }
         />
+        </Suspense>
       ) : null}
     </div>
   );

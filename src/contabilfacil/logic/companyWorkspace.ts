@@ -3,8 +3,13 @@ import { loadContractsFromBrowserStorage, saveContractsToBrowserStorage } from '
 import { loadAplicacoesFromBrowserStorage } from './aplicacaoStorage';
 import { loadParcelamentosFromBrowserStorage } from './parcelamentoStorage';
 import { persistCanonicalList } from '../../lib/simuladorBrowserStorage';
-import { scheduleEyeVisionCloudPush } from './eyeVisionCloudPush';
-import { safeLocalStorageSetItem } from '../../lib/safeLocalStorage';
+import {
+  safeLocalStorageGetItem,
+  safeLocalStorageRemoveItem,
+  safeLocalStorageSetItem,
+} from '../../lib/safeLocalStorage';
+import { repairPortugueseDeep } from '../../lib/repairPortugueseText';
+import { scheduleEyeVisionOperationalSave } from './eyeVisionOperationalSave';
 
 export const COMPANIES_REGISTRY_KEY = 'contabilfacil_companies_registry_v1';
 export const SELECTED_COMPANY_KEY = 'contabilfacil_selected_company_v1';
@@ -18,6 +23,34 @@ export interface CompanyRecord {
   createdAt: string;
 }
 
+/** Empresa demo — nunca deve sobrescrever o office no Docker. */
+export const DEMO_TECHNOVA_NAME = 'TECHNOVA INDÚSTRIA LTDA';
+
+export function isDemoTechnovaCompany(name: string): boolean {
+  const n = normalizeCompanyName(name);
+  return n === DEMO_TECHNOVA_NAME || companyStorageSlug(n) === 'TECHNOVA_INDUSTRIA_LTDA';
+}
+
+export function mergeCompaniesRegistryLists(...lists: CompanyRecord[][]): CompanyRecord[] {
+  const byName = new Map<string, CompanyRecord>();
+  for (const list of lists) {
+    for (const item of list) {
+      const name = normalizeCompanyName(item?.name ?? '');
+      if (!name || isDemoTechnovaCompany(name)) continue;
+      if (!byName.has(name)) {
+        byName.set(name, {
+          id: String(item.id || crypto.randomUUID()),
+          name,
+          createdAt: String(item.createdAt || new Date().toISOString()),
+        });
+      }
+    }
+  }
+  return Array.from(byName.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
+  );
+}
+
 const LEGACY_MANAGER_KEYS = {
   plano: 'plano_contas_central',
   extrato: 'extrato_lancamentos',
@@ -27,6 +60,7 @@ const LEGACY_MANAGER_KEYS = {
   balancete: 'balancete_rows',
   fiscalSped: 'fiscal_sped_import',
   fiscalPgdas: 'fiscal_pgdas_import',
+  fiscalOcr: 'fiscal_ocr_relatorio',
   fiscalContasImposto: 'fiscal_contas_imposto',
   folhaContasAutomacao: 'folha_contas_automacao',
   honorariosLancamentos: 'honorarios_lancamentos',
@@ -49,6 +83,15 @@ export function companyStorageSlug(companyName: string): string {
 export function companyManagerStorageKey(companyName: string, suffix: keyof typeof LEGACY_MANAGER_KEYS): string {
   const slug = companyStorageSlug(companyName);
   return `contabilfacil_${slug}_${suffix}`;
+}
+
+/** Nome normalizado da empresa — obrigatório para leitura/gravação isolada por empresa. */
+export function requireCompanyScope(companyName: string): string {
+  const norm = normalizeCompanyName(companyName);
+  if (!norm || norm === 'SEM EMPRESA') {
+    throw new Error('Empresa inválida — plano, regras e dados gerenciais são exclusivos por empresa.');
+  }
+  return norm;
 }
 
 export const MANAGER_DATA_SUFFIXES = Object.keys(LEGACY_MANAGER_KEYS) as (keyof typeof LEGACY_MANAGER_KEYS)[];
@@ -76,7 +119,7 @@ function loadBundledDeployCompanies(): CompanyRecord[] {
 export function loadCompaniesRegistry(): CompanyRecord[] {
   let local: CompanyRecord[] = [];
   try {
-    const raw = localStorage.getItem(COMPANIES_REGISTRY_KEY);
+    const raw = safeLocalStorageGetItem(COMPANIES_REGISTRY_KEY);
     if (raw?.trim()) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) local = parseCompaniesRows(parsed);
@@ -92,27 +135,39 @@ export function loadCompaniesRegistry(): CompanyRecord[] {
   return Array.from(map.values());
 }
 
-export function saveCompaniesRegistry(list: CompanyRecord[]): void {
-  const deduped = new Map<string, CompanyRecord>();
-  for (const item of list) {
-    const name = normalizeCompanyName(item.name);
-    if (!deduped.has(name)) {
-      deduped.set(name, { ...item, name });
-    }
+export function saveCompaniesRegistry(
+  list: CompanyRecord[],
+  options?: { replace?: boolean },
+): void {
+  const incoming = mergeCompaniesRegistryLists(list);
+  const existing = mergeCompaniesRegistryLists(loadCompaniesRegistry());
+
+  if (options?.replace) {
+    if (incoming.length === 0 && existing.length === 0) return;
+    safeLocalStorageSetItem(COMPANIES_REGISTRY_KEY, JSON.stringify(incoming));
+    scheduleEyeVisionOperationalSave();
+    return;
   }
-  localStorage.setItem(COMPANIES_REGISTRY_KEY, JSON.stringify(Array.from(deduped.values())));
-  scheduleEyeVisionCloudPush();
+
+  // Nunca substitui 2+ empresas reais por lista menor (ex.: só TECHNOVA após hydrate parcial).
+  const merged =
+    incoming.length >= existing.length
+      ? mergeCompaniesRegistryLists(incoming, existing)
+      : mergeCompaniesRegistryLists(existing, incoming);
+  if (merged.length === 0 && existing.length === 0) return;
+  safeLocalStorageSetItem(COMPANIES_REGISTRY_KEY, JSON.stringify(merged));
+  scheduleEyeVisionOperationalSave();
 }
 
 export function loadSelectedCompanyName(): string {
-  const stored = localStorage.getItem(SELECTED_COMPANY_KEY);
+  const stored = safeLocalStorageGetItem(SELECTED_COMPANY_KEY);
   if (stored?.trim()) return normalizeCompanyName(stored);
   return '';
 }
 
 export function saveSelectedCompanyName(name: string): void {
-  localStorage.setItem(SELECTED_COMPANY_KEY, normalizeCompanyName(name));
-  scheduleEyeVisionCloudPush();
+  safeLocalStorageSetItem(SELECTED_COMPANY_KEY, normalizeCompanyName(name));
+  scheduleEyeVisionOperationalSave();
 }
 
 export function discoverCompanyNamesFromStorage(): string[] {
@@ -133,6 +188,13 @@ export function discoverCompanyNamesFromStorage(): string[] {
     if (scoped?.trim()) {
       names.add(normalizeCompanyName(scoped));
     }
+  }
+
+  for (const slug of listManagerCacheSlugs()) {
+    if (slug === 'TECHNOVA_INDUSTRIA_LTDA') continue;
+    const fromExisting = loadCompaniesRegistry().find((c) => companyStorageSlug(c.name) === slug);
+    const label = fromExisting?.name || slug.replace(/_/g, ' ');
+    names.add(normalizeCompanyName(label));
   }
 
   return Array.from(names).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
@@ -156,7 +218,10 @@ export function syncCompanyRegistry(): CompanyRecord[] {
     a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
   );
 
-  saveCompaniesRegistry(merged);
+  // Não grava/push lista vazia — evita apagar o Docker antes do hydrate.
+  if (merged.length > 0 || existing.length > 0) {
+    saveCompaniesRegistry(merged);
+  }
   return merged;
 }
 
@@ -166,8 +231,9 @@ export function resolveSelectedCompany(companies: CompanyRecord[]): string {
     return stored;
   }
 
-  const fallback = companies[0]?.name ?? 'TECHNOVA INDÚSTRIA LTDA';
-  saveSelectedCompanyName(fallback);
+  const real = companies.filter((c) => !isDemoTechnovaCompany(c.name));
+  const fallback = real[0]?.name ?? companies[0]?.name ?? '';
+  if (fallback) saveSelectedCompanyName(fallback);
   return fallback;
 }
 
@@ -208,7 +274,7 @@ export function getAplicacaoFolderName(app: { nomeEmpresa?: string; nomeAplicaca
 }
 
 export function migrateOrphanAplicacoes(defaultSindicato: string): void {
-  if (localStorage.getItem(APLICACAO_MIGRATION_FLAG)) return;
+  if (safeLocalStorageGetItem(APLICACAO_MIGRATION_FLAG)) return;
 
   const all = loadAplicacoesFromBrowserStorage();
   const contractCompanies = new Set(
@@ -231,29 +297,31 @@ export function migrateOrphanAplicacoes(defaultSindicato: string): void {
     persistCanonicalList('simulador_aplicacoes', migrated);
   }
 
-  localStorage.setItem(APLICACAO_MIGRATION_FLAG, '1');
+  safeLocalStorageSetItem(APLICACAO_MIGRATION_FLAG, '1');
 }
 
 export function migrateLegacyManagerData(targetCompany: string): void {
-  if (localStorage.getItem(MANAGER_MIGRATION_FLAG)) return;
+  if (safeLocalStorageGetItem(MANAGER_MIGRATION_FLAG)) return;
 
   const company = normalizeCompanyName(targetCompany);
   for (const suffix of Object.keys(LEGACY_MANAGER_KEYS) as (keyof typeof LEGACY_MANAGER_KEYS)[]) {
     const legacyKey = LEGACY_MANAGER_KEYS[suffix];
-    const raw = localStorage.getItem(legacyKey);
-    if (!raw?.trim()) continue;
-
-    const scopedKey = companyManagerStorageKey(company, suffix);
-    if (!localStorage.getItem(scopedKey)) {
-      localStorage.setItem(scopedKey, raw);
+    const raw = safeLocalStorageGetItem(legacyKey);
+    if (raw?.trim()) {
+      const scopedKey = companyManagerStorageKey(company, suffix);
+      if (!safeLocalStorageGetItem(scopedKey)) {
+        safeLocalStorageSetItem(scopedKey, raw);
+      }
     }
+    // Chaves globais legadas (ex.: plano_contas_central) — nunca compartilhar entre empresas.
+    safeLocalStorageRemoveItem(legacyKey);
   }
 
-  localStorage.setItem(MANAGER_MIGRATION_FLAG, '1');
+  safeLocalStorageSetItem(MANAGER_MIGRATION_FLAG, '1');
 }
 
 export function migrateOrphanParcelamentos(defaultCompany: string): void {
-  if (localStorage.getItem(PARCELAMENTO_MIGRATION_FLAG)) return;
+  if (safeLocalStorageGetItem(PARCELAMENTO_MIGRATION_FLAG)) return;
 
   const all = loadParcelamentosFromBrowserStorage();
   let changed = false;
@@ -267,37 +335,73 @@ export function migrateOrphanParcelamentos(defaultCompany: string): void {
   });
 
   if (changed) {
-    localStorage.setItem('simulador_parcelamentos', JSON.stringify(migrated));
+    safeLocalStorageSetItem('simulador_parcelamentos', JSON.stringify(migrated));
+    scheduleEyeVisionOperationalSave();
   }
 
-  localStorage.setItem(PARCELAMENTO_MIGRATION_FLAG, '1');
+  safeLocalStorageSetItem(PARCELAMENTO_MIGRATION_FLAG, '1');
+}
+
+const TEXT_REPAIR_SUFFIXES = new Set<keyof typeof LEGACY_MANAGER_KEYS>([
+  'plano',
+  'extrato',
+  'folha',
+  'folhaRelatorio',
+  'razao',
+  'balancete',
+]);
+
+function repairManagerRows<T>(suffix: keyof typeof LEGACY_MANAGER_KEYS, list: T[]): T[] {
+  if (!TEXT_REPAIR_SUFFIXES.has(suffix) || list.length === 0) return list;
+  return repairPortugueseDeep(list);
+}
+
+function suffixFromManagerKey(key: string): keyof typeof LEGACY_MANAGER_KEYS | null {
+  for (const suffix of TEXT_REPAIR_SUFFIXES) {
+    if (key.endsWith(`_${suffix}`)) return suffix;
+  }
+  return null;
 }
 
 const managerMemoryCache = new Map<string, unknown[]>();
+
+/** Slugs com dados em memória (hydrate Docker). */
+export function listManagerCacheSlugs(): string[] {
+  const slugs = new Set<string>();
+  const re =
+    /^contabilfacil_(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/;
+  for (const key of managerMemoryCache.keys()) {
+    const m = key.match(re);
+    if (m?.[1]) slugs.add(m[1]);
+  }
+  return Array.from(slugs);
+}
 const pendingManagerWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const MANAGER_WRITE_DEBOUNCE_MS = 450;
 
 export function readManagerData<T>(companyName: string, suffix: keyof typeof LEGACY_MANAGER_KEYS): T[] {
-  const key = companyManagerStorageKey(normalizeCompanyName(companyName), suffix);
+  const norm = normalizeCompanyName(companyName);
+  if (!norm || norm === 'SEM EMPRESA') return [];
+  const key = companyManagerStorageKey(norm, suffix);
   const cached = managerMemoryCache.get(key);
   if (cached) return cached as T[];
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeLocalStorageGetItem(key);
     if (!raw?.trim()) return [];
     const parsed = JSON.parse(raw);
     const list = Array.isArray(parsed) ? (parsed as T[]) : [];
-    managerMemoryCache.set(key, list);
-    return list;
+    const repaired = repairManagerRows(suffix, list);
+    managerMemoryCache.set(key, repaired);
+    return repaired;
   } catch {
     return [];
   }
 }
 
 function persistManagerKey(key: string, payload: string): void {
-  // Gravação imediata — o auto-save da pasta depende do setItem.
-  // Nunca lança QuotaExceeded (mantém em memória se o LS estiver cheio).
+  // Memória + Docker + pasta — sem localStorage do navegador (quando Postgres ativo).
   safeLocalStorageSetItem(key, payload);
-  scheduleEyeVisionCloudPush();
+  scheduleEyeVisionOperationalSave();
 }
 
 /** Grava na memória e no localStorage (dispara espelho na pasta selecionada). */
@@ -306,7 +410,8 @@ export function writeManagerData<T>(
   suffix: keyof typeof LEGACY_MANAGER_KEYS,
   list: T[],
 ): void {
-  const key = companyManagerStorageKey(normalizeCompanyName(companyName), suffix);
+  const company = requireCompanyScope(companyName);
+  const key = companyManagerStorageKey(company, suffix);
   managerMemoryCache.set(key, list);
   const payload = JSON.stringify(list);
   const pending = pendingManagerWrites.get(key);
@@ -324,7 +429,8 @@ export function writeManagerDataNow<T>(
   suffix: keyof typeof LEGACY_MANAGER_KEYS,
   list: T[],
 ): void {
-  const key = companyManagerStorageKey(normalizeCompanyName(companyName), suffix);
+  const company = requireCompanyScope(companyName);
+  const key = companyManagerStorageKey(company, suffix);
   const pending = pendingManagerWrites.get(key);
   if (pending) {
     clearTimeout(pending);
@@ -345,13 +451,14 @@ export function flushManagerDataWrites(): void {
     const data = managerMemoryCache.get(key);
     if (data) {
       safeLocalStorageSetItem(key, JSON.stringify(data));
-      scheduleEyeVisionCloudPush();
+      scheduleEyeVisionOperationalSave();
     }
   }
   pendingManagerWrites.clear();
 }
 
 export function invalidateManagerDataCache(companyName?: string, suffix?: keyof typeof LEGACY_MANAGER_KEYS): void {
+  flushManagerDataWrites();
   if (!companyName) {
     managerMemoryCache.clear();
     return;
@@ -364,6 +471,14 @@ export function invalidateManagerDataCache(companyName?: string, suffix?: keyof 
   for (const s of Object.keys(LEGACY_MANAGER_KEYS) as (keyof typeof LEGACY_MANAGER_KEYS)[]) {
     managerMemoryCache.delete(companyManagerStorageKey(norm, s));
   }
+}
+
+/** Atualiza cache após hydrate Docker → memória. */
+export function setManagerMemoryCacheEntry(key: string, rows: unknown[]): void {
+  const list = Array.isArray(rows) ? rows : [];
+  const suffix = suffixFromManagerKey(key);
+  const repaired = suffix ? repairManagerRows(suffix, list) : list;
+  managerMemoryCache.set(key, repaired);
 }
 
 export function renameCompanyInStorage(oldName: string, newName: string): boolean {
@@ -416,12 +531,12 @@ export function renameCompanyInStorage(oldName: string, newName: string): boolea
   for (const suffix of Object.keys(LEGACY_MANAGER_KEYS) as (keyof typeof LEGACY_MANAGER_KEYS)[]) {
     const oldKey = companyManagerStorageKey(oldNorm, suffix);
     const newKey = companyManagerStorageKey(newNorm, suffix);
-    const raw = localStorage.getItem(oldKey);
+    const raw = safeLocalStorageGetItem(oldKey);
     if (!raw?.trim()) continue;
-    if (!localStorage.getItem(newKey)) {
-      localStorage.setItem(newKey, raw);
+    if (!safeLocalStorageGetItem(newKey)) {
+      safeLocalStorageSetItem(newKey, raw);
     }
-    localStorage.removeItem(oldKey);
+    safeLocalStorageRemoveItem(oldKey);
   }
 
   saveCompaniesRegistry(
@@ -436,9 +551,31 @@ export function renameCompanyInStorage(oldName: string, newName: string): boolea
 
   invalidateManagerDataCache();
 
-  scheduleEyeVisionCloudPush();
+  scheduleEyeVisionOperationalSave();
 
   return true;
+}
+
+/** Remove regras de extrato, inteligência IA e demais chaves auxiliares da empresa. */
+export function purgeCompanyScopedAuxiliaryData(companyName: string): void {
+  const norm = normalizeCompanyName(companyName);
+  if (!norm || norm === 'SEM EMPRESA') return;
+
+  const slug = companyStorageSlug(norm);
+  const extraKeys = [
+    `contabilfacil_${slug}_extrato_ocr_layouts_v1`,
+    `contabilfacil_${slug}_extrato_regras_contas_v2`,
+    `contabilfacil_${slug}_extrato_regras_contas_v1`,
+    `contabilfacil_${slug}_extrato_regras_banco_v1`,
+    `contabilfacil_${slug}_ai_inteligencia_v1`,
+  ];
+  for (const key of extraKeys) {
+    safeLocalStorageRemoveItem(key);
+  }
+
+  void import('./aiInteligenciaStorage').then(({ purgeAiInteligenciaCachesForCompany }) => {
+    purgeAiInteligenciaCachesForCompany(norm);
+  });
 }
 
 export function deleteManagerCompanyInStorage(name: string): boolean {
@@ -450,7 +587,7 @@ export function deleteManagerCompanyInStorage(name: string): boolean {
 
   for (const suffix of MANAGER_DATA_SUFFIXES) {
     const key = companyManagerStorageKey(norm, suffix);
-    localStorage.removeItem(key);
+    safeLocalStorageRemoveItem(key);
     managerMemoryCache.delete(key);
     const pending = pendingManagerWrites.get(key);
     if (pending) {
@@ -469,7 +606,7 @@ export function deleteManagerCompanyInStorage(name: string): boolean {
     (item) => normalizeCompanyName((item as { companyName?: string }).companyName ?? '') !== norm,
   );
   if (parcelamentos.length === 0) {
-    localStorage.setItem('simulador_parcelamentos', JSON.stringify([]));
+    safeLocalStorageSetItem('simulador_parcelamentos', JSON.stringify([]));
   } else {
     persistCanonicalList('simulador_parcelamentos', parcelamentos);
   }
@@ -478,21 +615,32 @@ export function deleteManagerCompanyInStorage(name: string): boolean {
     (item) => normalizeCompanyName(item.sindicatoName ?? '') !== norm,
   );
   if (aplicacoes.length === 0) {
-    localStorage.setItem('simulador_aplicacoes', JSON.stringify([]));
+    safeLocalStorageSetItem('simulador_aplicacoes', JSON.stringify([]));
   } else {
     persistCanonicalList('simulador_aplicacoes', aplicacoes);
   }
 
   const nextRegistry = registry.filter((c) => c.name !== norm);
-  saveCompaniesRegistry(nextRegistry);
+  saveCompaniesRegistry(nextRegistry, { replace: true });
 
   if (loadSelectedCompanyName() === norm) {
     const fallback = nextRegistry[0]?.name ?? '';
     if (fallback) saveSelectedCompanyName(fallback);
-    else localStorage.removeItem(SELECTED_COMPANY_KEY);
+    else safeLocalStorageRemoveItem(SELECTED_COMPANY_KEY);
   }
 
+  purgeCompanyScopedAuxiliaryData(norm);
   invalidateManagerDataCache();
-  scheduleEyeVisionCloudPush();
+  scheduleEyeVisionOperationalSave();
+  void import('./eyeVisionPersistenceFlush').then(({ flushPersistenceAfterCriticalWrite }) => {
+    void flushPersistenceAfterCriticalWrite();
+  });
   return true;
+}
+
+/** Dev (Vite HMR): grava pendências antes do hot reload para não perder dados em memória. */
+if (typeof import.meta !== 'undefined' && import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    flushManagerDataWrites();
+  });
 }

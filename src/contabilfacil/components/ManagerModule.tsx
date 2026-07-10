@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useMemo, useCallback, useRef, startTransition } from 'react';
 import { 
   Plus, 
   FileSpreadsheet, 
@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import type { ExtratoConciliacaoResumo } from '../logic/ocrImportMapper';
 import { cn, formatCurrency, formatDate } from '../lib/utils';
+import { deferIdle } from '../lib/deferIdle';
 import { patchDebugContext } from '../agent/debugContext';
 import { registerManagerTabBot } from '../tabBot/registerModuleBots';
 import { FreeNumericInput } from './FreeNumericInput';
@@ -80,7 +81,7 @@ import {
   buildPlanoNomeLookup,
   resolveContaNome,
 } from './ExtratoContaPicker';
-import { FolhaPayrollVirtualTable, FolhaRelatorioVirtualTable } from './FolhaVirtualTables';
+import { FolhaRelatorioVirtualTable } from './FolhaVirtualTables';
 import FiscalModule from './FiscalModule';
 import NotaExplicativaTab from './NotaExplicativaTab';
 import {
@@ -95,23 +96,27 @@ import {
   buildDominioPlanoTxtFromAccounts,
   derivePlanoGroupFromCode,
   derivePlanoNatureFromGroup,
+  migrateExtratoContasParaCodigoReduzido,
+  normalizeExtratoContaParaGravacao,
   sanitizeCodigoReduzido,
 } from '../logic/planoContasMapper';
 import { migrateLegacyBalanceteToRazao, normalizeRazaoImport } from '../logic/contabilPipeline';
 import {
   applyExtratoContaResolver,
-  buildPlanoCodeIndex,
-  canonizarContaPlano,
+  applyExtratoContaResolverAsync,
   findContaBancoNoPlano,
-  isContaManualValida,
   type ExtratoSemNotaPendingRow,
 } from '../logic/extratoContaResolver';
 import { buildExtratoFiscalContext } from '../logic/extratoFiscalContext';
 import { tryAutoSyncFiscalSpedOnOpen } from '../logic/fiscalSpedAutomation';
 import { tryAutoSyncFiscalPgdasOnOpen } from '../logic/fiscalPgdasAutomation';
 import { postFolhaNoRazao } from '../logic/folhaAutomation';
-import { loadFolhaFolderSettings } from '../logic/folhaFolderStore';
 import FolhaModule from './FolhaModule';
+import MandarParaBalanceteButton from './MandarParaBalanceteButton';
+import {
+  FOLHA_PDF_VARIANTS,
+  folhaVariantDescriptionPrefix,
+} from '../logic/ocrColunasConfig';
 import HonorariosModule from './HonorariosModule';
 import {
   loadExtratoSemNotaDecisions,
@@ -124,8 +129,14 @@ import {
   filterExtratoRegrasPorBanco,
   migrateExtratoRegrasParaCodigoReduzido,
   saveExtratoRegrasBancoSelecionado,
+  saveExtratoRegrasContas,
   type ExtratoRegraConta,
 } from '../logic/extratoRegrasContasStorage';
+import {
+  corrigeRegrasContasOperacionaisInadequadas,
+  findUncoveredExtratoRows,
+} from '../logic/extratoRegrasCobertura';
+import { gerarRegrasExtratoConciliacaoCompleta } from '../logic/extratoRegrasGeracaoIa';
 import {
   loadExtratoContaMappingCache,
   saveExtratoContaMappingCache,
@@ -141,9 +152,8 @@ import {
   buildExtratoConciliacaoPdfBase64,
 } from '../logic/extratoConciliacaoExport';
 import {
-  countExtratoConciliados,
-  countExtratoPendentes,
   filterExtratoByConciliacaoFiltro,
+  summarizeExtratoConciliacao,
   syncExtratoConciliacaoStatus,
   type ExtratoConciliacaoFiltro,
 } from '../logic/extratoConciliacaoBank';
@@ -319,7 +329,7 @@ export default function ManagerModule({
   // Interactive inputs for entries
   const [showAddPlano, setShowAddPlano] = useState(false);
   const [showAddExtrato, setShowAddExtrato] = useState(false);
-  const [showAddFolha, setShowAddFolha] = useState(false);
+  const [folhaPdfVariant, setFolhaPdfVariant] = useState(FOLHA_PDF_VARIANTS[0]!.id);
   const [extratoContaCache, setExtratoContaCache] = useState<
     ReturnType<typeof loadExtratoContaMappingCache>
   >({});
@@ -329,8 +339,11 @@ export default function ManagerModule({
   const [fiscalSpedVersion, setFiscalSpedVersion] = useState(0);
   const [pendingSemNotaRows, setPendingSemNotaRows] = useState<ExtratoSemNotaPendingRow[]>([]);
   const [extratoRegrasContas, setExtratoRegrasContas] = useState<ExtratoRegraConta[]>([]);
+  const [autoRegrasIaMsg, setAutoRegrasIaMsg] = useState<string | null>(null);
   const [regrasContasModalOpen, setRegrasContasModalOpen] = useState(false);
   const [inteligenciaModalOpen, setInteligenciaModalOpen] = useState(false);
+  /** Se abriu Inteligência IA a partir do modal de regras, volta para as regras ao fechar. */
+  const reopenRegrasAposInteligenciaRef = useRef(false);
   const [inteligenciaTick, setInteligenciaTick] = useState(0);
   const [extratoPastasModalOpen, setExtratoPastasModalOpen] = useState(false);
   const [extratoPastasTick, setExtratoPastasTick] = useState(0);
@@ -349,9 +362,6 @@ export default function ManagerModule({
   const [extNat, setExtNat] = useState<'D' | 'C'>('D');
   const [extAcc, setExtAcc] = useState('');
 
-  // New Payroll state
-  const [payName, setPayName] = useState('');
-  const [paySalary, setPaySalary] = useState(0);
   const [saldoAnteriorExtrato, setSaldoAnteriorExtrato] = useState(0);
   const [extratoConciliacaoFiltro, setExtratoConciliacaoFiltro] =
     useState<ExtratoConciliacaoFiltro>('todas');
@@ -398,12 +408,29 @@ export default function ManagerModule({
     setRazaoRows(readManagerData<VisionBalanceteRow>(selectedCompany, 'razao'));
   }, [selectedCompany]);
 
-  const maybeAutoPostFolhaRazao = useCallback(() => {
-    const settings = loadFolhaFolderSettings(selectedCompany);
-    if (!settings.automationEnabled) return;
-    postFolhaNoRazao(selectedCompany);
-    setRazaoRows(readManagerData<VisionBalanceteRow>(selectedCompany, 'razao'));
-  }, [selectedCompany]);
+  const handleMandarFolhaParaBalancete = useCallback(() => {
+    const hasData = folhaRelatorio.length > 0 || folhaPayroll.length > 0;
+    if (!hasData) {
+      alert('Nenhum dado de folha importado para enviar ao balancete.');
+      return;
+    }
+    try {
+      const { gerados, pendencias } = postFolhaNoRazao(selectedCompany);
+      setRazaoRows(readManagerData<VisionBalanceteRow>(selectedCompany, 'razao'));
+      void flushPersistenceAfterCriticalWrite();
+      if (pendencias.length && gerados <= 0) {
+        alert(pendencias.slice(0, 5).join('\n'));
+        return;
+      }
+      alert(
+        gerados > 0
+          ? `${gerados} lançamento(s) da folha enviados ao balancete.\n\nAbra a aba Balancete para conferir.`
+          : 'Nada novo para enviar — já estavam no balancete (ou configure as contas).',
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Falha ao enviar para o balancete.');
+    }
+  }, [folhaPayroll.length, folhaRelatorio.length, selectedCompany]);
 
   useEffect(() => {
     const onFolha = (ev: Event) => {
@@ -421,6 +448,7 @@ export default function ManagerModule({
   }, [selectedCompany, reloadFolhaFromStorage]);
 
   useEffect(() => {
+    if (!selectedCompany) return;
     setSemNotaDecisions(loadExtratoSemNotaDecisions(selectedCompany));
     const planoLike = planoContas.map((a) => ({
       code: a.code,
@@ -428,10 +456,20 @@ export default function ManagerModule({
       codigoReduzido: a.codigoReduzido,
     }));
     const loaded = loadExtratoRegrasContas(selectedCompany, getExtratoBancoConta(selectedCompany));
-    const migrated =
+    let migrated =
       planoLike.length > 0 ? migrateExtratoRegrasParaCodigoReduzido(selectedCompany, planoLike) : loaded;
+    if (planoLike.length > 0) {
+      const corrigidas = corrigeRegrasContasOperacionaisInadequadas({
+        regras: migrated,
+        plano: planoLike,
+        coligadas: listAiColigadasParaIa(selectedCompany),
+      });
+      if (corrigidas !== migrated) {
+        migrated = saveExtratoRegrasContas(selectedCompany, corrigidas);
+      }
+    }
     setExtratoRegrasContas(migrated);
-  }, [selectedCompany, storageVersion, planoContas]);
+  }, [selectedCompany, storageVersion, planoContas.length]);
 
   const contaBancoExtratoAtivo = useMemo(
     () => getExtratoBancoConta(selectedCompany),
@@ -497,31 +535,45 @@ export default function ManagerModule({
     }
   }, [selectedCompany]);
 
-  const saveExtratoAndSyncRazao = (list: BankStatement[]) => {
-    const withStatus = syncExtratoConciliacaoStatus(list);
-    setExtratoLancamentos(withStatus);
-    writeManagerDataNow(selectedCompany, 'extrato', withStatus);
-    postExtratoConciliadosNoRazao(selectedCompany, withStatus);
-    void flushPersistenceAfterCriticalWrite();
-  };
+  /**
+   * Persiste extrato localmente. NÃO manda ao balancete — só o botão explícito.
+   * `immediate=false` (padrão em edição de linha): debounce no LS para não travar o browser.
+   */
+  const saveExtratoLocal = useCallback(
+    (list: BankStatement[], immediate = false) => {
+      const withStatus = syncExtratoConciliacaoStatus(list);
+      if (immediate) {
+        setExtratoLancamentos(withStatus);
+        writeManagerDataNow(selectedCompany, 'extrato', withStatus);
+        void flushPersistenceAfterCriticalWrite();
+      } else {
+        startTransition(() => setExtratoLancamentos(withStatus));
+        writeManagerData(selectedCompany, 'extrato', withStatus);
+      }
+    },
+    [selectedCompany],
+  );
 
-  const commitExtratoResolverResult = (
-    rows: BankStatement[],
-    cache: typeof extratoContaCache,
-    pendingSemNota: ExtratoSemNotaPendingRow[],
-  ) => {
-    setExtratoContaCache(cache);
-    saveExtratoContaMappingCache(selectedCompany, cache);
-    saveExtratoAndSyncRazao(rows);
-    notifyPendingSemNota(pendingSemNota);
-  };
-
-  const notifyPendingSemNota = (pendingSemNota: ExtratoSemNotaPendingRow[]) => {
+  const notifyPendingSemNota = useCallback((pendingSemNota: ExtratoSemNotaPendingRow[]) => {
     if (pendingSemNota.length > 0) {
       setPendingSemNotaRows(pendingSemNota);
       setSemNotaModalOpen(true);
     }
-  };
+  }, []);
+
+  const commitExtratoResolverResult = useCallback(
+    (
+      rows: BankStatement[],
+      cache: typeof extratoContaCache,
+      pendingSemNota: ExtratoSemNotaPendingRow[],
+    ) => {
+      setExtratoContaCache(cache);
+      saveExtratoContaMappingCache(selectedCompany, cache);
+      saveExtratoLocal(rows, true);
+      notifyPendingSemNota(pendingSemNota);
+    },
+    [notifyPendingSemNota, saveExtratoLocal, selectedCompany],
+  );
 
   const handleSemNotaModalConfirm = (decisions: Record<string, ExtratoSemNotaPolicy>) => {
     const merged = { ...semNotaDecisions, ...decisions };
@@ -582,14 +634,17 @@ export default function ManagerModule({
     };
   }, []);
 
-  // Loads on mount / troca de empresa
+  // Plano primeiro (UI responsiva); extrato/razão/folha após pintura.
   useEffect(() => {
-    try {
+    let cancelled = false;
+
+    const loadPlano = () => {
       const rawPlano = readManagerData<AccountPlan>(selectedCompany, 'plano');
       const storedPlano = rawPlano.map((acc) => ({
         ...acc,
         codigoReduzido: cleanStoredCodigoReduzido(acc.codigoReduzido, acc.code),
       }));
+      if (cancelled) return;
       setPlanoContas(storedPlano);
       if (
         rawPlano.some(
@@ -598,33 +653,56 @@ export default function ManagerModule({
       ) {
         writeManagerData(selectedCompany, 'plano', storedPlano);
       }
-      const storedExtrato = readManagerData<BankStatement>(selectedCompany, 'extrato');
-      const loadedCache = loadExtratoContaMappingCache(selectedCompany);
-      const extratoComStatus = syncExtratoConciliacaoStatus(storedExtrato);
-      setExtratoLancamentos(extratoComStatus);
-      setExtratoContaCache(loadedCache);
-      // Regrava conciliação no razão com datas corretas (ISO→BR). Corrige 26/06/2001 fantasma.
-      postExtratoConciliadosNoRazao(selectedCompany, extratoComStatus);
-      setSaldoAnteriorExtrato(readSaldoAnteriorExtrato(selectedCompany));
-      setFolhaPayroll(readManagerData<PayrollRecord>(selectedCompany, 'folha'));
-      setFolhaRelatorio(readManagerData<FolhaRelatorioRow>(selectedCompany, 'folhaRelatorio'));
-      const storedRazao = normalizeRazaoImport(readManagerData<VisionBalanceteRow>(selectedCompany, 'razao'));
-      if (storedRazao.length > 0) {
-        setRazaoRows(storedRazao);
-        writeManagerData(selectedCompany, 'razao', storedRazao);
-      } else {
-        const legacyBalancete = readManagerData<BalanceteRow>(selectedCompany, 'balancete');
-        if (legacyBalancete.length > 0) {
-          const migrated = migrateLegacyBalanceteToRazao(legacyBalancete);
-          setRazaoRows(migrated);
-          writeManagerData(selectedCompany, 'razao', migrated);
-        } else {
-          setRazaoRows([]);
+    };
+
+    const loadOperationalData = () => {
+      try {
+        const storedPlano = readManagerData<AccountPlan>(selectedCompany, 'plano').map((acc) => ({
+          ...acc,
+          codigoReduzido: cleanStoredCodigoReduzido(acc.codigoReduzido, acc.code),
+        }));
+        const storedExtrato = readManagerData<BankStatement>(selectedCompany, 'extrato');
+        const loadedCache = loadExtratoContaMappingCache(selectedCompany);
+        const extratoMigrado = migrateExtratoContasParaCodigoReduzido(storedExtrato, storedPlano);
+        if (extratoMigrado !== storedExtrato) {
+          writeManagerDataNow(selectedCompany, 'extrato', extratoMigrado);
         }
+        if (cancelled) return;
+        const extratoComStatus = syncExtratoConciliacaoStatus(extratoMigrado);
+        setExtratoLancamentos(extratoComStatus);
+        setExtratoContaCache(loadedCache);
+        setSaldoAnteriorExtrato(readSaldoAnteriorExtrato(selectedCompany));
+        setFolhaPayroll(readManagerData<PayrollRecord>(selectedCompany, 'folha'));
+        setFolhaRelatorio(readManagerData<FolhaRelatorioRow>(selectedCompany, 'folhaRelatorio'));
+        const storedRazao = normalizeRazaoImport(readManagerData<VisionBalanceteRow>(selectedCompany, 'razao'));
+        if (storedRazao.length > 0) {
+          setRazaoRows(storedRazao);
+          writeManagerData(selectedCompany, 'razao', storedRazao);
+        } else {
+          const legacyBalancete = readManagerData<BalanceteRow>(selectedCompany, 'balancete');
+          if (legacyBalancete.length > 0) {
+            const migrated = migrateLegacyBalanceteToRazao(legacyBalancete);
+            setRazaoRows(migrated);
+            writeManagerData(selectedCompany, 'razao', migrated);
+          } else {
+            setRazaoRows([]);
+          }
+        }
+      } catch (e) {
+        console.error('Erro ao carregar dados gerenciais:', e);
       }
+    };
+
+    try {
+      loadPlano();
+      deferIdle(loadOperationalData, 400);
     } catch (e) {
-      console.error('Erro ao carregar dados gerenciais:', e);
+      console.error('Erro ao carregar plano de contas:', e);
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [storageVersion, selectedCompany]);
 
   useEffect(() => {
@@ -714,7 +792,19 @@ export default function ManagerModule({
           code: a.code,
           name: a.name,
           codigoReduzido: a.codigoReduzido,
+          group: a.group,
         })),
+    [planoContas],
+  );
+
+  /** Plano completo (inclui sintéticas) — só para resolver NOME nas colunas Desc. débito/crédito. */
+  const extratoPlanoNomeOptions = useMemo(
+    () =>
+      planoContas.map((a) => ({
+        code: a.code,
+        name: a.name,
+        codigoReduzido: a.codigoReduzido,
+      })),
     [planoContas],
   );
 
@@ -743,80 +833,97 @@ export default function ManagerModule({
     [planoContas],
   );
 
-  const updateExtratoRow = (id: string, patch: Partial<BankStatement>) => {
-    const target = extratoLancamentos.find((r) => r.id === id);
-    if (!target) return;
+  const updateExtratoRow = useCallback(
+    (id: string, patch: Partial<BankStatement>) => {
+      setExtratoLancamentos((prev) => {
+        const target = prev.find((r) => r.id === id);
+        if (!target) return prev;
 
-    const codeIndex = buildPlanoCodeIndex(planoParaResolver);
-    const bancoCanon = findContaBancoNoPlano(planoParaResolver, getExtratoBancoConta(selectedCompany));
-    const merged: BankStatement = { ...target, ...patch };
+        const bancoCanon = findContaBancoNoPlano(
+          planoParaResolver,
+          getExtratoBancoConta(selectedCompany),
+        );
+        const merged: BankStatement = { ...target, ...patch };
 
-    const canonOrRaw = (raw: string) => {
-      const t = raw.trim();
-      if (!t) return '';
-      return isContaManualValida(t, codeIndex) ? canonizarContaPlano(t, codeIndex) || t : t;
-    };
+        const canonOrRaw = (raw: string) => {
+          const t = raw.trim();
+          if (!t) return '';
+          return normalizeExtratoContaParaGravacao(t, planoParaResolver);
+        };
 
-    const normBanco = bancoCanon.replace(/\D/g, '');
-    const isBancoCode = (code: string) => {
-      const n = code.replace(/\D/g, '');
-      return Boolean(normBanco && n && n === normBanco);
-    };
+        const normBanco = bancoCanon.replace(/\D/g, '');
+        const isBancoCode = (code: string) => {
+          const n = code.replace(/\D/g, '');
+          return Boolean(normBanco && n && n === normBanco);
+        };
 
-    // Conciliação manual: usuário preenche a contrapartida; banco fica no outro lado.
-    // Natureza D → contrapartida no débito, banco no crédito.
-    // Natureza C → contrapartida no crédito, banco no débito.
-    // Se digitar no campo “errado”, ainda assim grava a contrapartida no lado certo.
-    if (patch.accountDebit !== undefined || patch.accountCredit !== undefined) {
-      const debIn =
-        patch.accountDebit !== undefined
-          ? canonOrRaw(patch.accountDebit)
-          : (merged.accountDebit ?? '').trim();
-      const credIn =
-        patch.accountCredit !== undefined
-          ? canonOrRaw(patch.accountCredit)
-          : (merged.accountCredit ?? '').trim();
+        if (patch.accountDebit !== undefined || patch.accountCredit !== undefined) {
+          const debIn =
+            patch.accountDebit !== undefined
+              ? canonOrRaw(patch.accountDebit)
+              : (merged.accountDebit ?? '').trim();
+          const credIn =
+            patch.accountCredit !== undefined
+              ? canonOrRaw(patch.accountCredit)
+              : (merged.accountCredit ?? '').trim();
 
-      if (merged.nature === 'D') {
-        const contra =
-          (debIn && !isBancoCode(debIn) ? debIn : '') ||
-          (credIn && !isBancoCode(credIn) ? credIn : '');
-        merged.accountDebit = contra;
-        merged.accountCredit =
-          bancoCanon && contra.replace(/\D/g, '') !== bancoCanon.replace(/\D/g, '')
-            ? bancoCanon
-            : (isBancoCode(credIn) && credIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
-                ? credIn
-                : '') ||
-              (isBancoCode(debIn) && debIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
-                ? debIn
-                : '');
-      } else {
-        const contra =
-          (credIn && !isBancoCode(credIn) ? credIn : '') ||
-          (debIn && !isBancoCode(debIn) ? debIn : '');
-        merged.accountCredit = contra;
-        merged.accountDebit =
-          bancoCanon && contra.replace(/\D/g, '') !== bancoCanon.replace(/\D/g, '')
-            ? bancoCanon
-            : (isBancoCode(debIn) && debIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
-                ? debIn
-                : '') ||
-              (isBancoCode(credIn) && credIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
-                ? credIn
-                : '');
-      }
-    } else if (bancoCanon) {
-      if (merged.nature === 'D') {
-        merged.accountCredit = bancoCanon;
-      } else {
-        merged.accountDebit = bancoCanon;
-      }
-    }
+          if (merged.nature === 'D') {
+            const contra =
+              (debIn && !isBancoCode(debIn) ? debIn : '') ||
+              (credIn && !isBancoCode(credIn) ? credIn : '');
+            merged.accountDebit = contra;
+            merged.accountCredit =
+              bancoCanon && contra.replace(/\D/g, '') !== bancoCanon.replace(/\D/g, '')
+                ? bancoCanon
+                : (isBancoCode(credIn) && credIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
+                    ? credIn
+                    : '') ||
+                  (isBancoCode(debIn) && debIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
+                    ? debIn
+                    : '');
+          } else {
+            const contra =
+              (credIn && !isBancoCode(credIn) ? credIn : '') ||
+              (debIn && !isBancoCode(debIn) ? debIn : '');
+            merged.accountCredit = contra;
+            merged.accountDebit =
+              bancoCanon && contra.replace(/\D/g, '') !== bancoCanon.replace(/\D/g, '')
+                ? bancoCanon
+                : (isBancoCode(debIn) && debIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
+                    ? debIn
+                    : '') ||
+                  (isBancoCode(credIn) && credIn.replace(/\D/g, '') !== contra.replace(/\D/g, '')
+                    ? credIn
+                    : '');
+          }
+        } else if (bancoCanon) {
+          if (merged.nature === 'D') {
+            merged.accountCredit = bancoCanon;
+          } else {
+            merged.accountDebit = bancoCanon;
+          }
+        }
 
-    const next = extratoLancamentos.map((row) => (row.id === id ? merged : row));
-    saveExtratoAndSyncRazao(next);
-  };
+        const next = syncExtratoConciliacaoStatus(
+          prev.map((row) => (row.id === id ? merged : row)),
+        );
+        writeManagerData(selectedCompany, 'extrato', next);
+        return next;
+      });
+    },
+    [planoParaResolver, selectedCompany],
+  );
+
+  const deleteExtrato = useCallback(
+    (id: string) => {
+      setExtratoLancamentos((prev) => {
+        const next = syncExtratoConciliacaoStatus(prev.filter((b) => b.id !== id));
+        writeManagerDataNow(selectedCompany, 'extrato', next);
+        return next;
+      });
+    },
+    [selectedCompany],
+  );
 
   const handleAddExtratoSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -844,37 +951,11 @@ export default function ManagerModule({
       setExtratoContaCache(nextCache);
       saveExtratoContaMappingCache(selectedCompany, nextCache);
     }
-    saveExtratoAndSyncRazao([...extratoLancamentos, item]);
+    saveExtratoLocal([...extratoLancamentos, item]);
     notifyPendingSemNota(pendingSemNota);
     setExtDesc('');
     setExtVal(0);
     setShowAddExtrato(false);
-  };
-
-  const handleAddFolhaSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!payName || paySalary <= 0) return;
-    
-    // Quick automated Brazilian wage deductions calculations
-    const inss = paySalary * 0.11; // Basic 11% approximation
-    const fgts = paySalary * 0.08; // Std 8% FGTS
-    const irrf = paySalary > 2500 ? (paySalary - inss) * 0.15 : 0; // Simple approximation
-    const net = paySalary - inss - irrf;
-
-    const record: PayrollRecord = {
-      id: crypto.randomUUID(),
-      name: payName.toUpperCase(),
-      baseSalary: paySalary,
-      inss,
-      fgts,
-      irrf,
-      net
-    };
-    saveFolha([...folhaPayroll, record]);
-    maybeAutoPostFolhaRazao();
-    setPayName('');
-    setPaySalary(0);
-    setShowAddFolha(false);
   };
 
   // Delete handlers
@@ -882,30 +963,28 @@ export default function ManagerModule({
     savePlano(planoContas.filter(a => a.code !== code));
   };
 
-  const deleteExtrato = (id: string) => {
-    saveExtratoAndSyncRazao(extratoLancamentos.filter((b) => b.id !== id));
-  };
-
-  const deletePayroll = (id: string) => {
-    saveFolha(folhaPayroll.filter(f => f.id !== id));
-  };
-
   const deleteFolhaRelatorio = (id: string) => {
     saveFolhaRelatorio(folhaRelatorio.filter((row) => row.id !== id));
   };
 
   const extratoConciliacaoStats = useMemo(
-    () => ({
-      total: extratoLancamentos.length,
-      conciliadas: countExtratoConciliados(extratoLancamentos),
-      pendentes: countExtratoPendentes(extratoLancamentos),
-    }),
+    () => summarizeExtratoConciliacao(extratoLancamentos),
     [extratoLancamentos],
   );
 
   const extratoLancamentosFiltrados = useMemo(
     () => filterExtratoByConciliacaoFiltro(extratoLancamentos, extratoConciliacaoFiltro),
     [extratoLancamentos, extratoConciliacaoFiltro],
+  );
+
+  const extratoSampleForRegras = useMemo(
+    () =>
+      extratoLancamentos.map((e) => ({
+        description: e.description,
+        nature: e.nature,
+        value: e.value,
+      })),
+    [extratoLancamentos],
   );
 
   const placarTotais = useMemo(
@@ -989,7 +1068,7 @@ export default function ManagerModule({
     [planoContas],
   );
 
-  const handleReaplicarExtratoContas = useCallback(() => {
+  const handleReaplicarExtratoContas = useCallback(async () => {
     if (extratoLancamentos.length === 0) {
       alert('Nenhum lancamento para reaplicar contas.');
       return;
@@ -1001,7 +1080,7 @@ export default function ManagerModule({
     try {
       const banco = getExtratoBancoConta(selectedCompany) || contaBancoExtratoAtivo;
       const regrasFresh = loadExtratoRegrasContas(selectedCompany, banco);
-      const { rows, cache: nextCache, pendingSemNota } = applyExtratoContaResolver(
+      const { rows, cache: nextCache, pendingSemNota } = await applyExtratoContaResolverAsync(
         extratoLancamentos,
         planoParaResolver,
         extratoContaCache,
@@ -1011,13 +1090,17 @@ export default function ManagerModule({
           regrasContas: regrasFresh.length > 0 ? regrasFresh : extratoRegrasContas,
         },
       );
-      commitExtratoResolverResult(rows, nextCache, pendingSemNota);
+      startTransition(() => {
+        commitExtratoResolverResult(rows, nextCache, pendingSemNota);
+      });
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       const msg = err instanceof Error ? err.message : 'Falha ao reaplicar contas.';
       alert(msg);
     }
   }, [
     contaBancoExtratoAtivo,
+    commitExtratoResolverResult,
     extratoContaCache,
     extratoLancamentos,
     extratoRegrasContas,
@@ -1030,7 +1113,7 @@ export default function ManagerModule({
     const conciliadas = extratoConciliacaoStats.conciliadas;
     if (conciliadas === 0) {
       alert(
-        'Nenhum lançamento conciliado para enviar.\n\nPreencha débito e crédito (ou use Reaplicar contas / IA Corrigir regras) e tente de novo.',
+        'Nenhum lançamento conciliado para enviar.\n\nPreencha débito e crédito (ou use Reaplicar contas / Gerar regras) e tente de novo.',
       );
       return;
     }
@@ -1053,18 +1136,23 @@ export default function ManagerModule({
     selectedCompany,
   ]);
 
-  /** Reaplica regras automaticamente quando extrato/regras/banco/plano mudam. */
+  /** Reaplica regras automaticamente quando extrato/regras/banco/plano mudam (em background, sem travar). */
   const autoReapplyKey = useMemo(() => {
-    const regrasSig = extratoRegrasContas
-      .map((r) => `${r.id}:${r.nature}:${r.contaContrapartida}:${r.descricao}`)
-      .join('|');
+    // Assinatura leve: evita concatenar todas as descrições (congelava com muitas regras).
+    let regrasHash = 0;
+    for (const r of extratoRegrasContas) {
+      const s = `${r.id}|${r.nature}|${r.contaContrapartida}|${r.descricao}`;
+      for (let i = 0; i < s.length; i++) {
+        regrasHash = (regrasHash * 31 + s.charCodeAt(i)) | 0;
+      }
+    }
     return [
       selectedCompany,
       contaBancoExtratoAtivo,
       String(planoParaResolver.length),
       String(extratoLancamentos.length),
       String(extratoRegrasContas.length),
-      regrasSig,
+      String(regrasHash),
     ].join('::');
   }, [
     selectedCompany,
@@ -1075,43 +1163,160 @@ export default function ManagerModule({
   ]);
 
   const lastAutoReapplyRef = useRef('');
+  const autoReapplyAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     if (extratoLancamentos.length === 0 || planoParaResolver.length === 0) return;
     if (lastAutoReapplyRef.current === autoReapplyKey) return;
     lastAutoReapplyRef.current = autoReapplyKey;
 
-    try {
-      const banco = getExtratoBancoConta(selectedCompany) || contaBancoExtratoAtivo;
-      const { rows, cache: nextCache, pendingSemNota } = applyExtratoContaResolver(
-        extratoLancamentos,
-        planoParaResolver,
-        extratoContaCache,
-        {
-          ...extratoResolverOptions,
-          contaBancoPreferida: banco,
-          regrasContas: extratoRegrasContas,
-        },
-      );
-      const changed = rows.some((r, i) => {
-        const prev = extratoLancamentos[i];
-        return (
-          (r.accountDebit || '') !== (prev?.accountDebit || '') ||
-          (r.accountCredit || '') !== (prev?.accountCredit || '')
+    autoReapplyAbortRef.current?.abort();
+    const ac = new AbortController();
+    autoReapplyAbortRef.current = ac;
+
+    const rowsSnapshot = extratoLancamentos;
+    const cacheSnapshot = extratoContaCache;
+    const opts = {
+      ...extratoResolverOptions,
+      contaBancoPreferida: getExtratoBancoConta(selectedCompany) || contaBancoExtratoAtivo,
+      regrasContas: extratoRegrasContas,
+      signal: ac.signal,
+    };
+
+    void (async () => {
+      try {
+        // Deixa a UI pintar antes do trabalho pesado.
+        await new Promise<void>((r) => setTimeout(r, 0));
+        if (ac.signal.aborted) return;
+        const { rows, cache: nextCache, pendingSemNota } = await applyExtratoContaResolverAsync(
+          rowsSnapshot,
+          planoParaResolver,
+          cacheSnapshot,
+          opts,
         );
-      });
-      if (changed) {
-        commitExtratoResolverResult(rows, nextCache, pendingSemNota);
+        if (ac.signal.aborted) return;
+        const changed = rows.some((r, i) => {
+          const prev = rowsSnapshot[i];
+          return (
+            (r.accountDebit || '') !== (prev?.accountDebit || '') ||
+            (r.accountCredit || '') !== (prev?.accountCredit || '')
+          );
+        });
+        if (changed) {
+          startTransition(() => {
+            commitExtratoResolverResult(rows, nextCache, pendingSemNota);
+          });
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        console.warn('[extrato] auto-reaplicar regras falhou:', err);
       }
-    } catch (err) {
-      console.warn('[extrato] auto-reaplicar regras falhou:', err);
-    }
+    })();
+
+    return () => {
+      ac.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dispara só quando autoReapplyKey muda
   }, [autoReapplyKey]);
 
+  const autoRegrasGenRef = useRef('');
+  const autoRegrasInFlightRef = useRef(false);
+  const autoRegrasGenKey = useMemo(() => {
+    const banco = sanitizeCodigoReduzido(
+      getExtratoBancoConta(selectedCompany) || contaBancoExtratoAtivo,
+    );
+    if (!banco || extratoLancamentos.length === 0) return '';
+    const doBanco = filterExtratoRegrasPorBanco(extratoRegrasContas, banco);
+    const uncovered = findUncoveredExtratoRows(extratoSampleForRegras, doBanco);
+    return [
+      selectedCompany,
+      banco,
+      extratoLancamentos.length,
+      uncovered.length,
+      extratoConciliacaoStats.pendentes,
+      planoParaResolver.length,
+    ].join('::');
+  }, [
+    selectedCompany,
+    contaBancoExtratoAtivo,
+    extratoLancamentos.length,
+    extratoRegrasContas,
+    extratoSampleForRegras,
+    extratoConciliacaoStats.pendentes,
+    planoParaResolver.length,
+  ]);
+
+  useEffect(() => {
+    if (!autoRegrasGenKey) {
+      setAutoRegrasIaMsg(null);
+      return;
+    }
+    const parts = autoRegrasGenKey.split('::');
+    const uncoveredCount = Number(parts[3] || 0);
+    const pendentes = Number(parts[4] || 0);
+    if (uncoveredCount === 0 && pendentes === 0) {
+      setAutoRegrasIaMsg(null);
+      return;
+    }
+    if (autoRegrasGenRef.current === autoRegrasGenKey || autoRegrasInFlightRef.current) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const banco = sanitizeCodigoReduzido(
+        getExtratoBancoConta(selectedCompany) || contaBancoExtratoAtivo,
+      );
+      if (!banco || planoParaResolver.length === 0) return;
+
+      autoRegrasInFlightRef.current = true;
+      autoRegrasGenRef.current = autoRegrasGenKey;
+      setAutoRegrasIaMsg('IA criando regras para conciliar todos os lançamentos…');
+
+      void gerarRegrasExtratoConciliacaoCompleta({
+        company: selectedCompany,
+        regras: extratoRegrasContas,
+        bancoAtivo: banco,
+        bancoNome: getExtratoBancoNome(selectedCompany) || banco,
+        planoOptions: extratoContrapartidaPlanoOptions,
+        allPlano: extratoPlanoOptions,
+        extratoSample: extratoSampleForRegras,
+        onProgress: setAutoRegrasIaMsg,
+      })
+        .then(async (result) => {
+          const hadRuleChanges = result.totalAdded > 0 || result.totalUpdated > 0;
+          if (hadRuleChanges) {
+            const saved = saveExtratoRegrasContas(selectedCompany, result.regras);
+            startTransition(() => setExtratoRegrasContas(saved));
+          }
+          if (hadRuleChanges || pendentes > 0) {
+            await handleReaplicarExtratoContas();
+            void flushPersistenceAfterCriticalWrite();
+          }
+          if (result.stillOpen === 0) {
+            setAutoRegrasIaMsg('✓ IA: todos os lançamentos têm regra — conciliação aplicada.');
+          } else if (result.resumo) {
+            setAutoRegrasIaMsg(result.resumo);
+          } else if (result.error) {
+            setAutoRegrasIaMsg(result.error);
+          }
+        })
+        .catch((err) => {
+          setAutoRegrasIaMsg(
+            err instanceof Error ? err.message : 'Falha ao gerar regras com IA.',
+          );
+        })
+        .finally(() => {
+          autoRegrasInFlightRef.current = false;
+        });
+    }, 2000);
+
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key derivada controla disparo
+  }, [autoRegrasGenKey]);
+
   const buildExtratoConciliacaoExportPayload = () => {
-    const lookup = buildPlanoNomeLookup(extratoPlanoOptions);
+    const lookup = buildPlanoNomeLookup(extratoPlanoNomeOptions);
     const bancoConta = getExtratoBancoConta(selectedCompany);
-    const bancoNome = resolveContaNome(lookup, bancoConta);
+    const bancoNome = resolveContaNome(lookup, bancoConta, extratoPlanoNomeOptions);
     const rows = extratoLancamentos.map((e) => {
       const deb =
         e.accountDebit?.trim() ||
@@ -1126,8 +1331,8 @@ export default function ManagerModule({
         nature: e.nature,
         accountDebit: deb,
         accountCredit: cred,
-        accountDebitName: resolveContaNome(lookup, deb),
-        accountCreditName: resolveContaNome(lookup, cred),
+        accountDebitName: resolveContaNome(lookup, deb, extratoPlanoNomeOptions),
+        accountCreditName: resolveContaNome(lookup, cred, extratoPlanoNomeOptions),
         operationName: e.operationName || e.description,
       };
     });
@@ -1173,7 +1378,11 @@ export default function ManagerModule({
       }
       const bancoNome =
         getExtratoBancoNome(selectedCompany) ||
-        resolveContaNome(buildPlanoNomeLookup(extratoPlanoOptions), banco) ||
+        resolveContaNome(
+          buildPlanoNomeLookup(extratoPlanoNomeOptions),
+          banco,
+          extratoPlanoNomeOptions,
+        ) ||
         `Banco ${banco}`;
       const saved = saveExtratoNaPasta(selectedCompany, {
         contaBanco: banco,
@@ -1226,22 +1435,22 @@ export default function ManagerModule({
         status: r.status === 'CONCILIADO' ? 'CONCILIADO' : 'PENDENTE',
       }));
 
-      // Aplica regras do banco deste extrato nas linhas restauradas
+      // Aplica regras do banco deste extrato nas linhas restauradas (em background).
       const regrasFresh = loadExtratoRegrasContas(selectedCompany, item.contaBanco);
       if (planoParaResolver.length > 0) {
-        const { rows: resolved, cache: nextCache, pendingSemNota } = applyExtratoContaResolver(
-          rows,
-          planoParaResolver,
-          extratoContaCache,
-          {
-            ...extratoResolverOptions,
-            contaBancoPreferida: item.contaBanco,
-            regrasContas: regrasFresh.length > 0 ? regrasFresh : extratoRegrasContas,
-          },
-        );
-        commitExtratoResolverResult(resolved, nextCache, pendingSemNota);
+        void applyExtratoContaResolverAsync(rows, planoParaResolver, extratoContaCache, {
+          ...extratoResolverOptions,
+          contaBancoPreferida: item.contaBanco,
+          regrasContas: regrasFresh.length > 0 ? regrasFresh : extratoRegrasContas,
+        }).then(({ rows: resolved, cache: nextCache, pendingSemNota }) => {
+          startTransition(() => {
+            commitExtratoResolverResult(resolved, nextCache, pendingSemNota);
+          });
+        });
+        // Mostra linhas já; contas completam quando o resolver terminar.
+        saveExtratoLocal(rows, true);
       } else {
-        saveExtratoAndSyncRazao(rows);
+        saveExtratoLocal(rows, true);
       }
       setExtratoPastasTick((n) => n + 1);
     } catch (err) {
@@ -1516,6 +1725,12 @@ export default function ManagerModule({
                         <p className="text-[9px] mt-2 text-brand-text/60 normal-case">
                           {extratoConciliacaoStats.conciliadas} de {extratoConciliacaoStats.total} lançamento(s)
                           conciliado(s)
+                          {autoRegrasIaMsg ? (
+                            <span className="mt-1.5 flex items-center gap-1.5 text-violet-800/90">
+                              <Sparkles className="w-3 h-3 shrink-0" />
+                              {autoRegrasIaMsg}
+                            </span>
+                          ) : null}
                           {placarConciliados.lancamentosConsiderados > 0 ? (
                             <span className="block mt-0.5 font-mono text-[8px] uppercase opacity-70">
                               C {formatCurrency(placarConciliados.creditos)} · D{' '}
@@ -1665,10 +1880,10 @@ export default function ManagerModule({
                               type="button"
                               onClick={handleReaplicarExtratoContas}
                               className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1"
-                              title="Recalcula debito/credito com regras Receita Federal e conta banco do layout"
+                              title="Aplica as contas das regras cadastradas na tabela de conciliação"
                             >
                               <RefreshCw size={11} aria-hidden="true" />
-                              REAPLICAR CONTAS (RF)
+                              APLICAR REGRAS NA CONCILIAÇÃO
                             </button>
                             <button
                               type="button"
@@ -1774,6 +1989,7 @@ export default function ManagerModule({
                         onDelete={deleteExtrato}
                         onUpdate={updateExtratoRow}
                         planoOptions={extratoPlanoOptions}
+                        planoNomeOptions={extratoPlanoNomeOptions}
                       />
                     </div>
                   </div>
@@ -1793,27 +2009,30 @@ export default function ManagerModule({
                             getExtratoBancoConta(selectedCompany),
                           ),
                         };
-                        const { rows: resolved, cache: nextCache, pendingSemNota } = applyExtratoContaResolver(
-                          newItems as BankStatement[],
-                          planoParaResolver,
-                          extratoContaCache,
-                          resolverOpts,
-                        );
-                        if (nextCache !== extratoContaCache) {
-                          setExtratoContaCache(nextCache);
-                          saveExtratoContaMappingCache(selectedCompany, nextCache);
-                        }
-                        setExtratoLancamentos(() => {
-                          const next = syncExtratoConciliacaoStatus(resolved);
-                          writeManagerData(selectedCompany, 'extrato', next);
-                          postExtratoConciliadosNoRazao(selectedCompany, next);
-                          return next;
-                        });
-                        notifyPendingSemNota(pendingSemNota);
+                        // Mostra o extrato imediatamente; resolve contas em lotes sem travar.
+                        const raw = syncExtratoConciliacaoStatus(newItems as BankStatement[]);
+                        startTransition(() => setExtratoLancamentos(raw));
+                        writeManagerData(selectedCompany, 'extrato', raw);
                         if (saldoAnterior != null && Number.isFinite(saldoAnterior)) {
                           setSaldoAnteriorExtrato(saldoAnterior);
                           writeSaldoAnteriorExtrato(selectedCompany, saldoAnterior);
                         }
+                        void applyExtratoContaResolverAsync(
+                          raw,
+                          planoParaResolver,
+                          extratoContaCache,
+                          resolverOpts,
+                        ).then(({ rows: resolved, cache: nextCache, pendingSemNota }) => {
+                          startTransition(() => {
+                            setExtratoContaCache(nextCache);
+                            saveExtratoContaMappingCache(selectedCompany, nextCache);
+                            const next = syncExtratoConciliacaoStatus(resolved);
+                            setExtratoLancamentos(next);
+                            writeManagerData(selectedCompany, 'extrato', next);
+                            notifyPendingSemNota(pendingSemNota);
+                          });
+                          void flushPersistenceAfterCriticalWrite();
+                        });
                       }} 
                     />
                   </div>
@@ -2006,93 +2225,40 @@ export default function ManagerModule({
                   <FolhaModule selectedCompany={selectedCompany} onSynced={reloadFolhaFromStorage} />
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                   <div className="lg:col-span-8 space-y-6">
-                    <div className="flex gap-2 justify-between">
-                    <button 
-                      onClick={() => setShowAddFolha(!showAddFolha)}
-                      className="technical-button-primary text-xs"
-                    >
-                      + ADICIONAR COLABORADOR FOLHA
-                    </button>
-                    {folhaPayroll.length > 0 && (
-                      <button 
-                        onClick={() => saveFolha([])}
-                        className="technical-button border-red-800 text-red-800 text-xs"
-                      >
-                        LIMPAR COLABORADORES
-                      </button>
-                    )}
-                  </div>
-
-                  {showAddFolha && (
-                    <form onSubmit={handleAddFolhaSubmit} className="technical-panel p-6 bg-brand-sidebar/10 space-y-4 max-w-xl">
-                      <h4 className="text-[10px] font-black uppercase tracking-widest border-b border-brand-border pb-1">Registrar CLT / Holerite</h4>
-                      <div className={CF_FIELD_ROW}>
-                        <div className={CF_FIELD_COL}>
-                          <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Nome Completo</label>
-                          <input aria-label="Nome Completo" 
-                            type="text" 
-                            required 
-                            placeholder="PEDRO SILVA CONTADOR" 
-                            value={payName} 
-                            onChange={e => setPayName(e.target.value)}
-                            className={CF_FORM_INPUT_MED} 
-                          />
-                        </div>
-                        <div className={CF_FIELD_COL}>
-                          <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Salário (R$)</label>
-                          <FreeNumericInput aria-label="Salário (R$)"
-                            required
-                            placeholder="3500"
-                            value={paySalary}
-                            onChange={setPaySalary}
-                            className={CF_FORM_INPUT_MONEY}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2 justify-end pt-2">
-                        <button type="button" onClick={() => setShowAddFolha(false)} className="technical-button text-[10px] py-1 px-3">CANCELAR</button>
-                        <button type="submit" className="technical-button-primary text-[10px] py-1 px-4">CALCULAR & SALVAR</button>
-                      </div>
-                    </form>
-                  )}
-
                   <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
-                    <div className="p-3 border-b border-brand-border bg-brand-sidebar/30">
+                    <div className="p-3 border-b border-brand-border bg-brand-sidebar/30 flex items-center justify-between gap-2">
                       <h3 className="text-[10px] font-black uppercase tracking-widest">Relatório folha importado (OCR)</h3>
+                      <MandarParaBalanceteButton
+                        onClick={handleMandarFolhaParaBalancete}
+                        disabled={folhaRelatorio.length === 0 && folhaPayroll.length === 0}
+                        count={folhaRelatorio.length + folhaPayroll.length}
+                      />
                     </div>
                     <FolhaRelatorioVirtualTable rows={folhaRelatorio} />
-                  </div>
-
-                  <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
-                    <div className="p-3 bg-brand-sidebar/30 border-b border-brand-border flex items-center justify-between text-xs">
-                      <span className="font-bold uppercase tracking-widest text-[9px]">eSocial Holerite Processors</span>
-                      <span className="bg-brand-border text-brand-bg px-1.5 py-0.5 text-[8px] font-black">REGISTROS DISPONÍVEIS: {folhaPayroll.length}</span>
-                    </div>
-                    <FolhaPayrollVirtualTable rows={folhaPayroll} onDelete={deletePayroll} />
                   </div>
                   </div>
                   <div className="lg:col-span-4 space-y-6">
                     <DataIngestionBox 
                       dataType="folha" 
-                      title="Processar Folhas Externas" 
+                      title="Recortar PDF da Folha"
+                      selectedCompany={selectedCompany}
+                      ingestionMode="pdfOnly"
+                      pdfVariants={FOLHA_PDF_VARIANTS}
+                      onPdfVariantChange={setFolhaPdfVariant}
                       onImport={(newItems) => {
-                        const relatorio = (newItems as FolhaRelatorioRow[]).filter(
-                          (i) => 'debito' in i && 'credito' in i && !('baseSalary' in i),
-                        );
-                        const payroll = (newItems as PayrollRecord[]).filter((i) => 'baseSalary' in i);
+                        const prefix = folhaVariantDescriptionPrefix(folhaPdfVariant);
+                        const relatorio = (newItems as FolhaRelatorioRow[])
+                          .filter(
+                            (i) => 'debito' in i && 'credito' in i && !('baseSalary' in i),
+                          )
+                          .map((row) => ({
+                            ...row,
+                            description: row.description?.startsWith('[')
+                              ? row.description
+                              : `${prefix} ${row.description || ''}`.trim(),
+                          }));
                         if (relatorio.length > 0) {
                           saveFolhaRelatorio([...folhaRelatorio, ...relatorio]);
-                        }
-                        if (payroll.length > 0) {
-                          setFolhaPayroll((prev) => {
-                            const next = [...prev, ...payroll];
-                            writeManagerData(selectedCompany, 'folha', next);
-                            return next;
-                          });
-                        }
-                        if (relatorio.length > 0 || payroll.length > 0) {
-                          maybeAutoPostFolhaRazao();
                         }
                       }} 
                     />
@@ -2206,36 +2372,41 @@ export default function ManagerModule({
         </div>
       </div>
 
-      <ExtratoRegrasContasModal
-        open={regrasContasModalOpen}
-        company={selectedCompany}
-        regras={extratoRegrasContas}
-        planoOptions={extratoContrapartidaPlanoOptions}
-        bancoOptions={
-          extratoBancoPlanoOptions.length > 0 ? extratoBancoPlanoOptions : extratoPlanoOptions
-        }
-        defaultContaBanco={contaBancoExtratoAtivo}
-        extratoSample={extratoLancamentos.map((e) => ({
-          description: e.description,
-          nature: e.nature,
-          value: e.value,
-        }))}
-        onClose={() => setRegrasContasModalOpen(false)}
-        onChange={setExtratoRegrasContas}
-        onContaBancoChange={() => setContaBancoTick((n) => n + 1)}
-        onReaplicar={
-          extratoLancamentos.length > 0 ? handleReaplicarExtratoContas : undefined
-        }
-        onOpenInteligencia={() => {
-          setRegrasContasModalOpen(false);
-          setInteligenciaModalOpen(true);
-        }}
-      />
+      {regrasContasModalOpen ? (
+        <ExtratoRegrasContasModal
+          open={regrasContasModalOpen}
+          company={selectedCompany}
+          regras={extratoRegrasContas}
+          planoOptions={extratoContrapartidaPlanoOptions}
+          bancoOptions={
+            extratoBancoPlanoOptions.length > 0 ? extratoBancoPlanoOptions : extratoPlanoOptions
+          }
+          defaultContaBanco={contaBancoExtratoAtivo}
+          extratoSample={extratoSampleForRegras}
+          onClose={() => setRegrasContasModalOpen(false)}
+          onChange={setExtratoRegrasContas}
+          onContaBancoChange={() => setContaBancoTick((n) => n + 1)}
+          onReaplicar={
+            extratoLancamentos.length > 0 ? handleReaplicarExtratoContas : undefined
+          }
+          onOpenInteligencia={() => {
+            reopenRegrasAposInteligenciaRef.current = true;
+            setRegrasContasModalOpen(false);
+            setInteligenciaModalOpen(true);
+          }}
+        />
+      ) : null}
 
       <AiInteligenciaPastasModal
         open={inteligenciaModalOpen}
         company={selectedCompany}
-        onClose={() => setInteligenciaModalOpen(false)}
+        onClose={() => {
+          setInteligenciaModalOpen(false);
+          if (reopenRegrasAposInteligenciaRef.current) {
+            reopenRegrasAposInteligenciaRef.current = false;
+            setRegrasContasModalOpen(true);
+          }
+        }}
         onChanged={() => setInteligenciaTick((n) => n + 1)}
       />
 

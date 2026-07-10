@@ -6,11 +6,9 @@ import {
   addExtratoRegraConta,
   filterExtratoRegrasPorBanco,
   loadExtratoRegrasBancoSelecionado,
-  migrateExtratoRegrasParaCodigoReduzido,
   normalizeExtratoMatchText,
   normalizeExtratoRegraTexto,
   normContaBancoCode,
-  removeExtratoRegraConta,
   replicateExtratoRegrasParaBanco,
   saveExtratoRegrasBancoSelecionado,
   saveExtratoRegrasContas,
@@ -23,27 +21,53 @@ import {
 } from '../logic/planoContasMapper';
 import {
   findUncoveredExtratoRows,
-  summarizeUncoveredForAi,
   buildFallbackRegrasParaCobertura,
-  chunkUncoveredForAiBatches,
+  agrupaPadroesExtratoParaIa,
+  padroesParaPayloadIa,
   filterUncoveredByUserHint,
   buildRegrasFromUserChatIntent,
+  updateExistingRegrasFromUserChatIntent,
   resolveContaFromUserMessage,
+  extractPadraoOperacionalAgrupado,
+  isContaNominalEmpresa,
+  isLancamentoFornecedorOuClienteGenerico,
+  isMovimentoAplicacaoFinanceira,
+  pickContaRendimentoOuAplicacao,
+  pickFallbackContaPorNatureza,
 } from '../logic/extratoRegrasCobertura';
+import { validateAiRegrasLote } from '../logic/extratoRegrasAiPrecision';
 import {
+  mergeSugestoesIntoRegras,
+  canonicalColigadaDescricao,
+  extractRegraEntityDescricao,
+} from '../logic/extratoRegrasEntity';
+import {
+  contaAceitavelParaColigada,
   countAiInteligenciaDocs,
+  enrichColigadasComContasDoPlano,
   isContaFornecedorNome,
-  listAiInteligenciaTextoParaIaAsync,
+  listAiColigadasParaIa,
   matchColigadaNoHistorico,
+  matchColigadaParaRegra,
   pickContaColigadaNoPlano,
+  resolveContaColigadaParaNatureza,
   syncColigadasFromInteligenciaDocs,
 } from '../logic/aiInteligenciaStorage';
+import { buildInteligenciaContextoParaRegrasIaAsync, buildModulosContextoParaRegrasIa } from '../logic/regrasContasAiContext';
+import { gerarRegrasExtratoConciliacaoCompleta } from '../logic/extratoRegrasGeracaoIa';
+import { contaTemSentidoLogicoParaHistorico } from '../logic/planoContasMatch';
 import { suggestRegrasContasWithAi } from '../../lib/aiRegrasContasClient';
 import { CF_FORM_INPUT_LONG } from '../lib/formFieldClasses';
 import ExtratoContaPicker from './ExtratoContaPicker';
 import ExtratoRegrasContasAiPanel from './ExtratoRegrasContasAiChat';
 
-export type PlanoOption = { code: string; name: string; codigoReduzido?: string };
+export type PlanoOption = {
+  code: string;
+  name: string;
+  codigoReduzido?: string;
+  /** Grupo contábil — usado pela IA na regra empréstimo (D→ATIVO / C→PASSIVO). */
+  group?: 'ATIVO' | 'PASSIVO' | 'PATRIMONIO_LIQUIDO' | 'RECEITA' | 'DESPESA' | 'CUSTO';
+};
 
 export type ExtratoRegrasContasModalProps = {
   open: boolean;
@@ -60,7 +84,7 @@ export type ExtratoRegrasContasModalProps = {
   onChange: (next: ExtratoRegraConta[]) => void;
   /** Chamado quando a conta banco da conciliação é definida/alterada. */
   onContaBancoChange?: (contaBanco: string) => void;
-  onReaplicar?: () => void;
+  onReaplicar?: () => void | Promise<void>;
   /** Abre o modal de pastas da Inteligência IA. */
   onOpenInteligencia?: () => void;
 };
@@ -130,11 +154,21 @@ export default memo(function ExtratoRegrasContasModal({
     [bancoOptions, toReduzido],
   );
 
+  const companyWhenOpenedRef = useRef(company);
+
+  useEffect(() => {
+    if (!open) {
+      companyWhenOpenedRef.current = company;
+      return;
+    }
+    if (companyWhenOpenedRef.current !== company) {
+      companyWhenOpenedRef.current = company;
+      onClose();
+    }
+  }, [open, company, onClose]);
+
   useEffect(() => {
     if (!open) return;
-    // Corrige regras antigas da IA que gravaram classificação em vez de reduzido.
-    const migrated = migrateExtratoRegrasParaCodigoReduzido(company, allPlano);
-    onChange(migrated);
 
     const saved = loadExtratoRegrasBancoSelecionado(company, defaultContaBanco);
     const pick =
@@ -153,8 +187,9 @@ export default memo(function ExtratoRegrasContasModal({
     setReplicateMsg('');
     setCorrigirMsg('');
     setDocsCount(countAiInteligenciaDocs(company));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- migra só ao abrir
-  }, [open, company, defaultContaBanco, bancoOptions, allPlano, matchBancoCode]);
+    // Migração/consolidação roda no ManagerModule ao carregar — não repetir aqui (evita freeze e sobrescrever exclusões).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset UI ao abrir
+  }, [open, company, defaultContaBanco, bancoOptions, matchBancoCode]);
 
   const regrasDoBanco = useMemo(
     () => filterExtratoRegrasPorBanco(regras, selectedBanco),
@@ -285,7 +320,7 @@ export default memo(function ExtratoRegrasContasModal({
   const handleCorrigirRegrasComIa = useCallback(async () => {
     const bancoAtivo = sanitizeCodigoReduzido(selectedBanco) || matchBancoCode(selectedBanco);
     if (!bancoAtivo) {
-      setCorrigirMsg('Selecione a conta banco (código reduzido) antes de corrigir.');
+      setCorrigirMsg('Selecione a conta banco (código reduzido) antes de gerar regras.');
       return;
     }
     if (planoOptions.length === 0) {
@@ -293,319 +328,44 @@ export default memo(function ExtratoRegrasContasModal({
       return;
     }
     if (extratoSample.length === 0) {
-      setCorrigirMsg('Importe o extrato na conciliação para a IA cobrir todos os lançamentos.');
+      setCorrigirMsg('Importe o extrato na conciliação para a IA analisar e gerar regras.');
       return;
     }
 
     setCorrigindoIa(true);
     setCorrigirMsg(
-      `Corrigindo regras do banco ${bancoAtivo}: auditar vs Inteligência IA + cobrir não conciliados…`,
+      `Analista contábil sênior no banco ${bancoAtivo}: lendo extrato, balancete e Inteligência IA…`,
     );
     setDocsCount(countAiInteligenciaDocs(company));
 
-    const applySugestoes = (
-      current: ExtratoRegraConta[],
-      sugestoes: Array<{ descricao: string; nature: string; contaContrapartida: string }>,
-    ): { next: ExtratoRegraConta[]; added: number; updated: number } => {
-      let next = [...current];
-      let added = 0;
-      let updated = 0;
-      const existingKeys = new Set(
-        filterExtratoRegrasPorBanco(next, bancoAtivo).map(
-          (r) =>
-            `${r.nature}|${normalizeExtratoMatchText(r.descricao)}|${normContaBancoCode(r.contaContrapartida)}`,
-        ),
-      );
-      const toAppend: ExtratoRegraConta[] = [];
-
-      for (const sug of sugestoes) {
-        const contra =
-          resolveCodigoReduzidoDoPlano(sug.contaContrapartida, allPlano) ||
-          sanitizeCodigoReduzido(sug.contaContrapartida) ||
-          '';
-        const desc = normalizeExtratoRegraTexto(sug.descricao);
-        if (!contra || !desc) continue;
-        const nature = sug.nature === 'C' ? 'C' : 'D';
-        const descNorm = normalizeExtratoMatchText(desc);
-        const key = `${nature}|${descNorm}|${normContaBancoCode(contra)}`;
-
-        // Mesma descrição neste banco (qualquer natureza) → corrige conta e/ou natureza
-        const sameDesc = next.find(
-          (r) =>
-            normContaBancoCode(r.contaBanco) === normContaBancoCode(bancoAtivo) &&
-            normalizeExtratoMatchText(r.descricao) === descNorm,
-        );
-        if (sameDesc) {
-          const contraMudou =
-            normContaBancoCode(sameDesc.contaContrapartida) !== normContaBancoCode(contra);
-          const natureMudou = sameDesc.nature !== nature;
-          if (contraMudou || natureMudou) {
-            next = next.map((r) =>
-              r.id === sameDesc.id
-                ? {
-                    ...r,
-                    nature,
-                    contaContrapartida: contra,
-                    nome: desc.slice(0, 40),
-                    descricao: desc,
-                  }
-                : r,
-            );
-            updated += 1;
-          }
-          existingKeys.add(key);
-          continue;
-        }
-        if (existingKeys.has(key)) continue;
-        existingKeys.add(key);
-        toAppend.push({
-          id: crypto.randomUUID(),
-          nome: desc.slice(0, 40),
-          descricao: desc,
-          nature,
-          contaBanco: bancoAtivo,
-          contaContrapartida: contra,
-        });
-        added += 1;
-      }
-      if (toAppend.length > 0) next = [...next, ...toAppend];
-      return { next, added, updated };
-    };
-
     try {
-      // Relê docs da Inteligência IA e sincroniza TODAS as coligadas (não só AJTF)
-      const coligadas = syncColigadasFromInteligenciaDocs(company);
-      const docs = await listAiInteligenciaTextoParaIaAsync(company);
+      const result = await gerarRegrasExtratoConciliacaoCompleta({
+        company,
+        regras,
+        bancoAtivo,
+        bancoNome:
+          bancoOptions.find((b) => sanitizeCodigoReduzido(b.codigoReduzido) === bancoAtivo)?.name ||
+          bancoAtivo,
+        planoOptions,
+        allPlano,
+        extratoSample,
+        onProgress: setCorrigirMsg,
+      });
 
-      const planoByReduzido = new Map(
-        allPlano.map((p) => {
-          const red = sanitizeCodigoReduzido(p.codigoReduzido) || sanitizeCodigoReduzido(p.code) || '';
-          return [red, p] as const;
-        }),
-      );
-
-      /** Se a sugestão aponta FORNECEDOR/CLIENTE para uma coligada, troca para conta de coligada. */
-      const sanitizeSugestaoColigada = (sug: {
-        descricao: string;
-        nature: string;
-        contaContrapartida: string;
-      }) => {
-        const hit = matchColigadaNoHistorico(sug.descricao, coligadas);
-        if (!hit) return sug;
-        const red =
-          resolveCodigoReduzidoDoPlano(sug.contaContrapartida, allPlano) ||
-          sanitizeCodigoReduzido(sug.contaContrapartida) ||
-          '';
-        const planoHit = red ? planoByReduzido.get(red) : undefined;
-        const nomeConta = planoHit?.name || '';
-        const bad = isContaFornecedorNome(nomeConta) || /\bCLIENTE/i.test(nomeConta);
-        if (!bad) return sug;
-        const better =
-          hit.contaReduzida ||
-          pickContaColigadaNoPlano(planoOptions, hit.nome) ||
-          pickContaColigadaNoPlano(allPlano, hit.nome);
-        if (better && better !== red) {
-          return { ...sug, contaContrapartida: better };
-        }
-        // Sem conta de coligada no plano: bloqueia fornecedor/cliente — não grava errado
-        return { ...sug, contaContrapartida: '' };
-      };
-
-      const callIa = async (
-        doBanco: ExtratoRegraConta[],
-        uncovered: Array<{ description: string; nature: string; value: number }>,
-        phaseMsg: string,
-      ) => {
-        setCorrigirMsg(phaseMsg);
-        return suggestRegrasContasWithAi({
-          company,
-          contaBanco: bancoAtivo,
-          bancoNome:
-            bancoOptions.find((b) => sanitizeCodigoReduzido(b.codigoReduzido) === bancoAtivo)
-              ?.name || bancoAtivo,
-          mode: 'corrigir_cobertura',
-          message: [
-            'DUAS TAREFAS OBRIGATÓRIAS:',
-            '1) CORRIGIR regras já cadastradas que NÃO batem com os documentos da Inteligência IA',
-            '   (coligada≠cliente≠fornecedor, nome completo, conta errada no plano).',
-            '2) CRIAR regras para TODOS os lançamentos SEM regra / NÃO CONCILIADOS.',
-            'COLIGADAS DA LISTA NÃO SÃO FORNECEDOR — use conta de coligada/partes relacionadas/mútuo.',
-            'NOME COMPLETO: POLO SUL CLIMATIZACAO ≠ POLO SUL REFRIGERACAO.',
-            `Banco ativo: ${bancoAtivo}. Regras existentes: ${doBanco.length}. Sem regra: ${uncovered.length}. Coligadas: ${coligadas.length}.`,
-          ].join(' '),
-          plano: planoOptions,
-          extratoSample,
-          uncoveredExtrato: uncovered,
-          anexosTexto: docs,
-          coligadas: coligadas.map((c) => ({
-            nome: c.nome,
-            aliases: c.aliases,
-            contaReduzida: c.contaReduzida,
-          })),
-          regrasExistentes: doBanco.map((r) => ({
-            descricao: r.descricao,
-            nature: r.nature,
-            contaContrapartida: r.contaContrapartida,
-          })),
-        });
-      };
-
-      let current = [...regras];
-      let totalAdded = 0;
-      let totalUpdated = 0;
-      let lastResumo = '';
-
-      // Corrige regras existentes que já apontam FORNECEDOR para coligada (sem esperar a IA)
-      {
-        let localFixed = 0;
-        const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-        for (const r of doBanco) {
-          const hit = matchColigadaNoHistorico(r.descricao, coligadas);
-          if (!hit) continue;
-          const red =
-            resolveCodigoReduzidoDoPlano(r.contaContrapartida, allPlano) ||
-            sanitizeCodigoReduzido(r.contaContrapartida) ||
-            '';
-          const planoHit = red ? planoByReduzido.get(red) : undefined;
-          if (!planoHit || (!isContaFornecedorNome(planoHit.name) && !/\bCLIENTE/i.test(planoHit.name))) {
-            continue;
-          }
-          const better =
-            hit.contaReduzida ||
-            pickContaColigadaNoPlano(planoOptions, hit.nome) ||
-            pickContaColigadaNoPlano(allPlano, hit.nome);
-          if (!better || better === red) continue;
-          current = current.map((x) =>
-            x.id === r.id ? { ...x, contaContrapartida: better } : x,
-          );
-          localFixed += 1;
-        }
-        if (localFixed > 0) {
-          totalUpdated += localFixed;
-          setCorrigirMsg(
-            `Pré-correção: ${localFixed} regra(s) de coligada que estavam como fornecedor/cliente…`,
-          );
-        }
+      if (result.error && result.totalAdded === 0 && result.totalUpdated === 0) {
+        setCorrigirMsg(result.error);
+        return;
       }
 
-      // ——— FASE 1: auditar/corrigir regras existentes vs Inteligência IA ———
-      {
-        const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-        const uncovered0 = summarizeUncoveredForAi(
-          findUncoveredExtratoRows(extratoSample, doBanco),
-          40,
-        );
-        if (doBanco.length > 0 || docs.length > 0 || coligadas.length > 0) {
-          const result = await callIa(
-            doBanco,
-            uncovered0,
-            `Fase 1/2: auditando ${doBanco.length} regra(s) + ${coligadas.length} coligada(s) vs Inteligência IA` +
-              (uncovered0.length ? ` e cobrindo lote de ${uncovered0.length} sem regra…` : '…'),
-          );
-          if (result.resumo) lastResumo = result.resumo;
-          if (result.regras.length > 0) {
-            const sanitized = result.regras.map(sanitizeSugestaoColigada);
-            const applied = applySugestoes(current, sanitized);
-            current = applied.next;
-            totalAdded += applied.added;
-            totalUpdated += applied.updated;
-          } else if (!result.ok && result.detail) {
-            setCorrigirMsg(`${result.detail} — seguindo para cobertura local…`);
-          }
-        }
+      let next = result.regras;
+      if (result.totalAdded > 0 || result.totalUpdated > 0) {
+        next = saveExtratoRegrasContas(company, next);
       }
-
-      // ——— FASE 2: lotes só para não conciliados restantes ———
-      const BATCH_SIZE = 40;
-      const MAX_BATCHES = 8;
-      for (let batchIdx = 0; batchIdx < MAX_BATCHES; batchIdx++) {
-        const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-        const uncoveredAll = findUncoveredExtratoRows(extratoSample, doBanco);
-        if (uncoveredAll.length === 0) break;
-        const batches = chunkUncoveredForAiBatches(uncoveredAll, BATCH_SIZE);
-        const batch = batches[0];
-        if (!batch?.length) break;
-
-        const result = await callIa(
-          doBanco,
-          batch,
-          `Fase 2/2 · lote ${batchIdx + 1}: criando regras para ${batch.length} de ${uncoveredAll.length} sem regra…`,
-        );
-
-        if (result.resumo) lastResumo = result.resumo;
-        if (!result.ok && result.regras.length === 0) {
-          if (batchIdx === 0 && result.detail) {
-            setCorrigirMsg(
-              `${result.detail} — aplicando cobertura local automática para não deixar lançamento descoberto.`,
-            );
-          }
-          break;
-        }
-
-        const sanitized = result.regras.map(sanitizeSugestaoColigada);
-        const applied = applySugestoes(current, sanitized);
-        current = applied.next;
-        totalAdded += applied.added;
-        totalUpdated += applied.updated;
-        if (applied.added === 0 && applied.updated === 0) break;
-      }
-
-      // Fallback local: o que a IA não cobriu, gera regra automática pelo nome no plano
-      let fallbackAdded = 0;
-      {
-        const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-        const still = findUncoveredExtratoRows(extratoSample, doBanco);
-        if (still.length > 0) {
-          setCorrigirMsg(
-            `Completando ${still.length} não conciliado(s) restantes com cobertura automática…`,
-          );
-          const fallbacks = buildFallbackRegrasParaCobertura({
-            uncovered: still,
-            contaBanco: bancoAtivo,
-            plano: planoOptions,
-          });
-          if (fallbacks.length > 0) {
-            const applied = applySugestoes(
-              current,
-              fallbacks.map((f) => ({
-                descricao: f.descricao,
-                nature: f.nature,
-                contaContrapartida: f.contaContrapartida,
-              })),
-            );
-            current = applied.next;
-            fallbackAdded = applied.added;
-            totalAdded += applied.added;
-          }
-        }
-      }
-
-      if (totalAdded > 0 || totalUpdated > 0) {
-        current = saveExtratoRegrasContas(company, current);
-      }
-      onChange(current);
-
-      const after = filterExtratoRegrasPorBanco(current, bancoAtivo);
-      const stillOpen = findUncoveredExtratoRows(extratoSample, after).length;
-      const parts = [
-        lastResumo,
-        totalAdded || totalUpdated
-          ? `Resultado: ${totalUpdated} regra(s) corrigida(s) pela Inteligência IA, ${totalAdded} nova(s) para não conciliados${
-              fallbackAdded ? ` (inclui ${fallbackAdded} cobertura automática)` : ''
-            }.`
-          : 'Nenhuma alteração da IA (regras já ok ou sem evidência nos docs).',
-        stillOpen === 0
-          ? 'Cobertura: 100% — todos os lançamentos da conciliação têm regra.'
-          : `Ainda faltam ${stillOpen} padrão(ões) sem conta no plano correspondente — cadastre a conta ou rode de novo.`,
-      ].filter(Boolean);
-      setCorrigirMsg(parts.join(' '));
-
-      // Reaplica na grade da conciliação (preenche débito/crédito)
-      if (totalAdded > 0 || totalUpdated > 0) {
-        window.setTimeout(() => onReaplicar?.(), 0);
-      }
+      onChange(next);
+      setCorrigirMsg(result.resumo || result.error || 'Análise concluída.');
+      window.setTimeout(() => onReaplicar?.(), 0);
     } catch (err) {
-      setCorrigirMsg(err instanceof Error ? err.message : 'Falha ao corrigir com IA.');
+      setCorrigirMsg(err instanceof Error ? err.message : 'Falha ao gerar regras com IA.');
     } finally {
       setCorrigindoIa(false);
     }
@@ -634,87 +394,62 @@ export default memo(function ExtratoRegrasContasModal({
       }
 
       setCorrigindoIa(true);
-      setCorrigirMsg('Chat: aplicando pedido em lotes…');
+      setCorrigirMsg('Chat: analista sênior processando seu pedido (análise única)…');
       setDocsCount(countAiInteligenciaDocs(company));
 
       const applySugestoes = (
         current: ExtratoRegraConta[],
         sugestoes: Array<{ descricao: string; nature: string; contaContrapartida: string }>,
-      ): { next: ExtratoRegraConta[]; added: number; updated: number } => {
-        let next = [...current];
-        let added = 0;
-        let updated = 0;
-        const existingKeys = new Set(
-          filterExtratoRegrasPorBanco(next, bancoAtivo).map(
-            (r) =>
-              `${r.nature}|${normalizeExtratoMatchText(r.descricao)}|${normContaBancoCode(r.contaContrapartida)}`,
-          ),
-        );
-        const toAppend: ExtratoRegraConta[] = [];
-
-        for (const sug of sugestoes) {
-          const contra =
-            resolveCodigoReduzidoDoPlano(sug.contaContrapartida, allPlano) ||
-            sanitizeCodigoReduzido(sug.contaContrapartida) ||
-            '';
-          const desc = normalizeExtratoRegraTexto(sug.descricao);
-          if (!contra || !desc) continue;
-          const nature = sug.nature === 'C' ? 'C' : 'D';
-          const descNorm = normalizeExtratoMatchText(desc);
-          const key = `${nature}|${descNorm}|${normContaBancoCode(contra)}`;
-
-          const sameDesc = next.find(
-            (r) =>
-              normContaBancoCode(r.contaBanco) === normContaBancoCode(bancoAtivo) &&
-              normalizeExtratoMatchText(r.descricao) === descNorm,
-          );
-          if (sameDesc) {
-            const contraMudou =
-              normContaBancoCode(sameDesc.contaContrapartida) !== normContaBancoCode(contra);
-            const natureMudou = sameDesc.nature !== nature;
-            if (contraMudou || natureMudou) {
-              next = next.map((r) =>
-                r.id === sameDesc.id
-                  ? {
-                      ...r,
-                      nature,
-                      contaContrapartida: contra,
-                      nome: desc.slice(0, 40),
-                      descricao: desc,
-                    }
-                  : r,
-              );
-              updated += 1;
-            }
-            existingKeys.add(key);
-            continue;
-          }
-          if (existingKeys.has(key)) continue;
-          existingKeys.add(key);
-          toAppend.push({
-            id: crypto.randomUUID(),
-            nome: desc.slice(0, 40),
-            descricao: desc,
-            nature,
-            contaBanco: bancoAtivo,
-            contaContrapartida: contra,
-          });
-          added += 1;
-        }
-        if (toAppend.length > 0) next = [...next, ...toAppend];
-        return { next, added, updated };
-      };
+      ): { next: ExtratoRegraConta[]; added: number; updated: number } =>
+        mergeSugestoesIntoRegras({
+          current,
+          sugestoes,
+          contaBanco: bancoAtivo,
+          resolveContra: (raw) =>
+            resolveCodigoReduzidoDoPlano(raw, allPlano) || sanitizeCodigoReduzido(raw) || '',
+          coligadas: listAiColigadasParaIa(company),
+        });
 
       try {
-        const coligadas = syncColigadasFromInteligenciaDocs(company);
-        const docs = await listAiInteligenciaTextoParaIaAsync(company);
+        const coligadas = enrichColigadasComContasDoPlano(
+          syncColigadasFromInteligenciaDocs(company),
+          allPlano,
+        );
+        const inteligenciaCtx = await buildInteligenciaContextoParaRegrasIaAsync(company, coligadas);
+        const docs = inteligenciaCtx.anexosTexto;
         const contaPedida = resolveContaFromUserMessage(userMessage, planoOptions);
         let current = [...regras];
         let totalAdded = 0;
         let totalUpdated = 0;
         const resumos: string[] = [];
 
-        // 1) Aplicação local imediata do pedido (rápido, sem esperar a IA)
+        // 0) ALTERAR regras JÁ existentes que casam com o pedido (prioridade do chat)
+        {
+          const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
+          const updates = updateExistingRegrasFromUserChatIntent({
+            userMessage,
+            regrasDoBanco: doBanco,
+            plano: planoOptions,
+            contaContrapartida: contaPedida,
+          });
+          if (updates.length > 0 && contaPedida) {
+            const applied = applySugestoes(
+              current,
+              updates.map((r) => ({
+                descricao: r.descricao,
+                nature: r.nature,
+                contaContrapartida: contaPedida,
+              })),
+            );
+            current = applied.next;
+            totalUpdated += applied.updated;
+            setCorrigirMsg(
+              `Alterando ${applied.updated} regra(s) existente(s) → conta ${contaPedida}…`,
+            );
+          }
+        }
+
+        // 1) Criar regras novas para históricos SEM regra que casam com o pedido
         {
           const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
           const uncoveredAll = findUncoveredExtratoRows(extratoSample, doBanco);
@@ -738,70 +473,100 @@ export default memo(function ExtratoRegrasContasModal({
             totalAdded += applied.added;
             totalUpdated += applied.updated;
             setCorrigirMsg(
-              `Pedido aplicado localmente: ${applied.added} regra(s)` +
+              `Pedido aplicado localmente: ${applied.updated} alterada(s), ${applied.added} nova(s)` +
                 (contaPedida ? ` → conta ${contaPedida}` : '') +
-                '. Refinando com IA em lotes…',
+                '. Refinando com IA…',
             );
           }
         }
 
-        // 2) IA em lotes só nos padrões que casam com o pedido
+        // 2) IA — análise única (sem lotes)
         {
           const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
           const uncoveredAll = findUncoveredExtratoRows(extratoSample, doBanco);
-          const focused = filterUncoveredByUserHint(uncoveredAll, userMessage);
-          const batches = chunkUncoveredForAiBatches(focused, 40);
-          const maxBatches = Math.min(batches.length, 6);
+          const focusedUncovered = filterUncoveredByUserHint(uncoveredAll, userMessage);
+          const regrasFoco = doBanco.filter((r) => {
+            const tokens = userMessage
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .toUpperCase()
+              .split(/\s+/)
+              .filter((t) => t.length >= 4);
+            const hist = normalizeExtratoMatchText(r.descricao);
+            const hits = tokens.filter((t) => hist.includes(t)).length;
+            return hits >= Math.min(2, tokens.length) || (tokens.length === 1 && hits === 1);
+          });
 
-          for (let i = 0; i < maxBatches; i++) {
-            const batch = batches[i];
-            setCorrigirMsg(
-              `Chat lote ${i + 1}/${maxBatches}: ${batch.length} padrão(ões)…`,
+          const sampleRows = [
+            ...focusedUncovered,
+            ...regrasFoco.map((r) => ({
+              description: r.descricao,
+              nature: r.nature,
+              value: 0,
+            })),
+          ];
+          const padroesChat = agrupaPadroesExtratoParaIa(
+            sampleRows.length > 0 ? sampleRows : focusedUncovered,
+            coligadas,
+          );
+          const padroesExtrato = agrupaPadroesExtratoParaIa(extratoSample, coligadas);
+          const modulosCtx = buildModulosContextoParaRegrasIa(company);
+
+          setCorrigirMsg(`Chat: analisando pedido (${padroesChat.length} padrão(ões) relacionados)…`);
+
+          const result = await suggestRegrasContasWithAi({
+            company,
+            contaBanco: bancoAtivo,
+            bancoNome:
+              bancoOptions.find((b) => sanitizeCodigoReduzido(b.codigoReduzido) === bancoAtivo)
+                ?.name || bancoAtivo,
+            mode: 'chat_pedido',
+            message: [
+              'ANALISTA CONTÁBIL SÊNIOR — PEDIDO DO USUÁRIO (prioridade absoluta, análise única):',
+              userMessage,
+              contaPedida
+                ? `Conta destino OBRIGATÓRIA: código reduzido ${contaPedida}.`
+                : 'Resolva a conta destino pelo NOME no plano.',
+              'Corrija ou crie regras conforme o pedido. PRECISÃO primeiro.',
+              `Banco: ${bancoAtivo}.`,
+            ].join(' '),
+            plano: planoOptions,
+            extratoSample: padroesParaPayloadIa(padroesExtrato),
+            uncoveredExtrato: padroesParaPayloadIa(padroesChat),
+            anexosTexto: docs,
+            balanceteUsoContas: inteligenciaCtx.balanceteUsoContas,
+            inteligenciaBalancetes: inteligenciaCtx.inteligenciaBalancetes,
+            modulosContexto: modulosCtx,
+            coligadas: coligadas.map((c) => ({
+              nome: c.nome,
+              aliases: c.aliases,
+              contaReduzida: c.contaReduzida,
+            })),
+            regrasExistentes: (regrasFoco.length > 0 ? regrasFoco : doBanco).map((r) => ({
+              descricao: r.descricao,
+              nature: r.nature,
+              contaContrapartida: r.contaContrapartida,
+            })),
+          });
+
+          if (result.resumo) resumos.push(result.resumo);
+          if (result.regras.length > 0) {
+            const forced = result.regras.map((r) =>
+              contaPedida ? { ...r, contaContrapartida: contaPedida } : r,
             );
-            const result = await suggestRegrasContasWithAi({
-              company,
-              contaBanco: bancoAtivo,
-              bancoNome:
-                bancoOptions.find((b) => sanitizeCodigoReduzido(b.codigoReduzido) === bancoAtivo)
-                  ?.name || bancoAtivo,
-              mode: 'chat_pedido',
-              message: [
-                'PEDIDO DO USUÁRIO (OBEDEÇA):',
-                userMessage,
-                contaPedida
-                  ? `Conta destino já resolvida no plano: código reduzido ${contaPedida}. Use esta contaContrapartida.`
-                  : 'Resolva a conta destino pelo NOME no plano (ex.: fundo fixo de caixa).',
-                'Crie regras só para históricos deste lote que casam com o pedido.',
-                `Banco: ${bancoAtivo}. Lote ${i + 1}/${maxBatches}.`,
-              ].join(' '),
-              plano: planoOptions,
-              extratoSample: batch,
-              uncoveredExtrato: batch,
-              anexosTexto: docs.slice(0, 8),
-              coligadas: coligadas.map((c) => ({
-                nome: c.nome,
-                aliases: c.aliases,
-                contaReduzida: c.contaReduzida,
-              })),
-              regrasExistentes: filterExtratoRegrasPorBanco(current, bancoAtivo)
-                .slice(0, 40)
-                .map((r) => ({
-                  descricao: r.descricao,
-                  nature: r.nature,
-                  contaContrapartida: r.contaContrapartida,
-                })),
-            });
-
-            if (result.resumo) resumos.push(result.resumo);
-            if (result.regras.length > 0) {
-              const forced = result.regras.map((r) =>
-                contaPedida ? { ...r, contaContrapartida: contaPedida } : r,
-              );
-              const applied = applySugestoes(current, forced);
-              current = applied.next;
-              totalAdded += applied.added;
-              totalUpdated += applied.updated;
-            }
+            const historicoChat = focusedUncovered.map((u) => u.description);
+            const toApply = contaPedida
+              ? forced.filter((r) => {
+                  const red =
+                    resolveCodigoReduzidoDoPlano(r.contaContrapartida, allPlano) ||
+                    sanitizeCodigoReduzido(r.contaContrapartida);
+                  return Boolean(red);
+                })
+              : validateAiRegrasLote(forced, planoOptions, coligadas, docs, historicoChat);
+            const applied = applySugestoes(current, toApply);
+            current = applied.next;
+            totalAdded += applied.added;
+            totalUpdated += applied.updated;
           }
         }
 
@@ -814,12 +579,12 @@ export default memo(function ExtratoRegrasContasModal({
         const reply = [
           resumos[0],
           totalAdded || totalUpdated
-            ? `Aplicado do seu pedido: ${totalUpdated} corrigida(s), ${totalAdded} nova(s)${
-                contaPedida ? ` (conta ${contaPedida})` : ''
-              }.`
+            ? `Feito conforme seu pedido: ${totalUpdated} regra(s) alterada(s), ${totalAdded} nova(s)${
+                contaPedida ? ` → conta ${contaPedida}` : ''
+              }. Contas reaplicadas na conciliação.`
             : contaPedida
-              ? `Achei a conta ${contaPedida} no plano, mas nenhum histórico do extrato casou com o texto do pedido. Seja mais específico no nome.`
-              : 'Não encontrei no plano a conta citada nem históricos que casem com o pedido. Informe o nome da conta (ex.: fundo fixo) ou o código reduzido.',
+              ? `Achei a conta ${contaPedida} no plano, mas nenhum histórico/regra casou com o texto do pedido. Cite o nome como aparece no extrato ou na regra.`
+              : 'Não encontrei no plano a conta citada nem históricos/regras que casem. Informe o nome da conta (ex.: fundo fixo) ou o código reduzido, e o nome do lançamento/regra a mudar.',
         ]
           .filter(Boolean)
           .join(' ');
@@ -847,220 +612,19 @@ export default memo(function ExtratoRegrasContasModal({
     ],
   );
 
-  /** Implanta regras do zero (quando o banco ainda não tem regras) — em lotes. */
-  const handleImplantarRegrasComIa = useCallback(async () => {
-    const bancoAtivo = sanitizeCodigoReduzido(selectedBanco) || matchBancoCode(selectedBanco);
-    if (!bancoAtivo) {
-      setCorrigirMsg('Selecione a conta banco (código reduzido) antes de implantar.');
-      return;
-    }
-    if (planoOptions.length === 0) {
-      setCorrigirMsg('Importe o plano de contas com código reduzido.');
-      return;
-    }
-    if (extratoSample.length === 0) {
-      setCorrigirMsg('Importe o extrato na conciliação para implantar regras.');
-      return;
-    }
-
-    setCorrigindoIa(true);
-    setCorrigirMsg(`Implantando regras do banco ${bancoAtivo} em lotes…`);
-    setDocsCount(countAiInteligenciaDocs(company));
-
-    const applySugestoes = (
-      current: ExtratoRegraConta[],
-      sugestoes: Array<{ descricao: string; nature: string; contaContrapartida: string }>,
-    ): { next: ExtratoRegraConta[]; added: number; updated: number } => {
-      let next = [...current];
-      let added = 0;
-      let updated = 0;
-      const existingKeys = new Set(
-        filterExtratoRegrasPorBanco(next, bancoAtivo).map(
-          (r) =>
-            `${r.nature}|${normalizeExtratoMatchText(r.descricao)}|${normContaBancoCode(r.contaContrapartida)}`,
-        ),
-      );
-      const toAppend: ExtratoRegraConta[] = [];
-
-      for (const sug of sugestoes) {
-        const contra =
-          resolveCodigoReduzidoDoPlano(sug.contaContrapartida, allPlano) ||
-          sanitizeCodigoReduzido(sug.contaContrapartida) ||
-          '';
-        const desc = normalizeExtratoRegraTexto(sug.descricao);
-        if (!contra || !desc) continue;
-        const nature = sug.nature === 'C' ? 'C' : 'D';
-        const descNorm = normalizeExtratoMatchText(desc);
-        const key = `${nature}|${descNorm}|${normContaBancoCode(contra)}`;
-        const sameDesc = next.find(
-          (r) =>
-            normContaBancoCode(r.contaBanco) === normContaBancoCode(bancoAtivo) &&
-            normalizeExtratoMatchText(r.descricao) === descNorm,
-        );
-        if (sameDesc) {
-          const contraMudou =
-            normContaBancoCode(sameDesc.contaContrapartida) !== normContaBancoCode(contra);
-          const natureMudou = sameDesc.nature !== nature;
-          if (contraMudou || natureMudou) {
-            next = next.map((r) =>
-              r.id === sameDesc.id
-                ? {
-                    ...r,
-                    nature,
-                    contaContrapartida: contra,
-                    nome: desc.slice(0, 40),
-                    descricao: desc,
-                  }
-                : r,
-            );
-            updated += 1;
-          }
-          existingKeys.add(key);
-          continue;
-        }
-        if (existingKeys.has(key)) continue;
-        existingKeys.add(key);
-        toAppend.push({
-          id: crypto.randomUUID(),
-          nome: desc.slice(0, 40),
-          descricao: desc,
-          nature,
-          contaBanco: bancoAtivo,
-          contaContrapartida: contra,
-        });
-        added += 1;
-      }
-      if (toAppend.length > 0) next = [...next, ...toAppend];
-      return { next, added, updated };
-    };
-
-    try {
-      const coligadas = syncColigadasFromInteligenciaDocs(company);
-      const docs = await listAiInteligenciaTextoParaIaAsync(company);
-      let current = [...regras];
-      let totalAdded = 0;
-      let totalUpdated = 0;
-      let lastResumo = '';
-
-      const doBanco0 = filterExtratoRegrasPorBanco(current, bancoAtivo);
-      const uncoveredAll = findUncoveredExtratoRows(extratoSample, doBanco0);
-      const batches = chunkUncoveredForAiBatches(uncoveredAll, 40);
-      const maxBatches = Math.min(batches.length, 10);
-
-      for (let i = 0; i < maxBatches; i++) {
-        const batch = batches[i];
-        const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-        setCorrigirMsg(
-          `Implantar lote ${i + 1}/${maxBatches}: ${batch.length} padrão(ões) sem regra…`,
-        );
-        const result = await suggestRegrasContasWithAi({
-          company,
-          contaBanco: bancoAtivo,
-          bancoNome:
-            bancoOptions.find((b) => sanitizeCodigoReduzido(b.codigoReduzido) === bancoAtivo)
-              ?.name || bancoAtivo,
-          mode: 'implantar',
-          message: [
-            'IMPLANTAR REGRAS DO ZERO neste banco.',
-            'Crie regras para TODOS os lançamentos deste lote.',
-            'COLIGADAS NÃO SÃO FORNECEDOR/CLIENTE. NOME COMPLETO no discriminador.',
-            `Banco: ${bancoAtivo}. Lote ${i + 1}/${maxBatches}.`,
-          ].join(' '),
-          plano: planoOptions,
-          extratoSample: batch,
-          uncoveredExtrato: batch,
-          anexosTexto: docs,
-          coligadas: coligadas.map((c) => ({
-            nome: c.nome,
-            aliases: c.aliases,
-            contaReduzida: c.contaReduzida,
-          })),
-          regrasExistentes: doBanco.map((r) => ({
-            descricao: r.descricao,
-            nature: r.nature,
-            contaContrapartida: r.contaContrapartida,
-          })),
-        });
-
-        if (result.resumo) lastResumo = result.resumo;
-        if (result.regras.length > 0) {
-          const applied = applySugestoes(current, result.regras);
-          current = applied.next;
-          totalAdded += applied.added;
-          totalUpdated += applied.updated;
-        }
-      }
-
-      // Fallback local no que sobrou
-      {
-        const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-        const still = findUncoveredExtratoRows(extratoSample, doBanco);
-        if (still.length > 0) {
-          setCorrigirMsg(`Completando ${still.length} restante(s) com cobertura automática…`);
-          const fallbacks = buildFallbackRegrasParaCobertura({
-            uncovered: still,
-            contaBanco: bancoAtivo,
-            plano: planoOptions,
-          });
-          if (fallbacks.length > 0) {
-            const applied = applySugestoes(
-              current,
-              fallbacks.map((f) => ({
-                descricao: f.descricao,
-                nature: f.nature,
-                contaContrapartida: f.contaContrapartida,
-              })),
-            );
-            current = applied.next;
-            totalAdded += applied.added;
-          }
-        }
-      }
-
-      if (totalAdded > 0 || totalUpdated > 0) {
-        current = saveExtratoRegrasContas(company, current);
-        onChange(current);
-        window.setTimeout(() => onReaplicar?.(), 0);
-      }
-
-      const after = filterExtratoRegrasPorBanco(current, bancoAtivo);
-      const stillOpen = findUncoveredExtratoRows(extratoSample, after).length;
-      setCorrigirMsg(
-        [
-          lastResumo,
-          `Implantação: ${totalAdded} regra(s) criada(s)${
-            totalUpdated ? `, ${totalUpdated} ajustada(s)` : ''
-          }.`,
-          stillOpen === 0
-            ? 'Cobertura: 100%.'
-            : `Ainda faltam ${stillOpen} padrão(ões) sem conta no plano.`,
-        ]
-          .filter(Boolean)
-          .join(' '),
-      );
-    } catch (err) {
-      setCorrigirMsg(err instanceof Error ? err.message : 'Falha ao implantar regras.');
-    } finally {
-      setCorrigindoIa(false);
-    }
-  }, [
-    allPlano,
-    bancoOptions,
-    company,
-    extratoSample,
-    matchBancoCode,
-    onChange,
-    onReaplicar,
-    planoOptions,
-    regras,
-    selectedBanco,
-  ]);
-
   const persist = useCallback(
     (next: ExtratoRegraConta[]) => {
       onChange(saveExtratoRegrasContas(company, next));
     },
     [company, onChange],
+  );
+
+  const handleRemove = useCallback(
+    (id: string) => {
+      const next = regras.filter((r) => r.id !== id);
+      onChange(saveExtratoRegrasContas(company, next));
+    },
+    [company, onChange, regras],
   );
 
   const handleAdd = useCallback(() => {
@@ -1090,13 +654,6 @@ export default memo(function ExtratoRegrasContasModal({
     setDraftConta('');
   }, [company, draftConta, draftDescricao, draftNature, persist, selectedBanco, toReduzido]);
 
-  const handleRemove = useCallback(
-    (id: string) => {
-      persist(removeExtratoRegraConta(company, id));
-    },
-    [company, persist],
-  );
-
   const contaLabel = useCallback(
     (code: string) => {
       const red = sanitizeCodigoReduzido(code) || code;
@@ -1124,6 +681,16 @@ export default memo(function ExtratoRegrasContasModal({
     },
     [bancoOptions],
   );
+
+  const handleRemoveAllDoBanco = useCallback(() => {
+    if (regrasDoBanco.length === 0 || !selectedBanco.trim()) return;
+    const label = bancoLabel(selectedBanco);
+    const msg = `Remover todas as ${regrasDoBanco.length} regra(s) do banco ${label}? Esta ação não pode ser desfeita.`;
+    if (!window.confirm(msg)) return;
+    const norm = normContaBancoCode(selectedBanco);
+    const next = regras.filter((r) => normContaBancoCode(r.contaBanco) !== norm);
+    onChange(saveExtratoRegrasContas(company, next));
+  }, [bancoLabel, company, onChange, regras, regrasDoBanco.length, selectedBanco]);
 
   if (!open) return null;
 
@@ -1260,7 +827,7 @@ export default memo(function ExtratoRegrasContasModal({
                 {uncoveredRows.length > 0 ? (
                   <p className="text-[8px] text-amber-800">
                     {uncoveredRows.length} padrão(ões) do extrato ainda sem regra — use{' '}
-                    <strong>IA Corrigir regras</strong> ao lado.
+                    <strong>Gerar regras</strong> (analista contábil sênior) ao lado.
                   </p>
                 ) : extratoSample.length > 0 ? (
                   <p className="text-[8px] text-green-800">
@@ -1341,12 +908,25 @@ export default memo(function ExtratoRegrasContasModal({
                 ref={regrasListRef}
                 className="p-3 space-y-2 scroll-mt-2 transition-shadow"
               >
-                <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
-                  Regras deste banco · {regrasDoBanco.length}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
+                    Regras deste banco · {regrasDoBanco.length}
+                  </p>
+                  {regrasDoBanco.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleRemoveAllDoBanco}
+                      className="technical-button text-[8px] py-1 px-2 inline-flex items-center gap-1 shrink-0 text-rose-800 border-rose-300 hover:bg-rose-50"
+                      title="Remove todas as regras deste banco"
+                    >
+                      <Trash2 size={11} aria-hidden="true" />
+                      Remover todas
+                    </button>
+                  ) : null}
+                </div>
                 {regrasDoBanco.length === 0 ? (
                   <p className="text-[10px] text-brand-text/45 italic text-center py-8">
-                    Nenhuma regra para este banco. Use <strong>IA Corrigir regras</strong> ao lado
+                    Nenhuma regra para este banco. Use <strong>Gerar regras</strong> (analista sênior)
                     ou cadastre manualmente.
                   </p>
                 ) : (
@@ -1420,7 +1000,6 @@ export default memo(function ExtratoRegrasContasModal({
                 uncoveredCount={uncoveredRows.length}
                 regrasCount={regrasDoBanco.length}
                 onCorrigir={() => void handleCorrigirRegrasComIa()}
-                onImplantar={() => void handleImplantarRegrasComIa()}
                 onMostrarRegras={handleMostrarRegras}
                 onOpenInteligencia={onOpenInteligencia}
                 onChat={handleChatRegrasComIa}
@@ -1440,14 +1019,16 @@ export default memo(function ExtratoRegrasContasModal({
                 if (selectedBanco.trim()) applyContaBanco(selectedBanco);
                 // Próximo tick: options do Manager já refletem o banco/regras salvos
                 window.setTimeout(() => {
-                  onReaplicar();
-                  onClose();
-                }, 50);
+                  void Promise.resolve(onReaplicar()).finally(() => {
+                    onClose();
+                  });
+                }, 80);
               }}
               disabled={regras.length === 0 && !selectedBanco.trim()}
               className="technical-button-primary text-[10px] py-1 px-4 disabled:opacity-40"
+              title="Aplica as contas das regras na tabela de conciliação (débito/crédito)"
             >
-              Salvar e reaplicar conciliação
+              Salvar e aplicar na conciliação
             </button>
           ) : null}
         </div>

@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "1.0.6",
+  "version": "1.0.7",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-all.mjs",
@@ -23,6 +23,10 @@
     "fixtures:e2e": "npx tsx scripts/generate-e2e-fixtures.ts",
     "fiscal-api": "node scripts/fiscal-nfe-api.mjs",
     "agent-api": "node scripts/agent-api-server.mjs",
+    "storage:up": "docker compose up -d",
+    "storage:down": "docker compose down",
+    "storage:migrate": "node scripts/storage/migrate.mjs",
+    "storage:setup": "npm run storage:up && node -e \"setTimeout(()=>{},4000)\" && npm run storage:migrate",
     "test:gemini": "node scripts/test-gemini.mjs",
     "doc-downloader:install": "powershell -ExecutionPolicy Bypass -File scripts/install-doc-downloader.ps1",
     "doc-downloader": "node scripts/start-doc-downloader.mjs",
@@ -33,6 +37,8 @@
     "gestao:sync-deps": "node scripts/sync-gestao-deps.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1083.0",
+    "@aws-sdk/s3-request-presigner": "^3.1083.0",
     "@hello-pangea/dnd": "^17.0.0",
     "@hookform/resolvers": "^4.1.2",
     "@radix-ui/react-accordion": "^1.2.3",
@@ -93,6 +99,7 @@
     "node-forge": "^1.3.1",
     "node-mde": "^0.14.13",
     "pdfjs-dist": "^5.6.205",
+    "pg": "^8.22.0",
     "playwright": "^1.58.2",
     "react": "^19.0.1",
     "react-day-picker": "^8.10.1",

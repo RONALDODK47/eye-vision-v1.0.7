@@ -41,6 +41,45 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+const AGENT_API_ORIGIN = `http://127.0.0.1:${process.env.AGENT_API_PORT || 8790}`;
+
+/** Encaminha /api/agent/workspace/* para o agent-api (:8790) — Postgres/MinIO. */
+async function proxyWorkspaceToAgentApi(req, res, subPath, rawBody) {
+  const targetUrl = `${AGENT_API_ORIGIN}/agent${subPath}`;
+  try {
+    const headers = {
+      Accept: 'application/json',
+      'Content-Type': req.headers['content-type'] || 'application/json',
+    };
+    if (req.headers['x-office-token']) headers['X-Office-Token'] = req.headers['x-office-token'];
+    if (req.headers['x-user-id']) headers['X-User-Id'] = req.headers['x-user-id'];
+    if (req.headers.authorization) headers.Authorization = req.headers.authorization;
+
+    const init = {
+      method: req.method || 'GET',
+      headers,
+    };
+    if (rawBody && rawBody.length > 0 && req.method !== 'GET' && req.method !== 'HEAD') {
+      init.body = rawBody;
+    }
+    const upstream = await fetch(targetUrl, init);
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.statusCode = upstream.status;
+    const ct = upstream.headers.get('content-type');
+    if (ct) res.setHeader('Content-Type', ct);
+    const cd = upstream.headers.get('content-disposition');
+    if (cd) res.setHeader('Content-Disposition', cd);
+    res.end(buf);
+  } catch (err) {
+    sendJson(res, 503, {
+      ok: false,
+      error:
+        'Agent-api offline (:8790). Rode npm run agent-api e npm run storage:setup (Postgres/MinIO).',
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 async function agentStub(pathname, method, jsonBody) {
   if (pathname === '/health') {
     const gemini = await handleGeminiHealth();
@@ -211,6 +250,11 @@ export function agentApiDevFallback() {
             sendJson(res, 400, { error: 'Corpo da requisição inválido' });
             return;
           }
+        }
+
+        if (pathname.startsWith('/workspace')) {
+          await proxyWorkspaceToAgentApi(req, res, subPath, rawBody);
+          return;
         }
 
         const jsonBody = parseJsonBody(rawBody);

@@ -12,8 +12,11 @@ const HOST = process.env.AGENT_API_HOST || '127.0.0.1';
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Office-Token, X-User-Id',
+  );
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
@@ -21,7 +24,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '4mb' }));
+/** Workspace/pastas podem trazer PDF base64 — limite maior. */
+app.use(express.json({ limit: '64mb' }));
 
 app.get('/health', (_req, res) => {
   res.status(200).json({

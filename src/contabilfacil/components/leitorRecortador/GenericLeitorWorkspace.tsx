@@ -6,6 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Files, HelpCircle, Layers, Maximize2, Move, RefreshCw } from 'lucide-react';
 import { columnBandColor } from '../../../lib/leitorRecortador/columnDefaults';
+import { PageRangeNumberInput } from './PageRangeNumberInput';
 import type { ColumnMapping, ColumnRange, LeitorColumnDef } from '../../../lib/leitorRecortador/types';
 import { DynamicStyleDiv } from '../../lib/dynamicStyle';
 
@@ -296,38 +297,34 @@ export function GenericLeitorWorkspace({
               </span>
               <div className="flex items-center gap-4 bg-brand-sidebar/40 p-2.5 border border-brand-border w-fit">
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-orange-500 font-bold">Pág. Início:</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={pdfPages.length}
+                  <span className="text-[11px] text-orange-500 font-bold">Início:</span>
+                  <PageRangeNumberInput
                     value={cropStartPage}
-                    onChange={(e) => {
-                      let val = parseInt(e.target.value, 10) || 1;
-                      val = Math.max(1, Math.min(pdfPages.length, val));
+                    max={pdfPages.length}
+                    onChange={(val) => {
                       setCropStartPage(val);
                       if (val > cropEndPage) setCropEndPage(val);
                     }}
-                    className="w-14 h-8 px-1.5 bg-brand-sidebar border border-brand-border text-brand-text text-xs font-mono font-bold text-center"
+                    onNavigate={(val) => onSelectPage?.(val)}
+                    className="w-16 h-8 px-2 bg-white border border-brand-border text-brand-text text-xs font-mono font-bold text-center focus:outline-none focus:ring-2 focus:ring-orange-400"
                     aria-label="Página inicial do recorte"
+                    title="Digite a página inicial"
                   />
                 </div>
                 <div className="h-5 w-px bg-brand-border" />
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-rose-500 font-bold">Pág. Fim:</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={pdfPages.length}
+                  <PageRangeNumberInput
                     value={cropEndPage}
-                    onChange={(e) => {
-                      let val = parseInt(e.target.value, 10) || 1;
-                      val = Math.max(1, Math.min(pdfPages.length, val));
+                    max={pdfPages.length}
+                    onChange={(val) => {
                       setCropEndPage(val);
                       if (val < cropStartPage) setCropStartPage(val);
                     }}
-                    className="w-14 h-8 px-1.5 bg-brand-sidebar border border-brand-border text-brand-text text-xs font-mono font-bold text-center"
+                    onNavigate={(val) => onSelectPage?.(val)}
+                    className="w-16 h-8 px-2 bg-white border border-brand-border text-brand-text text-xs font-mono font-bold text-center focus:outline-none focus:ring-2 focus:ring-rose-400"
                     aria-label="Página final do recorte"
+                    title="Digite a página final"
                   />
                 </div>
               </div>

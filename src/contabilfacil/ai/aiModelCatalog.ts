@@ -69,9 +69,17 @@ export const AI_MODEL_CATALOG: AiModelEntry[] = [
   { id: 'mistral-large-latest', providerId: 'mistral', label: 'Mistral Large', tier: 'paid', tierLabel: 'Pago', supportsVision: false, supportsExtract: true },
 ];
 
-/** Modelos que realmente servem para extrato/conciliação (visão + extração). */
+const WEAK_MODEL_PATTERNS = [/lite/i, /-mini/i, /8b/i, /haiku/i, /instant/i];
+
+export function isWeakAiModel(m: AiModelEntry): boolean {
+  return WEAK_MODEL_PATTERNS.some((p) => p.test(m.id));
+}
+
+/** Modelos que servem para extrato/conciliação/regras — sem variantes fracas (lite/mini/8b). */
 export function modelDaContaDoRecado(m: AiModelEntry): boolean {
-  return m.supportsExtract === true && m.supportsVision !== false;
+  if (m.supportsExtract !== true || m.supportsVision === false) return false;
+  if (isWeakAiModel(m)) return false;
+  return true;
 }
 
 export function modelsForProvider(providerId: AiProviderId): AiModelEntry[] {

@@ -12,7 +12,7 @@ import {
   idbPutInteligenciaStore,
 } from '../../lib/aiInteligenciaIdb';
 import { companyStorageSlug } from './companyWorkspace';
-import { sanitizeCodigoReduzido } from './planoContasMapper';
+import { sanitizeCodigoReduzido, resolveCodigoReduzidoDoPlano } from './planoContasMapper';
 
 export type AiInteligenciaPasta =
   | 'coligadas'
@@ -273,8 +273,8 @@ async function persistTextsAndSlim(company: string, store: AiInteligenciaStore):
     /* ignore */
   }
   safeLocalStorageSetItem(storageKey(company), JSON.stringify(toLightStore(store)));
-  void import('../../lib/localFolderDatabase').then(({ scheduleLocalDatabaseSave }) => {
-    scheduleLocalDatabaseSave(400);
+  void import('../logic/eyeVisionOperationalSave').then(({ scheduleEyeVisionOperationalSave }) => {
+    scheduleEyeVisionOperationalSave();
   });
 }
 
@@ -346,19 +346,15 @@ export async function persistAiInteligenciaToFolder(
 
   try {
     const {
-      flushLocalDatabaseSave,
       isLocalFolderDbConfigured,
       getLocalFolderDbMeta,
-      getLocalFolderSaveError,
       scheduleLocalDatabaseSave,
     } = await import('../../lib/localFolderDatabase');
     if (isLocalFolderDbConfigured()) {
-      await flushLocalDatabaseSave();
-      const err = getLocalFolderSaveError();
-      if (err) return { ok: false, error: err, folderLabel: getLocalFolderDbMeta()?.folderLabel };
+      scheduleLocalDatabaseSave();
       return { ok: true, folderLabel: getLocalFolderDbMeta()?.folderLabel };
     }
-    scheduleLocalDatabaseSave(200);
+    scheduleLocalDatabaseSave();
     return {
       ok: false,
       error:
@@ -388,12 +384,19 @@ export function countAiInteligenciaDocs(company: string): number {
   return loadAiInteligencia(company).docs.length;
 }
 
-/** Textos para a IA (sync — usa cache/IDB já hidratado + preview). */
+/** Textos para a IA (sync — usa cache/IDB já hidratado + preview). Balancetes primeiro. */
 export function listAiInteligenciaTextoParaIa(company: string): string[] {
   const store = loadAiInteligencia(company);
   const slug = companyStorageSlug(company);
   const cache = getTextMap(slug);
-  return store.docs
+  const pastaOrdem: Record<AiInteligenciaPasta, number> = {
+    balancetes: 0,
+    coligadas: 1,
+    contratos: 2,
+    outros: 3,
+  };
+  return [...store.docs]
+    .sort((a, b) => (pastaOrdem[a.pasta] ?? 9) - (pastaOrdem[b.pasta] ?? 9))
     .map((d) => {
       const texto = (cache.get(d.id) || d.textoExtraido || '').trim();
       if (!texto) return '';
@@ -638,6 +641,31 @@ export function isContaFornecedorNome(nomeConta: string): boolean {
   return /\bFORNECEDOR|\bFORN\b|DUPLICATA\s+A\s+PAGAR/i.test(String(nomeConta ?? ''));
 }
 
+/** Contas de patrimônio/ajuste — proibidas para coligada (ex.: reavaliação de ativos). */
+export function isContaPatrimonioOuAjuste(nomeConta: string): boolean {
+  return /REAVALIAC|DEPRECIAC|AMORTIZAC|PATRIMONIO\s+LIQUIDO|CAPITAL\s+SOCIAL|RESERVA|LUCROS?\s+A\s+DISTRIBUIR|PREJUIZO|AJUSTE\s+DE\s+EXERCIC/i.test(
+    String(nomeConta ?? ''),
+  );
+}
+
+/** Nome da conta no plano combina com coligada (razão social ou alias). */
+export function contaCombinaComColigada(nomeConta: string, coligada: AiColigada): boolean {
+  const candidates = [coligada.nome, ...coligada.aliases];
+  for (const alias of candidates) {
+    if (aliasMatchesHistorico(nomeConta, alias)) return true;
+  }
+  return false;
+}
+
+/** Conta adequada para lançamento de coligada (nome combina ou conta de mútuo/coligada). */
+export function contaAceitavelParaColigada(nomeConta: string, coligada: AiColigada): boolean {
+  if (isContaFornecedorNome(nomeConta) || /\bCLIENTE/i.test(nomeConta)) return false;
+  if (isContaPatrimonioOuAjuste(nomeConta)) return false;
+  if (contaCombinaComColigada(nomeConta, coligada)) return true;
+  if (isContaColigadaNome(nomeConta)) return true;
+  return false;
+}
+
 /** Conta do plano adequada para coligada / partes relacionadas. */
 export function isContaColigadaNome(nomeConta: string): boolean {
   return /COLIGAD|PARTES?\s+RELACIONAD|EMPR[EÉ]STIMO\s+ENTRE|M[UÚ]TUO|CONTROLAD|PARTICIPAD|INTERCOMPANY|INTER\s*COMPAN/i.test(
@@ -662,6 +690,148 @@ export function pickContaColigadaNoPlano(
   }
   const first = pool[0]!;
   return sanitizeCodigoReduzido(first.codigoReduzido) || first.code;
+}
+
+type PlanoColigadaRow = {
+  code: string;
+  name: string;
+  codigoReduzido?: string;
+  group?: string;
+  grupo?: string;
+};
+
+function scoreContaPlanoParaColigada(
+  p: PlanoColigadaRow,
+  coligada: AiColigada,
+  nature: 'D' | 'C',
+): number {
+  if (/^\s*BANCO\b/i.test(p.name)) return 0;
+  if (isContaFornecedorNome(p.name) || /\bCLIENTE/i.test(p.name)) return 0;
+  if (isContaPatrimonioOuAjuste(p.name)) return 0;
+
+  let score = 0;
+  if (contaCombinaComColigada(p.name, coligada)) score += 55;
+  if (isContaColigadaNome(p.name)) score += 18;
+  if (grupoContaPlano(p) === (nature === 'D' ? 'ATIVO' : 'PASSIVO')) score += 22;
+  if (/\bLTDA\b|\bME\b|\bEIRELI\b/.test(p.name)) score += 8;
+  return score;
+}
+
+/**
+ * Busca no plano a conta cujo NOME combina com a coligada (razão social no plano).
+ * Cruza aliases — ex.: AJTF → "A.J.T.F. LTDA" reduzido 1094.
+ */
+export function pickContaColigadaPorNomeNoPlano(
+  plano: PlanoColigadaRow[],
+  coligada: AiColigada,
+  nature: 'D' | 'C',
+): string {
+  const ranked = plano
+    .map((p) => ({ p, score: scoreContaPlanoParaColigada(p, coligada, nature) }))
+    .filter((x) => x.score >= 40)
+    .sort((a, b) => {
+      const diff = b.score - a.score;
+      if (diff !== 0) return diff;
+      const aExplicit = Boolean(a.p.group || a.p.grupo);
+      const bExplicit = Boolean(b.p.group || b.p.grupo);
+      if (aExplicit !== bExplicit) return aExplicit ? -1 : 1;
+      return compactAliasKey(b.p.name).length - compactAliasKey(a.p.name).length;
+    });
+  const best = ranked[0];
+  if (!best) return '';
+  return sanitizeCodigoReduzido(best.p.codigoReduzido) || best.p.code;
+}
+
+/** Preenche contaReduzida das coligadas a partir do plano (quando ainda não cadastrada). */
+export function enrichColigadasComContasDoPlano(
+  coligadas: AiColigada[],
+  plano: PlanoColigadaRow[],
+): AiColigada[] {
+  if (!coligadas.length || !plano.length) return coligadas;
+  return coligadas.map((c) => {
+    if (c.contaReduzida?.trim()) return c;
+    const red =
+      pickContaColigadaPorNomeNoPlano(plano, c, 'D') ||
+      pickContaColigadaPorNomeNoPlano(plano, c, 'C');
+    return red ? { ...c, contaReduzida: red } : c;
+  });
+}
+
+function grupoContaPlano(p: { code: string; group?: string; grupo?: string }): string {
+  const g = String(p.group ?? p.grupo ?? '').trim().toUpperCase();
+  if (g) return g;
+  const digits = String(p.code ?? '').replace(/\D/g, '');
+  if (digits.startsWith('1')) return 'ATIVO';
+  if (digits.startsWith('2')) return 'PASSIVO';
+  return '';
+}
+
+/**
+ * Conta correta para coligada conforme natureza do lançamento.
+ * Saída (D) → ATIVO (mútuo a receber); entrada (C) → PASSIVO (mútuo a pagar).
+ */
+export function resolveContaColigadaParaNatureza(
+  coligada: AiColigada,
+  nature: 'D' | 'C',
+  plano: Array<{ code: string; name: string; codigoReduzido?: string; group?: string; grupo?: string }>,
+): string {
+  const preferGrupo = nature === 'D' ? 'ATIVO' : 'PASSIVO';
+
+  if (coligada.contaReduzida?.trim()) {
+    const red =
+      sanitizeCodigoReduzido(coligada.contaReduzida) ||
+      resolveCodigoReduzidoDoPlano(coligada.contaReduzida, plano) ||
+      '';
+    if (red) {
+      const hit = plano.find(
+        (p) =>
+          sanitizeCodigoReduzido(p.codigoReduzido) === red ||
+          sanitizeCodigoReduzido(p.code) === red,
+      );
+      if (hit && contaAceitavelParaColigada(hit.name, coligada)) {
+        return red;
+      }
+    }
+  }
+
+  const porNome = pickContaColigadaPorNomeNoPlano(plano, coligada, nature);
+  if (porNome) return porNome;
+
+  const coligContas = plano.filter(
+    (p) => isContaColigadaNome(p.name) && !isContaPatrimonioOuAjuste(p.name),
+  );
+  const key = compactAliasKey(coligada.nome);
+  const byNome = coligContas.filter((p) => {
+    const pk = compactAliasKey(p.name);
+    return pk.includes(key) || key.includes(pk);
+  });
+  const pool = byNome.length > 0 ? byNome : coligContas;
+
+  const byGrupo = pool.find((p) => grupoContaPlano(p) === preferGrupo);
+  if (byGrupo) {
+    return sanitizeCodigoReduzido(byGrupo.codigoReduzido) || byGrupo.code;
+  }
+
+  const byNomePlano = pickContaColigadaNoPlano(plano, coligada.nome);
+  if (byNomePlano) return byNomePlano;
+
+  const first = pool[0];
+  return first ? sanitizeCodigoReduzido(first.codigoReduzido) || first.code : '';
+}
+
+/** Busca coligada na descrição da regra ou nos históricos do extrato do lote. */
+export function matchColigadaParaRegra(
+  descricao: string,
+  coligadas: AiColigada[],
+  extratoHistoricos: string[] = [],
+): AiColigada | null {
+  const hit = matchColigadaNoHistorico(descricao, coligadas);
+  if (hit) return hit;
+  for (const h of extratoHistoricos) {
+    const hHit = matchColigadaNoHistorico(h, coligadas);
+    if (hHit) return hHit;
+  }
+  return null;
 }
 
 export function upsertColigadasFromExtract(
@@ -752,6 +922,12 @@ export function removeAiColigada(company: string, id: string): AiInteligenciaSto
     ...store,
     coligadas: store.coligadas.filter((c) => c.id !== id),
   });
+}
+
+export function purgeAiInteligenciaCachesForCompany(company: string): void {
+  const slug = companyStorageSlug(company);
+  storeCache.delete(slug);
+  textCache.delete(slug);
 }
 
 export const PASTA_LABELS: Record<AiInteligenciaPasta, string> = {

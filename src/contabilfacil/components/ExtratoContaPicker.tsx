@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronDown, Search } from 'lucide-react';
 import { DynamicStyleDiv } from '../lib/dynamicStyle';
 import { cn } from '../lib/utils';
-import { sanitizeCodigoReduzido } from '../logic/planoContasMapper';
+import { sanitizeCodigoReduzido, normalizeExtratoContaParaGravacao, sameCodigoReduzido } from '../logic/planoContasMapper';
 
 export type ExtratoPlanoContaOption = {
   code: string;
@@ -29,6 +29,19 @@ function normContaCode(code: string): string {
   return code.replace(/[^\d]/g, '').trim();
 }
 
+function reduzidoKeyVariants(reduzido: string): string[] {
+  const keys = new Set<string>();
+  const r = reduzido.trim();
+  if (!r) return [];
+  keys.add(r);
+  keys.add(normContaCode(r));
+  const asInt = String(parseInt(normContaCode(r) || r, 10));
+  if (asInt && Number.isFinite(Number(asInt))) keys.add(asInt);
+  // Domínio 7 dígitos com zero à esquerda
+  if (/^\d{1,7}$/.test(asInt)) keys.add(asInt.padStart(7, '0'));
+  return [...keys].filter(Boolean);
+}
+
 /** Valor usado na conciliação: CÓDIGO REDUZIDO (nunca classificação). */
 export function contaValueForConciliacao(p: ExtratoPlanoContaOption): string {
   return sanitizeCodigoReduzido(p.codigoReduzido) || '';
@@ -44,8 +57,7 @@ export function buildPlanoNomeLookup(
     if (!name) continue;
     const reduzido = sanitizeCodigoReduzido(p.codigoReduzido);
     if (reduzido) {
-      map.set(reduzido, name);
-      map.set(normContaCode(reduzido), name);
+      for (const k of reduzidoKeyVariants(reduzido)) map.set(k, name);
     }
     const code = p.code.trim();
     if (code) {
@@ -57,13 +69,57 @@ export function buildPlanoNomeLookup(
   return map;
 }
 
+function findContaNoPlano(
+  code: string,
+  plano: ExtratoPlanoContaOption[],
+): ExtratoPlanoContaOption | undefined {
+  const c = code.trim();
+  if (!c || !plano.length) return undefined;
+  const digits = normContaCode(c);
+
+  return plano.find((p) => {
+    const red = sanitizeCodigoReduzido(p.codigoReduzido);
+    if (red && (sameCodigoReduzido(red, c) || sameCodigoReduzido(red, digits))) return true;
+    const codeP = p.code.trim();
+    if (codeP === c || normContaCode(codeP) === digits) return true;
+    return false;
+  });
+}
+
+/**
+ * Resolve o NOME da conta a partir do código (reduzido ou classificação).
+ * Sempre tenta o plano completo — nunca deixa DESC. DÉBITO/CRÉDITO em branco se a conta existir.
+ */
 export function resolveContaNome(
   lookup: Map<string, string>,
   code: string,
+  plano?: ExtratoPlanoContaOption[],
 ): string {
   const c = code.trim();
   if (!c) return '';
-  return lookup.get(c) ?? lookup.get(normContaCode(c)) ?? '';
+
+  for (const k of reduzidoKeyVariants(c)) {
+    const hit = lookup.get(k);
+    if (hit) return hit;
+  }
+  const byClassif = lookup.get(c) ?? lookup.get(normContaCode(c)) ?? '';
+  if (byClassif) return byClassif;
+
+  if (plano?.length) {
+    const red = normalizeExtratoContaParaGravacao(c, plano);
+    if (red) {
+      for (const k of reduzidoKeyVariants(red)) {
+        const byRed = lookup.get(k);
+        if (byRed) return byRed;
+      }
+      const hitRed = findContaNoPlano(red, plano);
+      if (hitRed?.name?.trim()) return hitRed.name.trim();
+    }
+    const hit = findContaNoPlano(c, plano);
+    if (hit?.name?.trim()) return hit.name.trim();
+  }
+
+  return '';
 }
 
 export function dedupePlanoOptions(options: ExtratoPlanoContaOption[]): ExtratoPlanoContaOption[] {
@@ -136,12 +192,17 @@ export default memo(function ExtratoContaPicker({
 
   const commit = useCallback(
     (code: string) => {
-      const next = code.trim();
+      const raw = code.trim();
+      // Digitação livre: converte classificação → reduzido; rejeita classificação sem match.
+      const next = raw
+        ? normalizeExtratoContaParaGravacao(raw, options) ||
+          (sanitizeCodigoReduzido(raw) ?? '')
+        : '';
       draftRef.current = next;
       setDraft(next);
       if (next !== value.trim()) onChange(next);
     },
-    [onChange, value],
+    [onChange, options, value],
   );
 
   const filtered = useMemo(() => filterPlanoOptions(options, query), [options, query]);

@@ -2,10 +2,15 @@ import { SIMULADOR_ALL_MANAGED_STORAGE_KEYS } from '../../lib/simuladorFullBacku
 import {
   flushLocalDatabaseSave,
   hydrateFromLocalDatabaseFolder,
-  scheduleLocalDatabaseSave,
   shouldAutoLoadLocalFolder,
 } from '../../lib/localFolderDatabase';
-import { isQuotaExceededError, reclaimLocalStorageSpace } from '../../lib/safeLocalStorage';
+import {
+  isOperationalBrowserStorageBlocked,
+  isOperationalStorageKey,
+  isQuotaExceededError,
+  reclaimLocalStorageSpace,
+  safeLocalStorageSetItem,
+} from '../../lib/safeLocalStorage';
 
 const CONTABILFACIL_PREFIX = 'contabilfacil_';
 const MANAGED_PREFIXES = [
@@ -30,12 +35,23 @@ function isManagedStorageKey(key: string): boolean {
 
 let storagePatchInstalled = false;
 
+/**
+ * Intercepta localStorage.setItem: dados operacionais vão para memória + Docker + pasta,
+ * nunca para o disco do navegador (quando Postgres/Docker está ativo).
+ */
 function installLocalStorageFolderSync(): void {
   if (storagePatchInstalled || typeof localStorage === 'undefined') return;
   storagePatchInstalled = true;
 
   const origSet = localStorage.setItem.bind(localStorage);
+  const origRemove = localStorage.removeItem.bind(localStorage);
+
   localStorage.setItem = (key: string, value: string) => {
+    if (isOperationalBrowserStorageBlocked() && isOperationalStorageKey(key)) {
+      // Redireciona: memória + cloud + pasta — sem gravar no navegador.
+      safeLocalStorageSetItem(key, value);
+      return;
+    }
     try {
       origSet(key, value);
     } catch (err) {
@@ -44,28 +60,41 @@ function installLocalStorageFolderSync(): void {
         try {
           origSet(key, value);
         } catch {
-          // Não derruba o app — dados ficam na pasta / memória via safe helpers
-          console.warn(`[storage] cota cheia ao gravar ${key} — espelhando só na pasta.`);
-          if (isManagedStorageKey(key)) scheduleLocalDatabaseSave(200);
+          console.warn(`[storage] cota cheia ao gravar ${key} — espelhando só na pasta/Docker.`);
+          safeLocalStorageSetItem(key, value);
           return;
         }
       } else {
         throw err;
       }
     }
-    if (isManagedStorageKey(key)) scheduleLocalDatabaseSave();
+    if (isManagedStorageKey(key)) {
+      void import('../logic/eyeVisionOperationalSave').then(
+        ({ markOperationalStorageDirty, scheduleEyeVisionOperationalSave }) => {
+          markOperationalStorageDirty();
+          scheduleEyeVisionOperationalSave();
+        },
+      );
+    }
   };
 
-  const origRemove = localStorage.removeItem.bind(localStorage);
   localStorage.removeItem = (key: string) => {
     origRemove(key);
-    if (isManagedStorageKey(key)) scheduleLocalDatabaseSave();
+    if (isManagedStorageKey(key)) {
+      void import('../logic/eyeVisionOperationalSave').then(
+        ({ markOperationalStorageDirty, scheduleEyeVisionOperationalSave }) => {
+          markOperationalStorageDirty();
+          scheduleEyeVisionOperationalSave();
+        },
+      );
+    }
   };
 }
 
 /**
- * Na abertura: carrega JSON da pasta só após o primeiro Salvar.
- * Durante uso: espelha localStorage → pasta (debounced) quando banco local ativo.
+ * Na abertura: não sobrescreve com a pasta (Postgres/MinIO são a fonte).
+ * Durante uso: espelha dados → pasta (debounced) quando a pasta está configurada.
+ * NÃO faz purge aqui — só depois do hydrate do Docker (senão apaga dados antes de migrar).
  */
 export function registerLocalFolderDatabaseLifecycle(): () => void {
   installLocalStorageFolderSync();
@@ -75,7 +104,7 @@ export function registerLocalFolderDatabaseLifecycle(): () => void {
   }
 
   const onFlush = () => {
-    void flushLocalDatabaseSave();
+    void flushLocalDatabaseSave({ light: true, force: true });
   };
 
   window.addEventListener('beforeunload', onFlush);

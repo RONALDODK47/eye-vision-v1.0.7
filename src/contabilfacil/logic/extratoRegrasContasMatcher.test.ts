@@ -70,7 +70,7 @@ describe('matchExtratoRegraConta', () => {
         contaContrapartida: '200',
       },
     ];
-    const hist = normalizeSignificadoExtrato('PIX RECEBIDO POLO S CLIMATIZACAO LTD');
+    const hist = normalizeSignificadoExtrato('PIX RECEBIDO POLO SUL CLIMATIZACAO LTD');
     const m = matchExtratoRegraConta(hist, 'C', regrasPolo);
     expect(m?.id).toBe('clima');
     expect(m?.contaContrapartida).toBe('200');
@@ -109,5 +109,40 @@ describe('matchExtratoRegraConta', () => {
         regrasOp,
       )?.id,
     ).toBe('pix');
+  });
+
+  it('casa RENDIMENTO APLICACAO com BB RENDE e rendimentos', () => {
+    const regras = [
+      {
+        id: 'rend',
+        nome: 'RENDIMENTO',
+        descricao: 'RENDIMENTO APLICACAO',
+        nature: 'C' as const,
+        contaBanco: '8',
+        contaContrapartida: '510',
+      },
+    ];
+    expect(
+      matchExtratoRegraConta('BB RENDE FACIL', 'C', regras)?.descricao,
+    ).toBe('RENDIMENTO APLICACAO');
+    expect(
+      matchExtratoRegraConta('RENDIMENTOS REND PAGO APLIC AUT', 'C', regras)?.descricao,
+    ).toBe('RENDIMENTO APLICACAO');
+  });
+
+  it('casa RECEBIMENTO CLIENTE com nomes de terceiros', () => {
+    const regras = [
+      {
+        id: 'cli',
+        nome: 'CLIENTE',
+        descricao: 'RECEBIMENTO CLIENTE',
+        nature: 'C' as const,
+        contaBanco: '8',
+        contaContrapartida: '300',
+      },
+    ];
+    expect(matchExtratoRegraConta('GTR AUTO SE', 'C', regras)?.descricao).toBe(
+      'RECEBIMENTO CLIENTE',
+    );
   });
 });

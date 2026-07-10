@@ -53,6 +53,18 @@ describe('classificarOperacaoExtrato', () => {
     expect(classificarOperacaoExtrato('DEB TIT COMPE EFETI', 'D')).toBe('PAGAMENTO_FORNECEDOR');
     expect(classificarOperacaoExtrato('CRED LIQ COBRANCA', 'C')).toBe('LIQUIDACAO_COBRANCA');
   });
+
+  it('empréstimo: pagamento/amortização → passivo; concessão (saída) → ativo; liberação (entrada) → passivo', () => {
+    expect(classificarOperacaoExtrato('AMORT EMPRESTIMO SICOOB', 'D')).toBe('EMPRESTIMO_PAGAMENTO');
+    expect(classificarOperacaoExtrato('PARCELA EMPRESTIMO BANCO', 'D')).toBe('EMPRESTIMO_PAGAMENTO');
+    expect(classificarOperacaoExtrato('PAGAMENTO EMPRESTIMO CONTRATO', 'D')).toBe('EMPRESTIMO_PAGAMENTO');
+    // Saída genérica (incl. DEB EMPREST) = concessão → ativo, não passivo.
+    expect(classificarOperacaoExtrato('DEB EMPREST CONTRATO 123', 'D')).toBe('EMPRESTIMO_CONCESSAO');
+    expect(classificarOperacaoExtrato('EMPRESTIMO CONCEDIDO COLIGADA', 'D')).toBe('EMPRESTIMO_CONCESSAO');
+    expect(classificarOperacaoExtrato('MUTUO ENTRE EMPRESAS AJTF', 'D')).toBe('EMPRESTIMO_CONCESSAO');
+    expect(classificarOperacaoExtrato('LIBERAC CRED EMPRESTIMO', 'C')).toBe('EMPRESTIMO_RECEBIMENTO');
+    expect(classificarOperacaoExtrato('CREDITO EMPRESTIMO BANCO', 'C')).toBe('EMPRESTIMO_RECEBIMENTO');
+  });
 });
 
 describe('resolveExtratoContasDebitoCredito', () => {
@@ -196,6 +208,7 @@ describe('contabilidade senior (plano real)', () => {
     { code: '2110200002', name: 'FORNECEDORES ESTRANGEIROS', tipo: 'A', group: 'PASSIVO' },
     { code: '1150100008', name: '(-) BAIXA CUSTO MERCADORIA VENDIDA', tipo: 'A', group: 'ATIVO' },
     { code: '2150100001', name: 'EMPRESTIMO SICOOB', tipo: 'A', group: 'PASSIVO' },
+    { code: '1130100001', name: 'EMPRESTIMO A RECEBER COLIGADAS', tipo: 'A', group: 'ATIVO' },
     { code: '2120100004', name: 'PROVISAO PARA IMPOSTO DE RENDA', tipo: 'A', group: 'PASSIVO' },
     { code: '5110100001', name: 'RESULTADO DO EXERCICIO', tipo: 'A', group: 'DESPESA' },
     { code: '3120100001', name: 'TARIFAS BANCARIAS', tipo: 'A', group: 'DESPESA' },
@@ -215,6 +228,16 @@ describe('contabilidade senior (plano real)', () => {
     });
     expect(r.contaCredito).toBe('1110200001');
     expect(r.contaDebito).toBe('');
+  });
+
+  it('classifica concessão de empréstimo (saída) como EMPRESTIMO_CONCESSAO', () => {
+    expect(classificarOperacaoExtrato('EMPRESTIMO CONCEDIDO COLIGADA AJTF', 'D')).toBe(
+      'EMPRESTIMO_CONCESSAO',
+    );
+    expect(classificarOperacaoExtrato('AMORT EMPRESTIMO SICOOB', 'D')).toBe('EMPRESTIMO_PAGAMENTO');
+    expect(classificarOperacaoExtrato('LIBERACAO CREDITO EMPRESTIMO', 'C')).toBe(
+      'EMPRESTIMO_RECEBIMENTO',
+    );
   });
 });
 

@@ -1,8 +1,15 @@
 /**
- * Painel IA nas regras: Corrigir, Implantar (sem regras) + chat em lotes.
+ * Painel IA nas regras: Gerar regras (análise única) + chat.
  */
 import { memo, useEffect, useRef, useState } from 'react';
-import { ListOrdered, Loader2, MessageSquare, PlusCircle, Send, Sparkles, Wrench } from 'lucide-react';
+import {
+  FolderOpen,
+  ListOrdered,
+  Loader2,
+  MessageSquare,
+  Send,
+  Sparkles,
+} from 'lucide-react';
 import { countAiInteligenciaDocs } from '../logic/aiInteligenciaStorage';
 
 export type ExtratoRegrasChatMessage = {
@@ -21,17 +28,15 @@ export type ExtratoRegrasContasAiChatProps = {
   uncoveredCount: number;
   /** Quantidade de regras já cadastradas neste banco. */
   regrasCount?: number;
-  /** Corrige regras existentes + cobre descobertos. */
+  /** Analisa lançamentos, corrige regras erradas e gera regras para não conciliados. */
   onCorrigir: () => void;
-  /** Implanta regras do zero quando o banco ainda não tem nenhuma. */
-  onImplantar?: () => void;
   /** Rola/foca a lista de regras do banco. */
   onMostrarRegras?: () => void;
   /** Link textual para pastas (sem botão grande). */
   onOpenInteligencia?: () => void;
   /**
    * Chat livre: o usuário pede algo sobre as regras;
-   * processa em lotes e aplica as sugestões.
+   * Chat livre: o usuário pede algo sobre as regras (análise única).
    */
   onChat?: (userMessage: string) => Promise<{ ok: boolean; reply: string }>;
 };
@@ -46,7 +51,6 @@ export default memo(function ExtratoRegrasContasAiChat({
   uncoveredCount,
   regrasCount = 0,
   onCorrigir,
-  onImplantar,
   onMostrarRegras,
   onOpenInteligencia,
   onChat,
@@ -69,7 +73,6 @@ export default memo(function ExtratoRegrasContasAiChat({
 
   const bancoOk = Boolean(contaBanco.trim());
   const sending = busy || chatBusy;
-  const showImplantar = regrasCount === 0 && Boolean(onImplantar);
 
   const handleSendChat = async () => {
     const text = chatDraft.trim();
@@ -112,7 +115,7 @@ export default memo(function ExtratoRegrasContasAiChat({
       <div className="px-3 py-2 border-b border-brand-border flex items-center gap-2 shrink-0 bg-brand-sidebar/30">
         <Sparkles size={14} className="text-brand-text/70 shrink-0" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-black uppercase tracking-wider">IA — regras do banco</p>
+          <p className="text-[10px] font-black uppercase tracking-wider">IA — analista contábil sênior</p>
           <p className="text-[9px] text-brand-text/55 truncate">
             {bancoOk
               ? `Banco: ${bancoNome || contaBanco} · ${docsCount} doc(s) · ${regrasCount} regra(s)`
@@ -123,41 +126,36 @@ export default memo(function ExtratoRegrasContasAiChat({
 
       <div className="p-3 flex flex-col gap-3 min-h-0">
         <p className="text-[10px] text-brand-text/70 leading-snug">
-          <strong>Corrigir</strong> audita regras vs Inteligência IA.
-          {showImplantar ? (
-            <>
-              {' '}
-              <strong>Implantar regra</strong> cria as regras do zero (em lotes).
-            </>
-          ) : null}{' '}
-          No <strong>chat</strong>, diga o que fazer (ex.: jogar Polo Sul Climatização no fundo
-          fixo) — a IA processa em lotes.
+          <strong>Gerar regras</strong> aciona um <strong>analista contábil sênior</strong> em{' '}
+          <strong>análise única</strong> (sem lotes): lê extrato, todos os docs da Inteligência IA,
+          balancete e cria regras para sócios, coligadas, honorários, tarifas, fornecedor, cliente,
+          fundo fixo e demais — cobertura 100% da conciliação com prioridade em precisão.
         </p>
 
         {docsCount === 0 ? (
           <p className="text-[9px] text-amber-800 leading-snug">
-            Nenhum documento na Inteligência IA.
-            {onOpenInteligencia ? (
-              <>
-                {' '}
-                <button
-                  type="button"
-                  onClick={onOpenInteligencia}
-                  className="underline font-bold uppercase"
-                >
-                  Abrir pastas
-                </button>{' '}
-                e envie os arquivos antes.
-              </>
-            ) : (
-              <> Envie documentos nas pastas de Inteligência IA antes.</>
-            )}
+            Nenhum documento na Inteligência IA — envie contratos, coligadas e balancetes nas pastas.
           </p>
         ) : (
           <p className="text-[9px] text-green-800 font-bold uppercase">
             {docsCount} documento(s) prontos
           </p>
         )}
+
+        {onOpenInteligencia ? (
+          <button
+            type="button"
+            onClick={onOpenInteligencia}
+            disabled={sending}
+            className="technical-button text-[12px] py-3 px-4 inline-flex items-center justify-center gap-2 disabled:opacity-40 w-full font-black uppercase tracking-wide"
+            title="Abrir pastas da Inteligência IA para enviar ou editar arquivos"
+          >
+            <FolderOpen size={18} aria-hidden="true" />
+            {docsCount > 0
+              ? `Inteligência IA — editar pastas (${docsCount})`
+              : 'Inteligência IA — colocar arquivos'}
+          </button>
+        ) : null}
 
         {uncoveredCount > 0 ? (
           <p className="text-[9px] text-amber-800">
@@ -174,40 +172,19 @@ export default memo(function ExtratoRegrasContasAiChat({
           onClick={onCorrigir}
           disabled={sending || !bancoOk}
           className="technical-button-primary text-[12px] py-3 px-4 inline-flex items-center justify-center gap-2 disabled:opacity-40 w-full font-black uppercase tracking-wide"
-          title="Corrige as regras do banco selecionado com IA"
+          title="Analista contábil sênior: analisa extrato, balancete e Inteligência IA"
         >
           {busy && !chatBusy ? (
             <Loader2 size={18} className="animate-spin" aria-hidden="true" />
           ) : (
-            <Wrench size={18} aria-hidden="true" />
+            <Sparkles size={18} aria-hidden="true" />
           )}
           {busy && !chatBusy
-            ? 'Corrigindo regras…'
+            ? 'Gerando regras…'
             : uncoveredCount > 0
-              ? `IA Corrigir regras (${uncoveredCount})`
-              : 'IA Corrigir regras'}
+              ? `Gerar regras (${uncoveredCount})`
+              : 'Gerar regras'}
         </button>
-
-        {showImplantar ? (
-          <button
-            type="button"
-            onClick={onImplantar}
-            disabled={sending || !bancoOk || uncoveredCount === 0}
-            className="technical-button-primary text-[12px] py-3 px-4 inline-flex items-center justify-center gap-2 disabled:opacity-40 w-full font-black uppercase tracking-wide"
-            title="Implanta regras do zero para os lançamentos sem regra (em lotes)"
-          >
-            {busy && !chatBusy ? (
-              <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-            ) : (
-              <PlusCircle size={18} aria-hidden="true" />
-            )}
-            {busy && !chatBusy
-              ? 'Implantando regras…'
-              : uncoveredCount > 0
-                ? `Implantar regra (${uncoveredCount})`
-                : 'Implantar regra'}
-          </button>
-        ) : null}
 
         <button
           type="button"
@@ -242,8 +219,8 @@ export default memo(function ExtratoRegrasContasAiChat({
             <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[100px] bg-brand-bg/40">
               {chatMessages.length === 0 && !chatBusy ? (
                 <p className="text-[9px] text-brand-text/50 leading-snug">
-                  Ex.: &quot;Contas com Polo Sul Climatização vão no fundo fixo de caixa&quot; —
-                  processa em lotes e aplica.
+                  Ex.: &quot;Muda Polo Sul Climatização para o fundo fixo de caixa&quot; — altera a
+                  regra e reaplica na conciliação.
                 </p>
               ) : null}
               {chatMessages.map((m) => (
@@ -264,7 +241,7 @@ export default memo(function ExtratoRegrasContasAiChat({
               {chatBusy ? (
                 <div className="mr-auto text-[10px] px-2 py-1.5 bg-white border border-brand-border inline-flex items-center gap-1.5">
                   <Loader2 size={12} className="animate-spin" aria-hidden="true" />
-                  Processando em lotes…
+                  Processando análise…
                 </div>
               ) : null}
               <div ref={chatEndRef} />

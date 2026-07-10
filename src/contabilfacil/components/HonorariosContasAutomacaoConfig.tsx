@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_INPUT_ACCOUNT } from '../lib/formFieldClasses';
+import ModuloContasAiButton from './ModuloContasAiButton';
 import type { HonorariosContasAutomacaoConfig } from '../logic/honorariosContasAutomacao';
 import {
   loadHonorariosContasAutomacao,
@@ -34,15 +35,28 @@ export default function HonorariosContasAutomacaoPanel({ selectedCompany, onChan
 
   return (
     <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
-      <div className="px-4 py-3 border-b border-brand-border bg-brand-sidebar/30 flex items-center gap-2">
-        <BookOpen size={14} className="opacity-60" />
-        <div>
-          <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — honorários</h3>
-          <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5">
-            Débito (despesa) e crédito (a pagar). Ao informar o valor na aba Lançamento, o sistema grava
-            automaticamente no balancete.
-          </p>
+      <div className="px-4 py-3 border-b border-brand-border bg-brand-sidebar/30 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <BookOpen size={14} className="opacity-60 shrink-0" />
+          <div>
+            <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — honorários</h3>
+            <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5">
+              Débito (despesa) e crédito (a pagar). Use a IA para sugerir contas do plano.
+            </p>
+          </div>
         </div>
+        <ModuloContasAiButton
+          company={selectedCompany}
+          modulo="honorarios"
+          contasAtuais={{ debito: contas.debito, credito: contas.credito }}
+          onApply={(patch) =>
+            persist({
+              ...contas,
+              debito: patch.debito ?? contas.debito,
+              credito: patch.credito ?? contas.credito,
+            })
+          }
+        />
       </div>
       <div className="p-4">
         <table className="w-full min-w-[480px] text-left text-[10px] font-mono">

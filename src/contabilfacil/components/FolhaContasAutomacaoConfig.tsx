@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_INPUT_ACCOUNT } from '../lib/formFieldClasses';
+import ModuloContasAiButton from './ModuloContasAiButton';
 import {
   FOLHA_RUBRICA_LABELS,
   FOLHA_RUBRICAS,
@@ -8,6 +9,7 @@ import {
   type FolhaRubricaId,
 } from '../logic/folhaContasAutomacao';
 import { loadFolhaContasAutomacao, saveFolhaContasAutomacao } from '../logic/folhaContasAutomacaoStorage';
+import { applyFlatContasToNestedConfig } from '../logic/moduloContasAiSchemas';
 
 type Props = {
   selectedCompany: string;
@@ -43,15 +45,27 @@ export default function FolhaContasAutomacaoPanel({ selectedCompany, onChange }:
 
   return (
     <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
-      <div className="px-4 py-3 border-b border-brand-border bg-brand-sidebar/30 flex items-center gap-2">
-        <BookOpen size={14} className="opacity-60" />
-        <div>
-          <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — folha</h3>
-          <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5">
-            Débito e crédito por rubrica (salários, pró-labore, INSS, FGTS, IRRF). Com arquivos importados, os
-            lançamentos vão ao balancete automaticamente ao salvar.
-          </p>
+      <div className="px-4 py-3 border-b border-brand-border bg-brand-sidebar/30 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <BookOpen size={14} className="opacity-60 shrink-0" />
+          <div>
+            <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — folha</h3>
+            <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5">
+              Débito e crédito por rubrica. Use a IA para sugerir contas do plano.
+            </p>
+          </div>
         </div>
+        <ModuloContasAiButton
+          company={selectedCompany}
+          modulo="folha"
+          contasAtuais={Object.fromEntries(
+            FOLHA_RUBRICAS.flatMap((id) => [
+              [`${id}.debito`, contas[id].debito],
+              [`${id}.credito`, contas[id].credito],
+            ]),
+          )}
+          onApply={(patch) => persist(applyFlatContasToNestedConfig(contas, patch))}
+        />
       </div>
       <div className="p-4 overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-[10px] font-mono">

@@ -35,7 +35,7 @@ export interface DominioExportConfig {
   omitTransferenciaLongoParaCurto?: boolean;
 }
 
-type DominioLancamentoPlain = {
+export type DominioLancamentoPlain = {
   date: Date;
   debContaStr: string;
   credContaStr: string;
@@ -194,7 +194,7 @@ function pushClassificacaoCpcDataContrato(
  * - IOF DO EMPRESTIMO = IOF (lançamento à parte; reclassifica curto prazo no Domínio)
  * Soma = `finalBalance` (saldo devedor). Tabela: coluna Curto = parcelas líquidas CPC; Domínio LP→CP: Curto − IOF.
  */
-function coletarLancamentosDominio(schedule: LoanRow[], config: DominioExportConfig): DominioLancamentoPlain[] {
+export function coletarLancamentosDominio(schedule: LoanRow[], config: DominioExportConfig): DominioLancamentoPlain[] {
   const lista: DominioLancamentoPlain[] = [];
   const cut = parseDataGerarLancamentosApartir(config);
   const iofContrato = Math.max(0, schedule[0]?.iof ?? config.valorIof ?? 0);

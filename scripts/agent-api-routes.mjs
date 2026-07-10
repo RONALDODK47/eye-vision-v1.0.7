@@ -21,6 +21,7 @@ import {
 } from './ai-secrets-store.mjs';
 import { handleAiExtractExtrato, handleAiExtractPlano, handleAiRefineOcrRows } from './ai-extract-handler.mjs';
 import { handleAiSuggestRegrasContas } from './ai-regras-contas-handler.mjs';
+import { handleAiSuggestModuloContas } from './ai-modulo-contas-handler.mjs';
 import { analyzeSystemProfile } from './ai-system-profile.mjs';
 import { resolveHardwareLimits } from './ai-hardware-limits.mjs';
 import { createCursorHandoff } from './ai-cursor-handoff.mjs';
@@ -39,6 +40,7 @@ import {
 } from './gemini-api-handlers.mjs';
 import { handleAgentChatRequest } from './agent-chat-handler.mjs';
 import { DEBUG_GEMINI_SYSTEM } from './gemini-audit-prompts.mjs';
+import { registerWorkspaceRoutes } from './storage/workspace-routes.mjs';
 
 const consoleAutofixLast = new Map();
 const CONSOLE_AUTOFIX_COOLDOWN_MS = 25_000;
@@ -135,6 +137,11 @@ export function registerAgentRoutes(app) {
 
   app.post('/agent/ai/suggest-regras-contas', async (req, res) => {
     const out = await handleAiSuggestRegrasContas(req.body ?? {});
+    res.status(out.status).json(out.body);
+  });
+
+  app.post('/agent/ai/suggest-modulo-contas', async (req, res) => {
+    const out = await handleAiSuggestModuloContas(req.body ?? {});
     res.status(out.status).json(out.body);
   });
 
@@ -532,6 +539,8 @@ export function registerAgentRoutes(app) {
     const result = await handleGeminiAnalyzeDebug(req.body ?? {});
     res.status(result.status).json(result.body);
   });
+
+  registerWorkspaceRoutes(app);
 
   bootstrapLocalAiOnStartup().catch((err) => {
     console.warn(`[agent-api] Bootstrap: ${err instanceof Error ? err.message : err}`);

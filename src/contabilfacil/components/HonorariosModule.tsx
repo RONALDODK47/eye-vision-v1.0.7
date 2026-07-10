@@ -4,6 +4,7 @@ import { cn, formatCurrency, formatDate } from '../lib/utils';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_FORM_INPUT_MED } from '../lib/formFieldClasses';
 import { FreeNumericInput } from './FreeNumericInput';
 import AutomationToggle from './AutomationToggle';
+import MandarParaBalanceteButton from './MandarParaBalanceteButton';
 import HonorariosContasAutomacaoPanel from './HonorariosContasAutomacaoConfig';
 import HonorariosEditarValoresModal from './HonorariosEditarValoresModal';
 import type { HonorariosContasAutomacaoConfig } from '../logic/honorariosContasAutomacao';
@@ -21,6 +22,7 @@ import {
   sincronizarHonorariosAutomacao,
   tryAutoSyncHonorariosOnOpen,
 } from '../logic/honorariosAutomation';
+import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import { mesesRepeticaoAno } from '../logic/honorariosScheduler';
 import type { HonorariosLancamento } from '../logic/honorariosToRazao';
 
@@ -75,12 +77,33 @@ export default function HonorariosModule({ selectedCompany, onRazaoUpdated }: Pr
     onRazaoUpdated?.();
   }, [onRazaoUpdated]);
 
-  const handleContasChange = (config: HonorariosContasAutomacaoConfig) => {
-    if (!config.debito.trim() || !config.credito.trim()) return;
-    if (lancamentos.length === 0) return;
-    postHonorariosNoRazao(selectedCompany, config);
-    notifyRazao();
-    setFeedback('Contas atualizadas — balancete recalculado.');
+  const handleContasChange = (_config: HonorariosContasAutomacaoConfig) => {
+    // Contas só salvam — postagem ao balancete é explícita pelo botão.
+    setFeedback('Contas salvas. Use «Mandar para o balancete» para publicar.');
+  };
+
+  const handleMandarHonorariosBalancete = () => {
+    if (lancamentos.length === 0) {
+      alert('Nenhum lançamento de honorários para enviar ao balancete.');
+      return;
+    }
+    try {
+      const { gerados, pendencias } = postHonorariosNoRazao(selectedCompany);
+      void flushPersistenceAfterCriticalWrite();
+      notifyRazao();
+      if (pendencias.length && gerados <= 0) {
+        setFeedback(pendencias[0] ?? 'Configure as contas na subaba Contas.');
+        setInnerTab('contas');
+        return;
+      }
+      setFeedback(
+        gerados > 0
+          ? `${gerados} lançamento(s) de honorários enviados ao balancete.`
+          : 'Nada novo para enviar — já estavam no balancete.',
+      );
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Falha ao enviar para o balancete.');
+    }
   };
 
   const handleAutomationChange = (enabled: boolean) => {
@@ -92,7 +115,7 @@ export default function HonorariosModule({ selectedCompany, onRazaoUpdated }: Pr
       setFeedback(result.pendencias[0] ?? 'Configure as contas na subaba Contas.');
       if (enabled) setInnerTab('contas');
     } else if (enabled) {
-      setFeedback('Automação ligada — honorários gerados no balancete.');
+      setFeedback('Automação ligada — use «Mandar para o balancete» para publicar.');
     }
   };
 
@@ -109,12 +132,11 @@ export default function HonorariosModule({ selectedCompany, onRazaoUpdated }: Pr
       automationEnabled: true,
     });
     reload();
-    notifyRazao();
     if (result.pendencias.length) {
       setFeedback(result.pendencias.join(' · '));
       setInnerTab('contas');
     } else {
-      setFeedback('Honorários do ano atual lançados no balancete.');
+      setFeedback('Configuração salva. Use «Mandar para o balancete» para publicar.');
     }
   };
 
@@ -129,8 +151,9 @@ export default function HonorariosModule({ selectedCompany, onRazaoUpdated }: Pr
     }
     setValor(0);
     reload();
-    notifyRazao();
-    setFeedback(`R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} lançado no balancete.`);
+    setFeedback(
+      `R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} salvo. Use «Mandar para o balancete» para publicar.`,
+    );
   };
 
   const handleRemove = (id: string) => {
@@ -191,6 +214,13 @@ export default function HonorariosModule({ selectedCompany, onRazaoUpdated }: Pr
 
       {innerTab === 'lancamento' && (
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <MandarParaBalanceteButton
+              onClick={handleMandarHonorariosBalancete}
+              disabled={lancamentos.length === 0}
+              count={lancamentos.length}
+            />
+          </div>
           {autoSettings.automationEnabled ? (
             <form
               onSubmit={handleSalvarAutomacao}

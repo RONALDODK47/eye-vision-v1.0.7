@@ -1,4 +1,6 @@
 /** Mescla listas salvas pelo `id` (última ocorrência vence — chaves mais recentes no array têm prioridade). */
+import { safeLocalStorageSetItem } from './safeLocalStorage';
+
 export function mergeSavedById<T extends { id: string }>(lists: readonly (readonly T[])[]): T[] {
   const map = new Map<string, T>();
   for (const list of lists) {
@@ -13,10 +15,8 @@ export function mergeSavedById<T extends { id: string }>(lists: readonly (readon
 export function persistCanonicalList(canonicalKey: string, list: unknown[]): void {
   if (list.length === 0) return;
   try {
-    localStorage.setItem(canonicalKey, JSON.stringify(list));
-    void import('../contabilfacil/logic/eyeVisionCloudPush').then(({ scheduleEyeVisionCloudPush }) => {
-      scheduleEyeVisionCloudPush();
-    });
+    // Dados operacionais: memória + Docker + pasta (não localStorage do navegador).
+    safeLocalStorageSetItem(canonicalKey, JSON.stringify(list));
   } catch (e) {
     console.warn(`[storage] não foi possível gravar ${canonicalKey}:`, e);
   }

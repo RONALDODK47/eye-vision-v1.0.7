@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_INPUT_ACCOUNT } from '../lib/formFieldClasses';
+import ModuloContasAiButton from './ModuloContasAiButton';
 import {
   FISCAL_IMPOSTO_LABELS,
   FISCAL_IMPOSTOS,
@@ -9,6 +10,7 @@ import {
   type FiscalImpostoId,
 } from '../logic/fiscalContasImposto';
 import { loadFiscalContasImposto, saveFiscalContasImposto } from '../logic/fiscalContasImpostoStorage';
+import { applyFlatContasToNestedConfig } from '../logic/moduloContasAiSchemas';
 
 type Props = {
   selectedCompany: string;
@@ -78,15 +80,29 @@ export default function FiscalContasImpostoPanel({ selectedCompany, onChange }: 
 
   return (
     <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
-      <div className="px-4 py-3 border-b border-brand-border bg-brand-sidebar/30 flex items-center gap-2">
-        <BookOpen size={14} className="opacity-60" />
-        <div>
-          <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — impostos</h3>
-          <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5 max-w-3xl">
-            Débito e crédito por tributo: a recolher (apuração / passivo) e a recuperar (créditos
-            tributários / ativo). Com SPED importado, os lançamentos vão ao balancete ao salvar.
-          </p>
+      <div className="px-4 py-3 border-b border-brand-border bg-brand-sidebar/30 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <BookOpen size={14} className="opacity-60 shrink-0" />
+          <div>
+            <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — impostos</h3>
+            <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5 max-w-3xl">
+              Débito e crédito por tributo (a recolher / a recuperar). Use a IA para sugerir contas do plano.
+            </p>
+          </div>
         </div>
+        <ModuloContasAiButton
+          company={selectedCompany}
+          modulo="fiscal"
+          contasAtuais={Object.fromEntries(
+            FISCAL_IMPOSTOS.flatMap((id) => [
+              [`${id}.debito`, contas[id].debito],
+              [`${id}.credito`, contas[id].credito],
+              [`${id}.debitoRecuperar`, contas[id].debitoRecuperar],
+              [`${id}.creditoRecuperar`, contas[id].creditoRecuperar],
+            ]),
+          )}
+          onApply={(patch) => persist(applyFlatContasToNestedConfig(contas, patch))}
+        />
       </div>
       <div className="p-4 overflow-x-auto">
         <table className="w-full min-w-[920px] text-left text-[10px] font-mono">

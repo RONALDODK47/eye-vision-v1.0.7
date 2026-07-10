@@ -239,7 +239,8 @@ export async function syncFolhaFromConfiguredFolder(
 
   let razaoGerados = 0;
   let razaoPendencias: string[] = [];
-  const shouldPost = options?.postRazao ?? settings.automationEnabled;
+  // Postagem ao balancete só com postRazao: true explícito (botão na UI).
+  const shouldPost = options?.postRazao === true;
   if (shouldPost && (relMerged.length > 0 || payMerged.length > 0)) {
     const faltando = folhaContasProntasParaAutomacao(loadFolhaContasAutomacao(companyName));
     if (faltando.length === FOLHA_RUBRICAS.length) {
@@ -265,7 +266,8 @@ export async function tryAutoSyncFolhaOnOpen(companyName: string): Promise<Folha
   const settings = loadFolhaFolderSettings(companyName);
   if (!settings.folderLabel || !settings.automationEnabled) return null;
   try {
-    return await syncFolhaFromConfiguredFolder(companyName, { postRazao: true });
+    // Só importa arquivos — balancete via botão «MANDAR PARA O BALANCETE».
+    return await syncFolhaFromConfiguredFolder(companyName, { postRazao: false });
   } catch {
     return null;
   }

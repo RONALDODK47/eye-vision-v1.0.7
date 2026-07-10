@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, memo } from 'react';
 import type { ColumnRange, DocumentColumns } from '../../../lib/leitorRecortador/types';
 import { DynamicStyleDiv } from '../../lib/dynamicStyle';
+import { PageRangeNumberInput } from './PageRangeNumberInput';
 import { Maximize2, Move, HelpCircle, RefreshCw, Layers, Files, FileSpreadsheet } from 'lucide-react';
 
 interface WorkspaceProps {
@@ -68,6 +69,24 @@ export function LeitorRecortadorWorkspace({
   const [startColState, setStartColState] = useState<ColumnRange | null>(null);
   const [startHState, setStartHState] = useState<number>(0);
   const [showGuides, setShowGuides] = useState<boolean>(true);
+  const dragRafRef = useRef<number | null>(null);
+  const cropStartPctRef = useRef(cropStartPct);
+  const cropEndPctRef = useRef(cropEndPct);
+  const cropStartPageRef = useRef(cropStartPage);
+  const cropEndPageRef = useRef(cropEndPage);
+
+  useEffect(() => {
+    cropStartPctRef.current = cropStartPct;
+  }, [cropStartPct]);
+  useEffect(() => {
+    cropEndPctRef.current = cropEndPct;
+  }, [cropEndPct]);
+  useEffect(() => {
+    cropStartPageRef.current = cropStartPage;
+  }, [cropStartPage]);
+  useEffect(() => {
+    cropEndPageRef.current = cropEndPage;
+  }, [cropEndPage]);
 
   // Render original canvas onto our display canvas with correct fitting
   useEffect(() => {
@@ -111,59 +130,71 @@ export function LeitorRecortadorWorkspace({
   };
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent | TouchEvent) => {
+    const applyPointer = (clientX: number, clientY: number) => {
       if (!draggedCol || !dragType || !containerRef.current) return;
-
-      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
       const containerRect = containerRef.current.getBoundingClientRect();
 
       if (draggedCol === 'h-start' || draggedCol === 'h-end') {
         const deltaYPixels = clientY - startY;
         const deltaYPercent = (deltaYPixels / containerRect.height) * 100;
-        
-        const isSamePage = cropStartPage === cropEndPage;
+        const isSamePage = cropStartPageRef.current === cropEndPageRef.current;
         if (draggedCol === 'h-start') {
-          const maxLimit = isSamePage ? cropEndPct - 2 : 100;
+          const maxLimit = isSamePage ? cropEndPctRef.current - 2 : 100;
           const newPct = Math.max(0, Math.min(maxLimit, startHState + deltaYPercent));
           setCropStartPct(Number(newPct.toFixed(2)));
         } else {
-          const minLimit = isSamePage ? cropStartPct + 2 : 0;
+          const minLimit = isSamePage ? cropStartPctRef.current + 2 : 0;
           const newPct = Math.max(minLimit, Math.min(100, startHState + deltaYPercent));
           setCropEndPct(Number(newPct.toFixed(2)));
         }
-      } else {
-        if (!startColState) return;
-        const deltaXPixels = clientX - startX;
-        const deltaXPercent = (deltaXPixels / containerRect.width) * 100;
-
-        setColumns((prev) => {
-          const col = prev[draggedCol as 'date' | 'history' | 'value'];
-          let newStartX = col.startX;
-          let newWidth = col.width;
-
-          if (dragType === 'move') {
-            newStartX = Math.max(0, Math.min(100 - col.width, startColState.startX + deltaXPercent));
-          } else if (dragType === 'resize-left') {
-            const maxLeft = startColState.startX + startColState.width - 2; // minimum width of 2%
-            newStartX = Math.max(0, Math.min(maxLeft, startColState.startX + deltaXPercent));
-            newWidth = Math.max(2, startColState.width - (newStartX - startColState.startX));
-          } else if (dragType === 'resize-right') {
-            newWidth = Math.max(2, Math.min(100 - col.startX, startColState.width + deltaXPercent));
-          }
-
-          return {
-            ...prev,
-            [draggedCol]: {
-              startX: Number(newStartX.toFixed(2)),
-              width: Number(newWidth.toFixed(2)),
-            },
-          };
-        });
+        return;
       }
+
+      if (!startColState) return;
+      const deltaXPixels = clientX - startX;
+      const deltaXPercent = (deltaXPixels / containerRect.width) * 100;
+
+      setColumns((prev) => {
+        const col = prev[draggedCol as 'date' | 'history' | 'value'];
+        let newStartX = col.startX;
+        let newWidth = col.width;
+
+        if (dragType === 'move') {
+          newStartX = Math.max(0, Math.min(100 - col.width, startColState.startX + deltaXPercent));
+        } else if (dragType === 'resize-left') {
+          const maxLeft = startColState.startX + startColState.width - 2;
+          newStartX = Math.max(0, Math.min(maxLeft, startColState.startX + deltaXPercent));
+          newWidth = Math.max(2, startColState.width - (newStartX - startColState.startX));
+        } else if (dragType === 'resize-right') {
+          newWidth = Math.max(2, Math.min(100 - col.startX, startColState.width + deltaXPercent));
+        }
+
+        return {
+          ...prev,
+          [draggedCol]: {
+            startX: Number(newStartX.toFixed(2)),
+            width: Number(newWidth.toFixed(2)),
+          },
+        };
+      });
+    };
+
+    const handleMouseMove = (e: MouseEvent | TouchEvent) => {
+      if (!draggedCol || !dragType) return;
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+      if (dragRafRef.current != null) return;
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null;
+        applyPointer(clientX, clientY);
+      });
     };
 
     const handleMouseUp = () => {
+      if (dragRafRef.current != null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
       setDraggedCol(null);
       setDragType(null);
       setStartColState(null);
@@ -177,12 +208,16 @@ export function LeitorRecortadorWorkspace({
     }
 
     return () => {
+      if (dragRafRef.current != null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('touchmove', handleMouseMove);
       window.removeEventListener('touchend', handleMouseUp);
     };
-  }, [draggedCol, dragType, startX, startY, startColState, startHState, cropStartPct, cropEndPct, setColumns, setCropStartPct, setCropEndPct]);
+  }, [draggedCol, dragType, startX, startY, startColState, startHState, setColumns, setCropStartPct, setCropEndPct]);
 
   const columnStyles = {
     date: {
@@ -301,8 +336,8 @@ export function LeitorRecortadorWorkspace({
                   pageNumber={page.pageNumber}
                   isActive={currentPage === page.pageNumber}
                   onClick={() => onSelectPage && onSelectPage(page.pageNumber)}
-                  cropStartPct={cropStartPct}
-                  cropEndPct={cropEndPct}
+                  cropStartPct={page.pageNumber === cropStartPage ? cropStartPct : -1}
+                  cropEndPct={page.pageNumber === cropEndPage ? cropEndPct : -1}
                   cropStartPage={cropStartPage}
                   cropEndPage={cropEndPage}
                 />
@@ -331,26 +366,20 @@ export function LeitorRecortadorWorkspace({
                       htmlFor="leitor-crop-start-page"
                       className="text-[11px] text-orange-400 font-bold flex items-center gap-1"
                     >
-                      📍 Pág. Início:
+                      📍 Início:
                     </label>
-                    <input
+                    <PageRangeNumberInput
                       id="leitor-crop-start-page"
-                      type="number"
-                      min={1}
-                      max={pdfPages.length}
                       value={cropStartPage}
-                      onChange={(e) => {
-                        let val = parseInt(e.target.value) || 1;
-                        if (val < 1) val = 1;
-                        if (val > pdfPages.length) val = pdfPages.length;
+                      max={pdfPages.length}
+                      onChange={(val) => {
                         setCropStartPage(val);
-                        if (val > cropEndPage) {
-                          setCropEndPage(val);
-                        }
+                        if (val > cropEndPage) setCropEndPage(val);
                       }}
-                      className="w-14 h-8 px-1.5 bg-brand-sidebar border border-brand-border text-brand-text text-xs font-mono font-bold focus:outline-none focus:border-brand-border text-center"
+                      onNavigate={(val) => onSelectPage?.(val)}
+                      className="w-16 h-8 px-2 bg-white border border-brand-border text-brand-text text-xs font-mono font-bold text-center focus:outline-none focus:ring-2 focus:ring-orange-400"
                       aria-label="Página inicial do recorte"
-                      title="Página inicial do recorte"
+                      title="Digite a página inicial e pressione Enter"
                       placeholder="1"
                     />
                   </div>
@@ -362,24 +391,18 @@ export function LeitorRecortadorWorkspace({
                     >
                       🏁 Pág. Fim:
                     </label>
-                    <input
+                    <PageRangeNumberInput
                       id="leitor-crop-end-page"
-                      type="number"
-                      min={1}
-                      max={pdfPages.length}
                       value={cropEndPage}
-                      onChange={(e) => {
-                        let val = parseInt(e.target.value) || 1;
-                        if (val < 1) val = 1;
-                        if (val > pdfPages.length) val = pdfPages.length;
+                      max={pdfPages.length}
+                      onChange={(val) => {
                         setCropEndPage(val);
-                        if (val < cropStartPage) {
-                          setCropStartPage(val);
-                        }
+                        if (val < cropStartPage) setCropStartPage(val);
                       }}
-                      className="w-14 h-8 px-1.5 bg-brand-sidebar border border-brand-border text-brand-text text-xs font-mono font-bold focus:outline-none focus:border-brand-border text-center"
+                      onNavigate={(val) => onSelectPage?.(val)}
+                      className="w-16 h-8 px-2 bg-white border border-brand-border text-brand-text text-xs font-mono font-bold text-center focus:outline-none focus:ring-2 focus:ring-rose-400"
                       aria-label="Página final do recorte"
-                      title="Página final do recorte"
+                      title="Digite a página final e pressione Enter"
                       placeholder={String(pdfPages.length)}
                     />
                   </div>
@@ -617,7 +640,7 @@ export function LeitorRecortadorWorkspace({
               </div>
               <h3 className="font-semibold text-brand-text text-sm mb-1.5">Nenhum Documento Carregado</h3>
               <p className="text-brand-text/60 text-xs leading-relaxed mb-4">
-                Por favor, faça upload de um extrato em PDF ou imagem no painel lateral ou use o nosso extrato de exemplo para testar as ferramentas de recorte.
+                Faça upload de um extrato em PDF ou imagem no painel lateral para usar as ferramentas de recorte.
               </p>
             </div>
           )}
@@ -654,8 +677,18 @@ interface PageThumbnailProps {
   cropEndPage: number;
 }
 
-function PageThumbnail({ canvas, pageNumber, isActive, onClick, cropStartPct, cropEndPct, cropStartPage, cropEndPage }: PageThumbnailProps) {
+const PageThumbnail = memo(function PageThumbnail({
+  canvas,
+  pageNumber,
+  isActive,
+  onClick,
+  cropStartPct,
+  cropEndPct,
+  cropStartPage,
+  cropEndPage,
+}: PageThumbnailProps) {
   const thumbCanvasRef = useRef<HTMLCanvasElement>(null);
+  const baseDrawnRef = useRef(false);
 
   useEffect(() => {
     if (!canvas || !thumbCanvasRef.current) return;
@@ -663,31 +696,38 @@ function PageThumbnail({ canvas, pageNumber, isActive, onClick, cropStartPct, cr
     const ctx = thumbCanvas.getContext('2d');
     if (!ctx) return;
 
-    // Fixed thumbnail width for list
     const thumbWidth = 110;
     const scale = thumbWidth / canvas.width;
-    thumbCanvas.width = thumbWidth;
-    thumbCanvas.height = canvas.height * scale;
+    if (!baseDrawnRef.current || thumbCanvas.width !== thumbWidth) {
+      thumbCanvas.width = thumbWidth;
+      thumbCanvas.height = canvas.height * scale;
+      ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+      baseDrawnRef.current = true;
+    } else {
+      ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    }
+  }, [canvas]);
 
-    // Draw the clean base page
-    ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+  useEffect(() => {
+    if (!canvas || !thumbCanvasRef.current || !baseDrawnRef.current) return;
+    const thumbCanvas = thumbCanvasRef.current;
+    const ctx = thumbCanvas.getContext('2d');
+    if (!ctx) return;
 
-    // If page is outside active range, darken the entire thumbnail
+    const thumbWidth = thumbCanvas.width;
+    ctx.drawImage(canvas, 0, 0, thumbWidth, thumbCanvas.height);
+
     if (pageNumber < cropStartPage || pageNumber > cropEndPage) {
       ctx.fillStyle = 'rgba(8, 9, 12, 0.82)';
       ctx.fillRect(0, 0, thumbCanvas.width, thumbCanvas.height);
       return;
     }
 
-    // Apply the crop line overlay if it's the start page
-    if (pageNumber === cropStartPage) {
+    if (pageNumber === cropStartPage && cropStartPct >= 0) {
       const startY = (cropStartPct / 100) * thumbCanvas.height;
-      // Shade top excluded header zone
       ctx.fillStyle = 'rgba(8, 9, 12, 0.72)';
       ctx.fillRect(0, 0, thumbCanvas.width, startY);
-
-      // Draw orange start delimiter line
-      ctx.strokeStyle = '#f97316'; // orange-500
+      ctx.strokeStyle = '#f97316';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(0, startY);
@@ -695,22 +735,18 @@ function PageThumbnail({ canvas, pageNumber, isActive, onClick, cropStartPct, cr
       ctx.stroke();
     }
 
-    // Apply the crop line overlay if it's the end page
-    if (pageNumber === cropEndPage) {
+    if (pageNumber === cropEndPage && cropEndPct >= 0) {
       const endY = (cropEndPct / 100) * thumbCanvas.height;
-      // Shade bottom excluded footer zone
       ctx.fillStyle = 'rgba(8, 9, 12, 0.72)';
       ctx.fillRect(0, endY, thumbCanvas.width, thumbCanvas.height - endY);
-
-      // Draw rose end delimiter line
-      ctx.strokeStyle = '#f43f5e'; // rose-500
+      ctx.strokeStyle = '#f43f5e';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(0, endY);
       ctx.lineTo(thumbCanvas.width, endY);
       ctx.stroke();
     }
-  }, [canvas, cropStartPct, cropEndPct, cropStartPage, cropEndPage]);
+  }, [canvas, pageNumber, cropStartPct, cropEndPct, cropStartPage, cropEndPage]);
 
   return (
     <button
@@ -750,4 +786,4 @@ function PageThumbnail({ canvas, pageNumber, isActive, onClick, cropStartPct, cr
       </div>
     </button>
   );
-}
+});

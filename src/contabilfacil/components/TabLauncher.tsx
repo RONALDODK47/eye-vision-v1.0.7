@@ -122,7 +122,7 @@ export function TabLauncher({
             >
               <FolderOpen size={12} className="inline mr-1 -mt-px" />
               {folderMeta?.folderLabel}
-              {folderActive ? ' · ativo' : ' · pendente'}
+              {folderActive ? ' · espelho' : ' · pendente'}
             </span>
           ) : null}
           {folderSupported ? (
@@ -131,7 +131,7 @@ export function TabLauncher({
                 type="button"
                 onClick={() => void onConfigureFolder()}
                 className="technical-button flex items-center gap-2 text-[10px]"
-                title="Escolher pasta onde os dados serão salvos (eye-vision-dados.json)"
+                title="Escolher pasta de proteção (espelho paralelo ao Postgres/MinIO)"
               >
                 <Settings size={14} />
                 Configurar
@@ -143,9 +143,7 @@ export function TabLauncher({
                 className="technical-button flex items-center gap-2 text-[10px] disabled:opacity-40 disabled:cursor-not-allowed"
                 title={
                   folderConfigured
-                    ? folderActive
-                      ? 'Salvar agora na pasta local'
-                      : 'Gravar dados atuais na pasta e ativar banco local'
+                    ? 'Salvar snapshot completo na pasta (backup de proteção)'
                     : 'Configure a pasta primeiro'
                 }
               >
@@ -178,22 +176,22 @@ export function TabLauncher({
               {folderActive ? (
                 <>
                   {' '}
-                  Banco local ativo em <strong className="opacity-80">{folderMeta?.folderLabel}</strong> — dados
-                  carregam e salvam automaticamente em{' '}
-                  <code className="text-[10px]">eye-vision-dados.json</code>.
+                  Espelho ativo em <strong className="opacity-80">{folderMeta?.folderLabel}</strong> — alterações
+                  também gravam em <code className="text-[10px]">eye-vision-dados.json</code> (proteção extra).
+                  Postgres e MinIO continuam como armazenamento principal.
                 </>
               ) : folderConfigured ? (
                 <>
                   {' '}
                   Pasta <strong className="opacity-80">{folderMeta?.folderLabel}</strong> configurada — clique{' '}
-                  <strong className="opacity-80">Salvar</strong> para gravar seus dados e ativar o banco local.
-                  O Firebase continua ativo até você salvar.
+                  <strong className="opacity-80">Salvar</strong> para criar o backup de proteção nesta pasta.
+                  Postgres/MinIO continuam ativos.
                 </>
               ) : folderSupported ? (
                 <>
                   {' '}
-                  Use <strong className="opacity-80">Configurar</strong> para escolher a pasta de salvamento e{' '}
-                  <strong className="opacity-80">Salvar</strong> para gravar seus dados em JSON local.
+                  Use <strong className="opacity-80">Configurar</strong> + <strong className="opacity-80">Salvar</strong>{' '}
+                  para espelhar tudo nesta pasta como proteção (além do Postgres/MinIO).
                 </>
               ) : null}
             </p>

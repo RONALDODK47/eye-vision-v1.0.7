@@ -46,6 +46,33 @@ describe('extratoRecorteFielImport', () => {
     expect(conciliacao.ok).toBe(true);
   });
 
+  it('propaga data herdada em lançamentos sem data na coluna (Bradesco)', () => {
+    const extracted = [
+      row({
+        dateText: '01/12/2025',
+        historyText: 'LIQUIDACAO DE COBRANCA',
+        isNegative: false,
+        parsedValue: 261.47,
+        valueText: '261,47',
+      }),
+      row({
+        dateText: '',
+        historyText: 'LIQUIDACAO COBRANCA DESC',
+        isNegative: false,
+        parsedValue: 206.64,
+        valueText: '206,64',
+      }),
+    ];
+    const ocr = mapExtractedRowsToRecorteFielOcr(extracted, '2025');
+    expect(ocr[0]!.data).toBe('01/12/2025');
+    expect(ocr[1]!.data).toBe('01/12/2025');
+    expect(ocr[1]!._dataHerdada).toBe('1');
+
+    const { items } = mapRecorteFielRowsToImportItems(ocr, { saldoAnterior: 0 });
+    expect(items[0]!.date).toMatch(/^2025-12-01/);
+    expect(items[1]!.date).toMatch(/^2025-12-01/);
+  });
+
   it('não troca natureza quando valor bruto tem D no texto do histórico', () => {
     const extracted = [
       row({

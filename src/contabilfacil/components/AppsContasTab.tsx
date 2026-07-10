@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Save } from 'lucide-react';
 import type { SavedAplicacao } from '../logic/aplicacaoStorage';
 import DominioDebitoCreditoBlock from './DominioDebitoCreditoBlock';
+import ModuloContasAiButton from './ModuloContasAiButton';
 import {
   CF_FIELD_COL,
   CF_FIELD_ROW,
@@ -12,6 +13,7 @@ import {
 import { cn } from '../lib/utils';
 
 export interface AppsContasTabProps {
+  selectedCompany: string;
   items: SavedAplicacao[];
   onSave: (items: SavedAplicacao[]) => void;
 }
@@ -81,7 +83,7 @@ function ToggleSection({
   );
 }
 
-export default function AppsContasTab({ items, onSave }: AppsContasTabProps) {
+export default function AppsContasTab({ selectedCompany, items, onSave }: AppsContasTabProps) {
   const [selectedId, setSelectedId] = useState('');
   const [draft, setDraft] = useState<ContasDraft | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -178,15 +180,38 @@ export default function AppsContasTab({ items, onSave }: AppsContasTabProps) {
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!dirty}
-          className="technical-button-primary flex items-center gap-2 text-[10px] font-black uppercase px-4 py-2 disabled:opacity-40 shrink-0"
-        >
-          <Save size={14} />
-          Salvar contas
-        </button>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <ModuloContasAiButton
+            company={selectedCompany}
+            modulo="aplicacao"
+            contasAtuais={{
+              accAplicacaoDebit: draft.accAplicacaoDebit ?? '',
+              accAplicacaoCredit: draft.accAplicacaoCredit ?? '',
+              accReceitaJurosDebit: draft.accReceitaJurosDebit ?? '',
+              accReceitaJurosCredit: draft.accReceitaJurosCredit ?? '',
+              accIRRFDebit: draft.accIRRFDebit ?? '',
+              accIRRFCredit: draft.accIRRFCredit ?? '',
+              accIOFDebit: draft.accIOFDebit ?? '',
+              accIOFCredit: draft.accIOFCredit ?? '',
+            }}
+            contexto={{
+              nomeAplicacao: draft.nomeAplicacao,
+              temReceitaJuros: !!draft.temReceitaJuros,
+              temIRRF: !!draft.temIRRF,
+              temIOF: !!draft.temIOF,
+            }}
+            onApply={(patch) => patchDraft(patch)}
+          />
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!dirty}
+            className="technical-button-primary flex items-center gap-2 text-[10px] font-black uppercase px-4 py-2 disabled:opacity-40"
+          >
+            <Save size={14} />
+            Salvar contas
+          </button>
+        </div>
       </div>
 
       <div className="module-table-viewport p-4 space-y-4">

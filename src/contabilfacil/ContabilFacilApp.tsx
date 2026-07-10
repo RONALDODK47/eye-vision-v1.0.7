@@ -103,8 +103,16 @@ export default function ContabilFacilApp() {
       invalidateManagerDataCache();
       bumpStorage();
     };
+    const onCloudHydrated = () => {
+      invalidateManagerDataCache();
+      bumpStorage();
+    };
     window.addEventListener(LOCAL_FOLDER_DB_CHANGED, onFolderDbChanged);
-    return () => window.removeEventListener(LOCAL_FOLDER_DB_CHANGED, onFolderDbChanged);
+    window.addEventListener('contabilfacil:data-hydrated', onCloudHydrated);
+    return () => {
+      window.removeEventListener(LOCAL_FOLDER_DB_CHANGED, onFolderDbChanged);
+      window.removeEventListener('contabilfacil:data-hydrated', onCloudHydrated);
+    };
   }, [bumpStorage]);
 
   useEffect(() => {
@@ -136,16 +144,16 @@ export default function ContabilFacilApp() {
       if (result.hasExistingFile) {
         const loadNow = confirm(
           `A pasta "${result.folderName}" já contém eye-vision-dados.json.\n\n` +
-            'OK = carregar dados da pasta agora\n' +
-            'Cancelar = manter os dados atuais (clique Salvar para gravar na pasta)',
+            'OK = restaurar dados da pasta no navegador agora\n' +
+            'Cancelar = manter os dados atuais (clique Salvar para espelhar na pasta)',
         );
         if (loadNow) {
           await loadAndActivateLocalDatabase();
           invalidateManagerDataCache();
           bumpStorage();
           alert(
-            `Dados carregados da pasta "${result.folderName}".\n\n` +
-              'O Firebase foi desativado — a pasta local é a fonte dos dados.',
+            `Dados restaurados da pasta "${result.folderName}".\n\n` +
+              'Postgres e MinIO continuam ativos — a pasta é só backup de proteção.',
           );
           return;
         }
@@ -153,8 +161,8 @@ export default function ContabilFacilApp() {
       bumpStorage();
       alert(
         `Pasta configurada: ${result.folderName}\n\n` +
-          'Seus dados do Firebase/navegador continuam intactos.\n' +
-          'Clique em Salvar para gravar na pasta e ativar o banco local.',
+          'Esta pasta é um espelho de proteção (além do Postgres/MinIO).\n' +
+          'Clique em Salvar para gravar um snapshot completo agora.',
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Falha ao configurar pasta.';
@@ -180,14 +188,14 @@ export default function ContabilFacilApp() {
       invalidateManagerDataCache();
       bumpStorage();
       alert(
-        `Dados salvos com sucesso.\n\n` +
+        `Backup salvo na pasta.\n\n` +
           `Pasta: ${result.folderName}\n` +
-          `Arquivo: eye-vision-dados.json\n` +
+          `Arquivo: eye-vision-dados.json (+ cópia com data/hora)\n` +
           `Horário: ${new Date(result.savedAt).toLocaleString('pt-BR')}\n\n` +
           'A partir de agora:\n' +
-          '• Alterações salvam automaticamente nesta pasta\n' +
-          '• Ao abrir o sistema, os dados são carregados da pasta\n' +
-          '• A sincronização Firebase foi pausada (dados na pasta local)',
+          '• Alterações também espelham automaticamente nesta pasta\n' +
+          '• Postgres e MinIO continuam como armazenamento principal\n' +
+          '• A pasta serve como proteção extra dos dados',
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Falha ao salvar na pasta.';

@@ -27,6 +27,9 @@ import {
 import { CompanyApp } from '../types';
 import AppsContasTab from './AppsContasTab';
 import DataIngestionBox from './DataIngestionBox';
+import MandarParaBalanceteButton from './MandarParaBalanceteButton';
+import { postAplicacaoNoRazao } from '../logic/aplicacaoBalanceteAutomation';
+import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import {
   loadAplicacoesFromBrowserStorage,
   normalizeSavedAplicacao,
@@ -185,6 +188,28 @@ export default function AppsModule({
     downloadAplicacaoTxtPlus(`${base}_dominio_txtplus.txt`, content);
   };
 
+  const handleMandarAplicacaoBalancete = (item: SavedAplicacao, count: number) => {
+    if (count <= 0) {
+      alert('Nenhum lançamento para enviar. Configure contas e valores na aba Contas.');
+      return;
+    }
+    try {
+      const { gerados, pendencias } = postAplicacaoNoRazao(selectedCompany, item.id);
+      void flushPersistenceAfterCriticalWrite();
+      if (pendencias.length && gerados <= 0) {
+        alert(pendencias.join('\n'));
+        return;
+      }
+      alert(
+        gerados > 0
+          ? `${gerados} lançamento(s) da aplicação enviados ao balancete.\n\nAbra a aba Balancete para conferir.`
+          : 'Nada novo para enviar — já estavam no balancete (ou não geraram partidas).',
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Falha ao enviar para o balancete.');
+    }
+  };
+
   const renderLancamentosPanel = (item: SavedAplicacao) => {
     const lancamentos = lancamentosByAppId.get(item.id) ?? [];
     const summary = summarizeAplicacaoLancamentos(lancamentos);
@@ -196,13 +221,20 @@ export default function AppsModule({
           <span>IRRF: {formatCurrency(summary.irrf)}</span>
           <span>IOF: {formatCurrency(summary.iof)}</span>
           <span className="opacity-50">{lancamentos.length} lançamento(s)</span>
-          <button
-            type="button"
-            onClick={() => handleExportDominioTxt(item)}
-            className="ml-auto technical-button-primary text-[9px] py-1 px-3"
-          >
-            EXPORTAR TXT+ DOMÍNIO
-          </button>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <MandarParaBalanceteButton
+              onClick={() => handleMandarAplicacaoBalancete(item, lancamentos.length)}
+              disabled={lancamentos.length === 0}
+              count={lancamentos.length}
+            />
+            <button
+              type="button"
+              onClick={() => handleExportDominioTxt(item)}
+              className="technical-button-primary text-[9px] py-1 px-3"
+            >
+              EXPORTAR TXT+ DOMÍNIO
+            </button>
+          </div>
         </div>
 
         {lancamentos.length === 0 ? (
@@ -755,7 +787,11 @@ export default function AppsModule({
             : appsMainTab === 'extrato'
               ? renderExtratoTab()
               : (
-                <AppsContasTab items={savedApps} onSave={persistForSindicato} />
+                <AppsContasTab
+                  selectedCompany={selectedCompany}
+                  items={savedApps}
+                  onSave={persistForSindicato}
+                />
               )}
         </div>
 
@@ -771,7 +807,9 @@ export default function AppsModule({
 
           <DataIngestionBox
             dataType="apps"
-            title="Processar Ativos Externos"
+            title="Recortar PDF de Aplicações"
+            selectedCompany={selectedCompany}
+            ingestionMode="pdfOnly"
             onImport={(newItems) => {
               const importedApps = (newItems as CompanyApp[]).map((item) =>
                 buildSavedAplicacao(

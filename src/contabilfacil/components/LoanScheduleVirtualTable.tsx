@@ -29,13 +29,14 @@ function hasMoney(value: number): boolean {
   return Number.isFinite(value) && Math.abs(value) >= 0.005;
 }
 
-/** Parcela exibida: fluxo de caixa ou competência (carência capitalizada sem pagamento). */
+/**
+ * Parcela = fluxo de caixa pago.
+ * Carência capitalizada: installment=0 (juros só na coluna Juros / saldo).
+ * Carência paga: installment já vem como juros+custo do motor.
+ */
 function displayInstallment(row: LoanRow): number {
   if (hasMoney(row.installment)) return row.installment;
-  if (row.isGrace) {
-    const competencia = row.interest + row.monthlyCost;
-    return hasMoney(competencia) ? competencia : 0;
-  }
+  if (row.isGrace) return 0;
   const composite = row.amortization + row.interest + row.monthlyCost;
   return hasMoney(composite) ? composite : 0;
 }

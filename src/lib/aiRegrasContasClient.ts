@@ -39,11 +39,22 @@ export type AiSuggestRegrasParams = {
   contaBanco: string;
   bancoNome?: string;
   message: string;
-  plano: Array<{ code: string; name: string; codigoReduzido?: string }>;
+  plano: Array<{
+    code: string;
+    name: string;
+    codigoReduzido?: string;
+    group?: string;
+  }>;
   extratoSample: Array<{ description: string; nature: string; value: number }>;
   regrasExistentes?: Array<{ descricao: string; nature: string; contaContrapartida: string }>;
   images?: AiExtractImage[];
   anexosTexto?: string[];
+  /** Mapa de contas usadas no razão/balancete importado. */
+  balanceteUsoContas?: string;
+  /** Documentos da pasta balancetes na Inteligência IA. */
+  inteligenciaBalancetes?: string[];
+  /** Contexto honorários/folha/categorias obrigatórias. */
+  modulosContexto?: string;
   /** Empresas coligadas — NÃO são clientes (AJTF, A.J.T.F, A J T F…). */
   coligadas?: AiColigadaPayload[];
   /**
@@ -79,6 +90,9 @@ export async function suggestRegrasContasWithAi(
           regrasExistentes: params.regrasExistentes,
           images: params.images,
           anexosTexto: params.anexosTexto,
+          balanceteUsoContas: params.balanceteUsoContas,
+          inteligenciaBalancetes: params.inteligenciaBalancetes,
+          modulosContexto: params.modulosContexto,
           coligadas: params.coligadas,
           mode: params.mode,
           uncoveredExtrato: params.uncoveredExtrato,

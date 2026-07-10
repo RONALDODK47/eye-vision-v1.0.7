@@ -6,7 +6,8 @@
 import type { OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
 import type { GenericOcrRow } from '../../lib/parcelamentoColunasExtract';
 import type { ExtractedRow } from '../../lib/leitorRecortador/types';
-import { analyzeValueString } from '../../lib/leitorRecortador/cropper';
+import { analyzeValueString, propagateExtractedRowDates } from '../../lib/leitorRecortador/cropper';
+import { parseExtratoDataOcrText } from '../../lib/ocrExtratoPositional';
 import { normalizeDateIso } from '../lib/utils';
 import { avaliarExtratoConciliacaoItau, type ExtratoConciliacaoResumo } from '../../lib/itauExtratoProfile';
 
@@ -53,10 +54,15 @@ function resolveParsed(
 /** Linhas visíveis do placar → GenericOcrRow com D/C fiéis ao recorte. */
 export function mapExtractedRowsToRecorteFielOcr(
   rows: ExtractedRow[],
+  statementYear?: string,
 ): GenericOcrRow[] {
+  const withDates = propagateExtractedRowDates(rows, statementYear);
   const out: GenericOcrRow[] = [];
-  for (let idx = 0; idx < rows.length; idx++) {
-    const r = rows[idx]!;
+  for (let idx = 0; idx < withDates.length; idx++) {
+    const r = withDates[idx]!;
+    const original = rows[idx]!;
+    const inherited =
+      !!r.dateText && !parseExtratoDataOcrText(original.dateText, statementYear);
     const resolved = resolveParsed(r);
     if (!resolved) continue;
     const valorBr = formatValorBr(resolved.abs);
@@ -68,6 +74,7 @@ export function mapExtractedRowsToRecorteFielOcr(
       _linhaOcr: [r.dateText, r.historyText, r.valueText].filter(Boolean).join(' | '),
       _extratoOrdem: String(idx + 1),
       [EXTRATO_RECORTE_FIEL_FLAG]: '1',
+      ...(inherited ? { _dataHerdada: '1' } : {}),
     };
     if (resolved.nature === 'D') {
       row.valorDebito = valorBr;

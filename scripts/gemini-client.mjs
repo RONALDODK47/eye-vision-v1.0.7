@@ -13,13 +13,22 @@ const DEFAULT_MODEL = 'gemini-2.5-flash';
  */
 export const FREE_TIER_MODEL_CHAIN = [
   'gemini-2.5-flash',
+  'gemini-3-flash-preview',
   'gemini-2.5-flash-lite',
   'gemini-3.1-flash-lite-preview',
   'gemini-flash-lite-latest',
   'gemini-3.1-flash-lite',
-  'gemini-3-flash-preview',
   'gemini-flash-latest',
 ];
+
+/** Só modelos fortes — regras de contas / conciliação precisa (sem lite). */
+export const STRONG_GEMINI_MODEL_CHAIN = [
+  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
+  'gemini-2.5-pro',
+];
+
+const WEAK_GEMINI_PATTERNS = [/lite/i, /8b/i, /haiku/i, /instant/i];
 
 /** Padrões bloqueados — sem cota free ou indisponíveis na API v1beta. */
 const BLOCKED_MODEL_PATTERNS = [
@@ -66,6 +75,15 @@ export function sanitizeGeminiModel(model) {
   return id;
 }
 
+/** Modelo forte para regras de contas — nunca lite/mini. */
+export function sanitizeStrongGeminiModel(model) {
+  const id = String(model ?? '').trim();
+  if (id && isFreeTierGeminiModel(id) && !WEAK_GEMINI_PATTERNS.some((p) => p.test(id))) {
+    return id;
+  }
+  return DEFAULT_MODEL;
+}
+
 export function geminiModelId() {
   return sanitizeGeminiModel(process.env.GEMINI_MODEL || DEFAULT_MODEL);
 }
@@ -74,20 +92,22 @@ export function listFreeTierGeminiModels() {
   return [...FREE_TIER_MODEL_CHAIN];
 }
 
-function modelsToTry(preferred) {
+function modelsToTry(preferred, chain = FREE_TIER_MODEL_CHAIN) {
   const safePreferred = sanitizeGeminiModel(preferred);
   const recent =
     lastWorkingModel && Date.now() - lastWorkingModel.at < WORKING_MODEL_TTL_MS
       ? lastWorkingModel.model
       : null;
 
-  const chain = [
+  const chainFiltered = chain.filter((m) => isFreeTierGeminiModel(m));
+
+  const merged = [
     recent,
     safePreferred,
-    ...FREE_TIER_MODEL_CHAIN,
+    ...chainFiltered,
   ].filter(Boolean);
 
-  return [...new Set(chain)].filter((m) => isFreeTierGeminiModel(m));
+  return [...new Set(merged)].filter((m) => isFreeTierGeminiModel(m));
 }
 
 function parseGeminiError(status, errText) {
@@ -184,7 +204,7 @@ async function callGeminiOnce(model, key, params, signal) {
 }
 
 /**
- * @param {{ systemInstruction?: string; userContent: string; temperature?: number; jsonMode?: boolean; signal?: AbortSignal; model?: string }} params
+ * @param {{ systemInstruction?: string; userContent: string; temperature?: number; jsonMode?: boolean; signal?: AbortSignal; model?: string; strongOnly?: boolean }} params
  */
 export async function callGemini(params) {
   const key = getGeminiApiKey();
@@ -197,8 +217,11 @@ export async function callGemini(params) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const signal = params.signal ?? controller.signal;
 
-  const preferred = sanitizeGeminiModel(params.model ?? geminiModelId());
-  const candidates = modelsToTry(preferred);
+  const preferred = params.strongOnly
+    ? sanitizeStrongGeminiModel(params.model ?? geminiModelId())
+    : sanitizeGeminiModel(params.model ?? geminiModelId());
+  const chain = params.strongOnly ? STRONG_GEMINI_MODEL_CHAIN : FREE_TIER_MODEL_CHAIN;
+  const candidates = modelsToTry(preferred, chain);
   /** @type {Error | null} */
   let lastErr = null;
 

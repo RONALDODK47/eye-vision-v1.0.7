@@ -1,13 +1,25 @@
-import { dbClient } from '../../gestaoContabil/dbClientFallback';
+import { dbClient } from '../../gestaoContabil/dbClient';
 import { collectSimuladorFullBackup, clearEyeVisionOperationalLocalStorage } from '../../lib/simuladorFullBackup';
+import {
+  listMemoryFallbackEntries,
+  purgeOperationalLocalStorage,
+  safeLocalStorageGetItem,
+  safeLocalStorageSetItem,
+} from '../../lib/safeLocalStorage';
 import {
   COMPANIES_REGISTRY_KEY,
   MANAGER_DATA_SUFFIXES,
   SELECTED_COMPANY_KEY,
   companyManagerStorageKey,
   companyStorageSlug,
+  createCompanyRecord,
   invalidateManagerDataCache,
+  isDemoTechnovaCompany,
+  listManagerCacheSlugs,
   loadCompaniesRegistry,
+  mergeCompaniesRegistryLists,
+  normalizeCompanyName,
+  setManagerMemoryCacheEntry,
   type CompanyRecord,
 } from './companyWorkspace';
 import { PRICING_STORAGE_KEY } from './pricingStorage';
@@ -19,12 +31,15 @@ import {
 } from './pricingCompanyWorkspace';
 import { readStoredCompanyAccessToken } from './eyeVisionAdmin';
 import { registerEyeVisionCloudPushHandlers } from './eyeVisionCloudPush';
+import {
+  hasOperationalCloudDirty,
+  markOperationalCloudFlushed,
+} from './eyeVisionOperationalSave';
 import { reportAppFailure } from '../agent/browserConsoleBridge';
 import { restoreAiSettingsFromCloudStorage } from '../ai/aiCloudPersist';
-import { isLocalFolderDbActivated } from '../../lib/localFolderDatabase';
 
 const SYNC_META_KEY = 'eye_vision_cloud_sync_meta_v1';
-const PUSH_DEBOUNCE_MS = 20_000;
+const PUSH_DEBOUNCE_MS = 10_000;
 const QUOTA_PAUSE_MS = 60 * 60 * 1000;
 
 export const EYE_VISION_CLOUD_HYDRATED_EVENT = 'contabilfacil:data-hydrated';
@@ -60,10 +75,17 @@ type ManagerCloudPayload = {
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let pushInFlight = false;
 let pendingPush = false;
+let pendingPushBeforeHydrate = false;
 let activeOfficeToken = '';
 let activeUid = '';
 let cloudPushPausedUntil = 0;
 let quotaNoticeShown = false;
+/** Bloqueia push ao Docker até o hydrate terminar — evita sobrescrever office com lista vazia/demo. */
+let cloudHydrateReady = false;
+
+export function isCloudHydrateReady(): boolean {
+  return cloudHydrateReady;
+}
 
 export function isFirestoreQuotaError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? '');
@@ -95,11 +117,19 @@ export function isEyeVisionCloudPushPaused(): boolean {
 function stablePayloadHash(payload: unknown): string {
   try {
     const raw = JSON.stringify(payload);
-    let hash = 0;
-    for (let i = 0; i < raw.length; i += 1) {
+    if (raw.length <= 48_000) {
+      let hash = raw.length;
+      for (let i = 0; i < raw.length; i += 1) {
+        hash = (hash * 31 + raw.charCodeAt(i)) | 0;
+      }
+      return String(hash);
+    }
+    let hash = raw.length;
+    const step = Math.max(1, Math.floor(raw.length / 4000));
+    for (let i = 0; i < raw.length; i += step) {
       hash = (hash * 31 + raw.charCodeAt(i)) | 0;
     }
-    return String(hash);
+    return `${hash}:${raw.length}`;
   } catch {
     return '';
   }
@@ -109,7 +139,7 @@ function notifyQuotaPausedOnce(): void {
   if (quotaNoticeShown) return;
   quotaNoticeShown = true;
   reportAppFailure(
-    'Sincronização cloud pausada: cota diária do Firestore esgotada. Seus dados continuam salvos no navegador.',
+    'Sincronização cloud pausada temporariamente. Com Postgres/MinIO (Docker) e agent-api ativos o sync retoma automaticamente.',
     {
       source: 'eye-vision-cloud-quota',
       kind: 'warn',
@@ -118,9 +148,15 @@ function notifyQuotaPausedOnce(): void {
   );
 }
 
+function isLocalStorageQuotaError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+  return name === 'QuotaExceededError' || /QuotaExceeded|localStorage cheio|exceeded the quota/i.test(msg);
+}
+
 function readSyncMeta(): SyncMeta {
   try {
-    const raw = localStorage.getItem(SYNC_META_KEY);
+    const raw = safeLocalStorageGetItem(SYNC_META_KEY);
     if (!raw?.trim()) return {};
     return JSON.parse(raw) as SyncMeta;
   } catch {
@@ -130,12 +166,13 @@ function readSyncMeta(): SyncMeta {
 
 function writeSyncMeta(patch: Partial<SyncMeta>): void {
   const next = { ...readSyncMeta(), ...patch };
-  localStorage.setItem(SYNC_META_KEY, JSON.stringify(next));
+  // Meta leve de sync — permitida no navegador.
+  safeLocalStorageSetItem(SYNC_META_KEY, JSON.stringify(next));
 }
 
 function parseStorageJson(key: string): unknown {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeLocalStorageGetItem(key);
     if (!raw?.trim()) return undefined;
     return JSON.parse(raw);
   } catch {
@@ -145,18 +182,32 @@ function parseStorageJson(key: string): unknown {
 
 function writeStorageJson(key: string, value: unknown): void {
   if (value === undefined) return;
-  localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+  // Operacional: memória + Docker + pasta (sem localStorage do navegador).
+  safeLocalStorageSetItem(key, typeof value === 'string' ? value : JSON.stringify(value));
 }
 
-function listLocalManagerSlugs(): string[] {
+export function listLocalManagerSlugs(): string[] {
   const slugs = new Set<string>();
   const prefix = 'contabilfacil_';
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (!key?.startsWith(prefix)) continue;
+  const keys = new Set<string>();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) keys.add(key);
+    }
+  } catch {
+    /* ignore */
+  }
+  for (const [key] of listMemoryFallbackEntries()) {
+    if (key.startsWith(prefix)) keys.add(key);
+  }
+  for (const key of keys) {
     const rest = key.slice(prefix.length);
-    const match = rest.match(/^(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/);
+    const match = rest.match(/^(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/);
     if (match?.[1]) slugs.add(match[1]);
+  }
+  for (const slug of listManagerCacheSlugs()) {
+    slugs.add(slug);
   }
   for (const company of loadCompaniesRegistry()) {
     slugs.add(companyStorageSlug(company.name));
@@ -195,7 +246,7 @@ export function collectLocalOfficePayload(): OfficeCloudPayload {
 
   return {
     companies_registry: loadCompaniesRegistry(),
-    selected_company: localStorage.getItem(SELECTED_COMPANY_KEY) || '',
+    selected_company: safeLocalStorageGetItem(SELECTED_COMPANY_KEY) || '',
     pricing_companies_registry: loadPricingCompaniesRegistry(),
     pricing_selected_company: loadPricingSelectedCompanyName(),
     simulador_contracts: (storage.simulador_contracts as unknown[]) ?? [],
@@ -236,13 +287,13 @@ function applyOfficePayload(payload: OfficeCloudPayload): void {
     writeStorageJson(COMPANIES_REGISTRY_KEY, payload.companies_registry);
   }
   if (typeof payload.selected_company === 'string' && payload.selected_company.trim()) {
-    localStorage.setItem(SELECTED_COMPANY_KEY, payload.selected_company.trim());
+    writeStorageJson(SELECTED_COMPANY_KEY, payload.selected_company.trim());
   }
   if (Array.isArray(payload.pricing_companies_registry)) {
     writeStorageJson(PRICING_COMPANIES_REGISTRY_KEY, payload.pricing_companies_registry);
   }
   if (typeof payload.pricing_selected_company === 'string' && payload.pricing_selected_company.trim()) {
-    localStorage.setItem(PRICING_SELECTED_COMPANY_KEY, payload.pricing_selected_company.trim());
+    writeStorageJson(PRICING_SELECTED_COMPANY_KEY, payload.pricing_selected_company.trim());
   }
   if (Array.isArray(payload.simulador_contracts)) {
     writeStorageJson('simulador_contracts', payload.simulador_contracts);
@@ -263,18 +314,94 @@ function applyOfficePayload(payload: OfficeCloudPayload): void {
   }
 }
 
+const MANAGER_SLUG_ALIASES: Record<string, string> = {
+  POLO_SUL_CLIMATIZA_AO: 'POLO_SUL_CLIMATIZACAO',
+};
+
+function managerRowHasData(row: ManagerCloudPayload): boolean {
+  const data = row.data || {};
+  return Object.values(data).some((v) => Array.isArray(v) && v.length > 0);
+}
+
+function buildRegistryFromCloud(
+  officePayload: OfficeCloudPayload,
+  managerRows: ManagerCloudPayload[],
+): CompanyRecord[] {
+  const fromOffice = Array.isArray(officePayload.companies_registry)
+    ? (officePayload.companies_registry as CompanyRecord[])
+    : [];
+  const fromManagers: CompanyRecord[] = [];
+
+  for (const row of managerRows) {
+    const rawSlug = String(row.company_slug || '').trim();
+    const slug = MANAGER_SLUG_ALIASES[rawSlug] || rawSlug;
+    if (!slug || slug === 'TECHNOVA_INDUSTRIA_LTDA' || !managerRowHasData(row)) continue;
+    const name = resolveManagerCompanyName(slug, String(row.company_name || ''));
+    if (!name || isDemoTechnovaCompany(name)) continue;
+    fromManagers.push(createCompanyRecord(name));
+  }
+
+  return mergeCompaniesRegistryLists(fromOffice, fromManagers);
+}
+
+function mergeCloudManagerRows(rows: ManagerCloudPayload[]): ManagerCloudPayload[] {
+  const bySlug = new Map<string, ManagerCloudPayload>();
+
+  for (const row of rows) {
+    const rawSlug = String(row.company_slug || '').trim();
+    const slug = MANAGER_SLUG_ALIASES[rawSlug] || rawSlug;
+    if (!slug || slug === 'TECHNOVA_INDUSTRIA_LTDA' || !managerRowHasData(row)) continue;
+
+    let cur = bySlug.get(slug);
+    if (!cur) {
+      cur = {
+        company_slug: slug,
+        company_name: String(row.company_name || ''),
+        data: {},
+      };
+      bySlug.set(slug, cur);
+    }
+
+    const data = row.data || {};
+    for (const suffix of MANAGER_DATA_SUFFIXES) {
+      const arr = data[suffix];
+      if (!Array.isArray(arr) || arr.length === 0) continue;
+      const prev = cur.data[suffix];
+      if (!Array.isArray(prev) || prev.length === 0) {
+        cur.data[suffix] = arr;
+      } else {
+        cur.data[suffix] = [...prev, ...arr];
+      }
+    }
+  }
+
+  return [...bySlug.values()];
+}
+
+function resolveManagerCompanyName(slug: string, fallbackName: string): string {
+  const canonicalSlug = MANAGER_SLUG_ALIASES[slug] || slug;
+  const canonical = loadCompaniesRegistry().find(
+    (c) => companyStorageSlug(c.name) === canonicalSlug,
+  );
+  if (canonical) return canonical.name;
+  const norm = normalizeCompanyName(fallbackName);
+  if (norm && norm !== 'SEM EMPRESA') return norm;
+  return canonicalSlug.replace(/_/g, ' ');
+}
+
 function applyManagerPayload(payload: ManagerCloudPayload): void {
-  const slug = String(payload.company_slug || '').trim();
-  const companyName = String(payload.company_name || '').trim();
+  const rawSlug = String(payload.company_slug || '').trim();
+  const slug = MANAGER_SLUG_ALIASES[rawSlug] || rawSlug;
   if (!slug || !payload.data || typeof payload.data !== 'object') return;
+
+  const companyName = resolveManagerCompanyName(slug, String(payload.company_name || ''));
 
   for (const suffix of MANAGER_DATA_SUFFIXES) {
     const rows = payload.data[suffix];
     if (!Array.isArray(rows)) continue;
-    const key = companyName
-      ? companyManagerStorageKey(companyName, suffix)
-      : `contabilfacil_${slug}_${suffix}`;
+    const key = companyManagerStorageKey(companyName, suffix);
     writeStorageJson(key, rows);
+    setManagerMemoryCacheEntry(key, rows);
   }
 }
 
@@ -292,24 +419,68 @@ function localHasOperationalData(): boolean {
 }
 
 function dispatchHydrated(): void {
+  cloudHydrateReady = true;
   invalidateManagerDataCache();
   window.dispatchEvent(new CustomEvent(EYE_VISION_CLOUD_HYDRATED_EVENT));
+  if (pendingPushBeforeHydrate) {
+    pendingPushBeforeHydrate = false;
+    scheduleEyeVisionCloudPushInternal();
+  }
+}
+
+/** Remove dados gerenciais na nuvem de empresas já excluídas localmente. */
+async function purgeOrphanCloudManagers(
+  managerHashes: Record<string, string>,
+): Promise<boolean> {
+  if (!activeOfficeToken || !activeUid) return false;
+  const allowedSlugs = new Set(
+    loadCompaniesRegistry()
+      .map((c) => companyStorageSlug(c.name))
+      .filter((s) => s && s !== 'TECHNOVA_INDUSTRIA_LTDA'),
+  );
+  let removed = false;
+  try {
+    const cloudManagers = await dbClient.entities.EyeVisionWorkspace.listManagerByOffice(
+      activeOfficeToken,
+    );
+    for (const row of cloudManagers) {
+      const slug = String(row.company_slug || '').trim();
+      if (!slug || slug === 'TECHNOVA_INDUSTRIA_LTDA') continue;
+      if (!allowedSlugs.has(slug)) {
+        await dbClient.entities.EyeVisionWorkspace.deleteManager(
+          activeOfficeToken,
+          slug,
+          activeUid,
+        );
+        delete managerHashes[slug];
+        removed = true;
+      }
+    }
+  } catch {
+    /* cloud offline — tenta na próxima sync */
+  }
+  return removed;
 }
 
 export function configureEyeVisionCloudSync(officeToken: string, uid: string): void {
   activeOfficeToken = String(officeToken || '').trim();
   activeUid = String(uid || '').trim();
+  cloudHydrateReady = false;
+  pendingPushBeforeHydrate = false;
   restoreCloudPushPauseFromMeta();
   registerEyeVisionCloudPushHandlers({
     schedule: scheduleEyeVisionCloudPushInternal,
-    flush: flushEyeVisionCloudPush,
+    flush: () => flushEyeVisionCloudPush({ force: true }),
   });
 }
 
 function scheduleEyeVisionCloudPushInternal(): void {
   if (!activeOfficeToken || !activeUid) return;
-  if (isLocalFolderDbActivated()) return;
   if (isEyeVisionCloudPushPaused()) return;
+  if (!cloudHydrateReady) {
+    pendingPushBeforeHydrate = true;
+    return;
+  }
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     pushTimer = null;
@@ -321,10 +492,11 @@ export function scheduleEyeVisionCloudPush(): void {
   scheduleEyeVisionCloudPushInternal();
 }
 
-export async function flushEyeVisionCloudPush(): Promise<void> {
+export async function flushEyeVisionCloudPush(options?: { force?: boolean }): Promise<void> {
   if (!activeOfficeToken || !activeUid) return;
-  if (isLocalFolderDbActivated()) return;
+  if (!cloudHydrateReady) return;
   if (isEyeVisionCloudPushPaused()) return;
+  if (!options?.force && !hasOperationalCloudDirty()) return;
   if (pushInFlight) {
     pendingPush = true;
     return;
@@ -339,9 +511,40 @@ export async function flushEyeVisionCloudPush(): Promise<void> {
     let pushedAnything = false;
 
     if (officeHash && officeHash !== meta.lastOfficePushHash) {
+      let officeToPush = officePayload;
+      try {
+        const cloudOffice = await dbClient.entities.EyeVisionWorkspace.getOffice(activeOfficeToken);
+        const cloudManagers = await dbClient.entities.EyeVisionWorkspace.listManagerByOffice(
+          activeOfficeToken,
+        );
+        const mergedRegistry = buildRegistryFromCloud(
+          (cloudOffice || {}) as OfficeCloudPayload,
+          (cloudManagers || []) as ManagerCloudPayload[],
+        );
+        const localRegistry = Array.isArray(officePayload.companies_registry)
+          ? (officePayload.companies_registry as CompanyRecord[])
+          : [];
+        // Registry local é a fonte de verdade (inclui exclusões). Cloud só preenche se local vazio.
+        const registryToPush =
+          localRegistry.length > 0
+            ? localRegistry
+            : mergeCompaniesRegistryLists(mergedRegistry, localRegistry);
+        officeToPush = {
+          ...officePayload,
+          companies_registry: registryToPush,
+        };
+        const selected = String(officePayload.selected_company || '').trim();
+        if (selected && isDemoTechnovaCompany(selected)) {
+          officeToPush.selected_company =
+            officeToPush.companies_registry?.[0]?.name ||
+            String((cloudOffice as OfficeCloudPayload)?.selected_company || '');
+        }
+      } catch {
+        /* mantém payload local se cloud indisponível */
+      }
       const result = await dbClient.entities.EyeVisionWorkspace.setOffice(
         activeOfficeToken,
-        officePayload,
+        officeToPush,
         activeUid,
       );
       writeSyncMeta({
@@ -374,6 +577,9 @@ export async function flushEyeVisionCloudPush(): Promise<void> {
       });
     }
 
+    const purgedOrphans = await purgeOrphanCloudManagers(managerHashes);
+    if (purgedOrphans) pushedAnything = true;
+
     if (pushedAnything) {
       writeSyncMeta({
         officeToken: activeOfficeToken,
@@ -381,10 +587,24 @@ export async function flushEyeVisionCloudPush(): Promise<void> {
         lastManagerPushHashes: managerHashes,
       });
     }
+    markOperationalCloudFlushed();
   } catch (err) {
     if (isFirestoreQuotaError(err)) {
       pauseCloudPushAfterQuotaError();
       notifyQuotaPausedOnce();
+      pendingPush = false;
+      return;
+    }
+    if (isLocalStorageQuotaError(err)) {
+      reportAppFailure(
+        '[EyeVisionCloud] localStorage cheio — dados devem ir para Docker (Postgres/MinIO). Suba npm run agent-api.',
+        {
+          source: 'eye-vision-cloud-push',
+          cause: err,
+          kind: 'error',
+          context: { module: 'system', moduleLabel: 'Sincronização cloud' },
+        },
+      );
       pendingPush = false;
       return;
     }
@@ -410,18 +630,12 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
 
   configureEyeVisionCloudSync(token, uid);
 
-  if (isLocalFolderDbActivated()) {
-    dispatchHydrated();
-    return false;
-  }
-
   try {
     const meta = readSyncMeta();
     const tokenChanged = Boolean(meta.officeToken && meta.officeToken !== token);
 
+    // Não limpa dados locais ANTES do pull — se o Docker falhar, não perde o que ainda houver.
     if (tokenChanged) {
-      clearEyeVisionOperationalLocalStorage();
-      invalidateManagerDataCache();
       writeSyncMeta({
         officeToken: token,
         lastPullAt: '',
@@ -447,7 +661,7 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
         cloudManagers.length > 0);
 
     if (!cloudHasData && localHasData && !tokenChanged) {
-      await flushEyeVisionCloudPush();
+      await flushEyeVisionCloudPush({ force: true });
       await restoreAiSettingsFromCloudStorage();
       dispatchHydrated();
       return true;
@@ -462,6 +676,7 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
       tokenChanged ||
       !localHasData ||
       !meta.lastPullAt ||
+      Boolean(cloudHasData) ||
       (cloudUpdatedAt && cloudUpdatedAt > String(meta.cloudUpdatedAt || ''));
 
     if (!shouldPull) {
@@ -469,12 +684,40 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
         scheduleEyeVisionCloudPush();
       }
       dispatchHydrated();
-      return false;
+      return Boolean(cloudHasData || localHasData);
     }
 
-    applyOfficePayload(cloudOffice as OfficeCloudPayload);
-    for (const row of cloudManagers) {
-      applyManagerPayload(row as ManagerCloudPayload);
+    if (tokenChanged) {
+      invalidateManagerDataCache();
+    }
+
+    const officeRegistry = Array.isArray(cloudOffice.companies_registry)
+      ? (cloudOffice.companies_registry as CompanyRecord[]).filter(
+          (c) => c?.name && !isDemoTechnovaCompany(String(c.name)),
+        )
+      : [];
+    const mergedRegistry =
+      officeRegistry.length > 0
+        ? officeRegistry
+        : buildRegistryFromCloud(
+            cloudOffice as OfficeCloudPayload,
+            cloudManagers as ManagerCloudPayload[],
+          );
+    const cloudSelected = String((cloudOffice as OfficeCloudPayload)?.selected_company || '').trim();
+    const selectedCompany =
+      cloudSelected &&
+      !isDemoTechnovaCompany(cloudSelected) &&
+      mergedRegistry.some((c) => normalizeCompanyName(c.name) === normalizeCompanyName(cloudSelected))
+        ? cloudSelected
+        : mergedRegistry[0]?.name || '';
+
+    applyOfficePayload({
+      ...(cloudOffice as OfficeCloudPayload),
+      companies_registry: mergedRegistry,
+      selected_company: selectedCompany,
+    });
+    for (const row of mergeCloudManagerRows(cloudManagers as ManagerCloudPayload[])) {
+      applyManagerPayload(row);
     }
 
     await restoreAiSettingsFromCloudStorage();
@@ -484,6 +727,9 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
       lastPullAt: new Date().toISOString(),
       cloudUpdatedAt: cloudUpdatedAt || new Date().toISOString(),
     });
+
+    // Dados ficam em memória + Docker; limpa resíduos operacionais do navegador.
+    purgeOperationalLocalStorage();
 
     dispatchHydrated();
     return true;

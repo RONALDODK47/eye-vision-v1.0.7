@@ -12,6 +12,7 @@ import {
   groupExtratoPastasPorBanco,
   listExtratoPastas,
   removeExtratoDaPasta,
+  syncExtratoPastasFromServer,
   type ExtratoPastaItem,
 } from '../logic/extratoPastasStorage';
 
@@ -44,6 +45,11 @@ export default memo(function ExtratoPastasModal({
 
   const reload = useCallback(() => {
     setItems(listExtratoPastas(company));
+    void syncExtratoPastasFromServer(company)
+      .then((remote) => setItems(remote))
+      .catch(() => {
+        /* mantém LS se servidor offline */
+      });
   }, [company]);
 
   useEffect(() => {

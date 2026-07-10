@@ -10,12 +10,22 @@ export interface RenderedPDFPageWithNum extends RenderedPDFPage {
   pageNumber: number;
 }
 
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => resolve(), { timeout: 32 });
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
 async function renderPdfPage(
   pdfDoc: pdfjsLib.PDFDocumentProxy,
   pageNumber: number,
+  scale = 1.5,
 ): Promise<RenderedPDFPageWithNum> {
   const page = await pdfDoc.getPage(pageNumber);
-  const scale = 2.0;
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
@@ -53,21 +63,71 @@ async function renderPdfPage(
   };
 }
 
-export async function parseAndRenderPDFPage(file: File, pageNumber: number): Promise<RenderedPDFPageWithNum> {
+export async function openPdfDocument(file: File): Promise<pdfjsLib.PDFDocumentProxy> {
   const arrayBuffer = await file.arrayBuffer();
-  const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  if (pageNumber < 1 || pageNumber > pdfDoc.numPages) {
-    throw new Error(`Página ${pageNumber} inválida. O documento tem ${pdfDoc.numPages} páginas.`);
-  }
-  return renderPdfPage(pdfDoc, pageNumber);
+  return pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 }
 
-export async function parseAndRenderAllPDFPages(file: File): Promise<RenderedPDFPageWithNum[]> {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+export async function parseAndRenderPDFPage(
+  file: File,
+  pageNumber: number,
+  pdfDoc?: pdfjsLib.PDFDocumentProxy,
+): Promise<RenderedPDFPageWithNum> {
+  const doc = pdfDoc ?? (await openPdfDocument(file));
+  if (pageNumber < 1 || pageNumber > doc.numPages) {
+    throw new Error(`Página ${pageNumber} inválida. O documento tem ${doc.numPages} páginas.`);
+  }
+  return renderPdfPage(doc, pageNumber);
+}
+
+/** Primeira página imediata; demais em segundo plano com pausas para não travar a UI. */
+export async function loadPdfPagesProgressive(
+  file: File,
+  handlers: {
+    onReady: (firstPage: RenderedPDFPageWithNum, totalPages: number) => void;
+    onProgress?: (pages: RenderedPDFPageWithNum[], loaded: number, totalPages: number) => void;
+  },
+): Promise<RenderedPDFPageWithNum[]> {
+  const pdfDoc = await openPdfDocument(file);
+  const totalPages = pdfDoc.numPages;
   const pages: RenderedPDFPageWithNum[] = [];
-  for (let p = 1; p <= pdfDoc.numPages; p += 1) {
-    pages.push(await renderPdfPage(pdfDoc, p));
+  const first = await renderPdfPage(pdfDoc, 1);
+  pages.push(first);
+  handlers.onReady(first, totalPages);
+  for (let p = 2; p <= totalPages; p += 1) {
+    await yieldToMain();
+    const rendered = await renderPdfPage(pdfDoc, p);
+    pages.push(rendered);
+    if (p % 2 === 0 || p === totalPages) {
+      handlers.onProgress?.([...pages], p, totalPages);
+    }
+  }
+  return pages;
+}
+
+export async function parseAndRenderAllPDFPages(
+  file: File,
+  options?: {
+    onFirstPage?: (page: RenderedPDFPageWithNum, totalPages: number) => void;
+    onPage?: (page: RenderedPDFPageWithNum, index: number, totalPages: number) => void;
+    yieldEvery?: number;
+  },
+): Promise<RenderedPDFPageWithNum[]> {
+  const pdfDoc = await openPdfDocument(file);
+  const totalPages = pdfDoc.numPages;
+  const pages: RenderedPDFPageWithNum[] = [];
+  const yieldEvery = options?.yieldEvery ?? 1;
+
+  for (let p = 1; p <= totalPages; p += 1) {
+    if (p > 1 && (p - 1) % yieldEvery === 0) {
+      await yieldToMain();
+    }
+    const rendered = await renderPdfPage(pdfDoc, p);
+    pages.push(rendered);
+    if (p === 1) {
+      options?.onFirstPage?.(rendered, totalPages);
+    }
+    options?.onPage?.(rendered, p - 1, totalPages);
   }
   return pages;
 }

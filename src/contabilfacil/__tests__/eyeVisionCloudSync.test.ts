@@ -111,10 +111,13 @@ describe('eyeVisionCloudSync', () => {
     expect(isContabilfacilManagerDataKey('contabilfacil_icms_uf_EMPRESA_B')).toBe(false);
   });
 
-  it('registry persiste em localStorage', () => {
+  it('registry persiste em memória (não no localStorage do navegador com Docker)', async () => {
+    const { safeLocalStorageGetItem } = await import('../../lib/safeLocalStorage');
     saveCompaniesRegistry([{ id: 'x', name: 'TESTE', createdAt: '2026-01-01' }]);
-    const raw = localStorage.getItem(COMPANIES_REGISTRY_KEY);
+    // Com VITE_STORAGE_BACKEND=postgres, dados operacionais ficam só em memória.
+    const raw = safeLocalStorageGetItem(COMPANIES_REGISTRY_KEY);
     expect(raw).toContain('TESTE');
+    expect(localStorage.getItem(COMPANIES_REGISTRY_KEY)).toBeNull();
   });
 
   it('detecta erro de cota Firestore', async () => {

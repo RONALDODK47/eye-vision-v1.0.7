@@ -211,8 +211,7 @@ export default function FiscalAcumuladoresPanel({ selectedCompany, contasImposto
                 demais grupos. Remessas não são importadas.
                 {totalNotasBloqueadas > 0 ? (
                   <span className="block mt-1 text-amber-800 normal-case">
-                    {totalNotasBloqueadas} NF(s) bloqueada(s) pela aba Bloqueio NF — não entram nos
-                    acumuladores.
+                    {totalNotasBloqueadas} NF(s) filtrada(s) — não entram nos acumuladores.
                   </span>
                 ) : null}
               </p>
@@ -342,6 +341,9 @@ export default function FiscalAcumuladoresPanel({ selectedCompany, contasImposto
                                 ) : (
                                   <input
                                     type="text"
+                                    aria-label={`Conta débito ${group.label}`}
+                                    title={`Conta débito ${group.label}`}
+                                    placeholder="Código reduzido débito"
                                     className={CF_INPUT_ACCOUNT}
                                     value={contas.debito}
                                     onChange={(e) => patchConta(group.key, 'debito', e.target.value)}
@@ -362,6 +364,9 @@ export default function FiscalAcumuladoresPanel({ selectedCompany, contasImposto
                                 ) : (
                                   <input
                                     type="text"
+                                    aria-label={`Conta crédito ${group.label}`}
+                                    title={`Conta crédito ${group.label}`}
+                                    placeholder="Código reduzido crédito"
                                     className={CF_INPUT_ACCOUNT}
                                     value={contas.credito}
                                     onChange={(e) => patchConta(group.key, 'credito', e.target.value)}

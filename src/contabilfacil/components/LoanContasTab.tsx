@@ -2,7 +2,10 @@ import { CalendarDays } from 'lucide-react';
 import type { LoanContract, LoanAccountFields } from '../types';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_FORM_INPUT_LONG, CF_FORM_INPUT_MED, CF_FORM_INPUT_SHORT, CF_SELECT_WIDE } from '../lib/formFieldClasses';
 import { LoanAccountsSection } from './LoanAccountsSection';
+import ModuloContasAiButton from './ModuloContasAiButton';
+
 export interface LoanContasTabProps {
+  selectedCompany: string;
   contracts: LoanContract[];
   selectedId: string;
   onSelectContract: (id: string) => void;
@@ -18,6 +21,7 @@ export interface LoanContasTabProps {
 }
 
 export default function LoanContasTab({
+  selectedCompany,
   contracts,
   selectedId,
   onSelectContract,
@@ -70,9 +74,32 @@ export default function LoanContasTab({
             <p className="text-xs font-mono font-bold uppercase">{selected.contractNumber || '—'}</p>
           </div>
         )}
-        <p className="text-[9px] font-mono opacity-50 sm:ml-auto">
-          Contas salvas automaticamente ao editar · exportação TXT+ Domínio na simulação
-        </p>
+        <div className="sm:ml-auto flex flex-col items-end gap-1">
+          <ModuloContasAiButton
+            company={selectedCompany}
+            modulo="emprestimo"
+            contasAtuais={{
+              accEmprestimoDebit: accountFields.accEmprestimoDebit ?? '',
+              accEmprestimoCredit: accountFields.accEmprestimoCredit ?? '',
+              accIofDebit: accountFields.accIofDebit ?? '',
+              accIofCredit: accountFields.accIofCredit ?? '',
+              accJurosAproDebit: accountFields.accJurosAproDebit ?? '',
+              accJurosAproCredit: accountFields.accJurosAproCredit ?? '',
+              accApropriacaoDebit: accountFields.accApropriacaoDebit ?? '',
+              accApropriacaoCredit: accountFields.accApropriacaoCredit ?? '',
+              accTransferenciaDebit: accountFields.accTransferenciaDebit ?? '',
+              accTransferenciaCredit: accountFields.accTransferenciaCredit ?? '',
+            }}
+            contexto={{
+              contractNumber: selected.contractNumber,
+              bankName: selected.bankName,
+            }}
+            onApply={(patch) => onPatch(patch)}
+          />
+          <p className="text-[9px] font-mono opacity-50">
+            Contas salvas automaticamente ao editar
+          </p>
+        </div>
       </div>
 
       <div className={`${CF_FIELD_ROW} border border-brand-border bg-brand-sidebar/5 p-4 technical-panel shadow-[2px_2px_0_0_#141414]`}>

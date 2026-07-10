@@ -1,6 +1,12 @@
 import { format } from 'date-fns';
 import { downloadJsonBackup } from './jsonBackup';
-import { listMemoryFallbackEntries, safeLocalStorageGetItem, safeLocalStorageSetItem } from './safeLocalStorage';
+import {
+  listMemoryFallbackEntries,
+  purgeOperationalLocalStorage,
+  safeLocalStorageGetItem,
+  safeLocalStorageRemoveItem,
+  safeLocalStorageSetItem,
+} from './safeLocalStorage';
 
 export const SIMULADOR_FULL_BACKUP_VERSION = 1 as const;
 
@@ -67,17 +73,21 @@ function writeStorageValue(key: string, value: unknown): void {
 
 function clearManagedStorage(): void {
   for (const key of SIMULADOR_ALL_MANAGED_STORAGE_KEYS) {
-    localStorage.removeItem(key);
+    safeLocalStorageRemoveItem(key);
   }
 }
 
 function listContabilfacilStorageKeys(): string[] {
   const keys = new Set<string>();
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(CONTABILFACIL_STORAGE_PREFIX)) keys.add(key);
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(CONTABILFACIL_STORAGE_PREFIX)) keys.add(key);
+    }
+  } catch {
+    /* ignore */
   }
-  // Inclui chaves que só estão em memória (cota cheia)
+  // Inclui chaves que só estão em memória (cota cheia / Docker mode)
   for (const [key] of listMemoryFallbackEntries()) {
     if (key.startsWith(CONTABILFACIL_STORAGE_PREFIX)) keys.add(key);
   }
@@ -86,7 +96,7 @@ function listContabilfacilStorageKeys(): string[] {
 
 function clearContabilfacilStorage(): void {
   for (const key of listContabilfacilStorageKeys()) {
-    localStorage.removeItem(key);
+    safeLocalStorageRemoveItem(key);
   }
 }
 
@@ -101,8 +111,9 @@ export function clearEyeVisionOperationalLocalStorage(): void {
     'extratoVision_workspace_snapshots_v1',
   ];
   for (const key of extratoKeys) {
-    localStorage.removeItem(key);
+    safeLocalStorageRemoveItem(key);
   }
+  purgeOperationalLocalStorage();
 }
 
 export function collectSimuladorFullBackup(): SimuladorFullBackupV1 {
@@ -115,6 +126,14 @@ export function collectSimuladorFullBackup(): SimuladorFullBackupV1 {
     const value = readStorageValue(key);
     if (value !== undefined) storage[key] = value;
   }
+  // Gestão Contábil (acesso, perfis, abas) — proteção extra na pasta.
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith('gc_')) continue;
+    if (key.includes('password') || key.includes('secret')) continue;
+    const value = readStorageValue(key);
+    if (value !== undefined) storage[key] = value;
+  }
   return {
     version: SIMULADOR_FULL_BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
@@ -123,8 +142,8 @@ export function collectSimuladorFullBackup(): SimuladorFullBackupV1 {
 }
 
 /**
- * Backup completo para a pasta local — inclui stores + textos da Inteligência IA (IndexedDB).
- * Garante que docs salvos nas pastas (Outros, Coligadas, etc.) entrem no eye-vision-dados.json.
+ * Backup completo para a pasta local — inclui stores + textos da Inteligência IA (IndexedDB)
+ * e tenta reembutir PDFs de extrato (MinIO → base64) para proteção offline.
  */
 export async function collectSimuladorFullBackupForFolder(): Promise<SimuladorFullBackupV1> {
   const payload = collectSimuladorFullBackup();
@@ -172,36 +191,80 @@ export async function collectSimuladorFullBackupForFolder(): Promise<SimuladorFu
 
     // 2) Textos completos dos documentos
     const texts = await idbExportAllDocTexts();
-    if (texts.length === 0) return payload;
-
-    const bySlug = new Map<string, Map<string, string>>();
-    for (const t of texts) {
-      let m = bySlug.get(t.companySlug);
-      if (!m) {
-        m = new Map();
-        bySlug.set(t.companySlug, m);
+    if (texts.length > 0) {
+      const bySlug = new Map<string, Map<string, string>>();
+      for (const t of texts) {
+        let m = bySlug.get(t.companySlug);
+        if (!m) {
+          m = new Map();
+          bySlug.set(t.companySlug, m);
+        }
+        m.set(t.docId, t.texto);
       }
-      m.set(t.docId, t.texto);
-    }
 
-    for (const [key, value] of Object.entries(payload.storage)) {
-      if (!key.includes('_ai_inteligencia_v1') || !value || typeof value !== 'object') continue;
-      const store = value as { docs?: Array<{ id: string; textoExtraido?: string }> };
-      if (!Array.isArray(store.docs)) continue;
-      const m = key.match(/^contabilfacil_(.+)_ai_inteligencia_v1$/);
-      const slug = m?.[1];
-      if (!slug) continue;
-      const textMap = bySlug.get(slug);
-      if (!textMap) continue;
-      store.docs = store.docs.map((d) => ({
-        ...d,
-        textoExtraido: textMap.get(d.id) || d.textoExtraido || '',
-      }));
-      payload.storage[key] = store;
+      for (const [key, value] of Object.entries(payload.storage)) {
+        if (!key.includes('_ai_inteligencia_v1') || !value || typeof value !== 'object') continue;
+        const store = value as { docs?: Array<{ id: string; textoExtraido?: string }> };
+        if (!Array.isArray(store.docs)) continue;
+        const m = key.match(/^contabilfacil_(.+)_ai_inteligencia_v1$/);
+        const slug = m?.[1];
+        if (!slug) continue;
+        const textMap = bySlug.get(slug);
+        if (!textMap) continue;
+        store.docs = store.docs.map((d) => ({
+          ...d,
+          textoExtraido: textMap.get(d.id) || d.textoExtraido || '',
+        }));
+        payload.storage[key] = store;
+      }
     }
   } catch {
     /* pasta ainda grava o que houver no LS mesmo se IDB falhar */
   }
+
+  // 3) PDFs de pastas de extrato: se só há pdfObjectKey (MinIO), tenta embutir base64 no espelho.
+  try {
+    const token =
+      typeof localStorage !== 'undefined'
+        ? String(localStorage.getItem('gc_company_access_token') || '').trim()
+        : '';
+    if (token) {
+      for (const [key, value] of Object.entries(payload.storage)) {
+        if (!key.includes('_extrato_pastas_v1') || !Array.isArray(value)) continue;
+        const items = value as Array<{
+          id?: string;
+          pdfBase64?: string;
+          pdfObjectKey?: string;
+        }>;
+        let changed = false;
+        for (const item of items) {
+          if (item.pdfBase64 || !item.pdfObjectKey || !item.id) continue;
+          try {
+            const res = await fetch(
+              `/api/agent/workspace/extrato-pastas/${encodeURIComponent(item.id)}/pdf`,
+              { headers: { 'X-Office-Token': token } },
+            );
+            if (!res.ok) continue;
+            const buf = await res.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let binary = '';
+            const chunk = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunk) {
+              binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+            }
+            item.pdfBase64 = btoa(binary);
+            changed = true;
+          } catch {
+            /* mantém só pdfObjectKey se MinIO offline */
+          }
+        }
+        if (changed) payload.storage[key] = items;
+      }
+    }
+  } catch {
+    /* ok */
+  }
+
   return payload;
 }
 

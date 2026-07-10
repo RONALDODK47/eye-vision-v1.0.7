@@ -51,8 +51,18 @@ export function findModelInCatalog(modelId) {
   return AI_MODEL_CATALOG.find((m) => m.id === id) ?? null;
 }
 
+/** Modelos fracos — não servem para regras de contas / conciliação precisa. */
+const WEAK_MODEL_PATTERNS = [/lite/i, /-mini/i, /8b/i, /haiku/i, /instant/i];
+
+export function isWeakAiModel(m) {
+  const id = String(m?.id ?? '').trim();
+  return WEAK_MODEL_PATTERNS.some((p) => p.test(id));
+}
+
 export function modelDaContaDoRecado(m) {
-  return m.supportsExtract === true && m.supportsVision !== false;
+  if (m.supportsExtract !== true || m.supportsVision === false) return false;
+  if (isWeakAiModel(m)) return false;
+  return true;
 }
 
 export function modelsForProvider(providerId) {

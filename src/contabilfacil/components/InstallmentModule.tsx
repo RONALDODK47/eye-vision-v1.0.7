@@ -12,9 +12,12 @@ import {
   CF_FORM_INPUT_SHORT,
 } from '../lib/formFieldClasses';
 import DataIngestionBox from './DataIngestionBox';
+import MandarParaBalanceteButton from './MandarParaBalanceteButton';
 import { planilhaImportToSavedParcelamento } from '../logic/ocrImportMapper';
 import InstallmentDocTab from './InstallmentDocTab';
 import InstallmentContasTab from './InstallmentContasTab';
+import { postParcelamentoNoRazao } from '../logic/parcelamentoBalanceteAutomation';
+import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import {
   loadParcelamentosFromBrowserStorage,
   normalizeSavedParcelamento,
@@ -170,6 +173,28 @@ export default function InstallmentModule({
       `${base}_dominio_txtplus.txt`,
       generateParcelamentoTxtPlus(inp, parseCurrency, cron),
     );
+  };
+
+  const handleMandarParcelamentoBalancete = (parcelamentoId?: string) => {
+    if (savedParcelamentos.length === 0) {
+      alert('Nenhum cronograma para enviar ao balancete.');
+      return;
+    }
+    try {
+      const { gerados, pendencias } = postParcelamentoNoRazao(selectedCompany, parcelamentoId);
+      void flushPersistenceAfterCriticalWrite();
+      if (pendencias.length && gerados <= 0) {
+        alert(pendencias.join('\n'));
+        return;
+      }
+      alert(
+        gerados > 0
+          ? `${gerados} lançamento(s) de parcelamento enviados ao balancete.\n\nAbra a aba Balancete para conferir.`
+          : 'Nada novo para enviar — já estavam no balancete (ou não geraram partidas).',
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Falha ao enviar para o balancete.');
+    }
   };
 
   const mainTabs: { id: InstallmentMainTab; label: string }[] = [
@@ -358,6 +383,10 @@ export default function InstallmentModule({
                       <td className="px-6 py-4 border-r border-brand-border/10 font-bold">{formatCurrency(item.amount * item.qty)}</td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          <MandarParaBalanceteButton
+                            onClick={() => handleMandarParcelamentoBalancete(item.id)}
+                            className="text-[8px] py-0.5 px-1.5"
+                          />
                           <button
                             type="button"
                             onClick={() => handleExportDominioTxt(item.id)}
@@ -390,6 +419,7 @@ export default function InstallmentModule({
           </div>
           ) : installmentMainTab === 'contas' ? (
             <InstallmentContasTab
+              selectedCompany={selectedCompany}
               items={savedParcelamentos}
               onSave={saveParcelamentos}
             />
@@ -405,7 +435,9 @@ export default function InstallmentModule({
         <div className="lg:col-span-4 space-y-6">
            <DataIngestionBox 
              dataType="installments" 
-             title="Processar Cronogramas Externos" 
+             title="Recortar PDF de Parcelamento"
+             selectedCompany={selectedCompany}
+             ingestionMode="pdfOnly"
              onImport={(newItems) => {
                const imported = (newItems as InstallmentItem[]).map((item) =>
                  itemToParcelamento({ ...item, id: item.id || crypto.randomUUID() }, selectedCompany),
@@ -423,6 +455,13 @@ export default function InstallmentModule({
              <p className="text-[9px] font-bold text-brand-text/50 uppercase leading-relaxed">
                TXT+ partida dobrada Domínio — mesmo formato da interface antiga (dd/MM/yyyy;conta débito;conta crédito;valor;cod hist;histórico;complemento).
              </p>
+             <MandarParaBalanceteButton
+               variant="full"
+               onClick={() => handleMandarParcelamentoBalancete()}
+               disabled={savedParcelamentos.length === 0}
+               count={savedParcelamentos.length}
+               title="Envia os lançamentos dos cronogramas para o balancete/razão"
+             />
              <button 
                type="button"
                onClick={() => handleExportDominioTxt()}

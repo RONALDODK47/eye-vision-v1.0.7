@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createCompanyRecord,
+  flushManagerDataWrites,
+  invalidateManagerDataCache,
   migrateLegacyManagerData,
   migrateOrphanAplicacoes,
   migrateOrphanParcelamentos,
@@ -20,15 +22,17 @@ export function useCompanyWorkspace() {
   const [workspaceVersion, setWorkspaceVersion] = useState(0);
 
   const refreshCompanies = useCallback(() => {
-    let synced = syncCompanyRegistry();
+    const synced = syncCompanyRegistry();
     if (synced.length === 0) {
-      synced = [createCompanyRecord('TECHNOVA INDÚSTRIA LTDA')];
-      saveCompaniesRegistry(synced);
+      setCompanies([]);
+      setSelectedCompanyState('');
+      setWorkspaceVersion((v) => v + 1);
+      return '';
     }
     const selected = resolveSelectedCompany(synced);
     migrateLegacyManagerData(selected);
     migrateOrphanParcelamentos(selected);
-  migrateOrphanAplicacoes(selected);
+    migrateOrphanAplicacoes(selected);
     saveSelectedCompanyName(selected);
     setCompanies(synced);
     setSelectedCompanyState(selected);
@@ -47,6 +51,8 @@ export function useCompanyWorkspace() {
     (name: string) => {
       const normalized = normalizeCompanyName(name);
       saveSelectedCompanyName(normalized);
+      flushManagerDataWrites();
+      invalidateManagerDataCache();
       setSelectedCompanyState(normalized);
       setWorkspaceVersion((v) => v + 1);
     },

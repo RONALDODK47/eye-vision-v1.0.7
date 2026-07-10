@@ -10,6 +10,57 @@ import type {
   GenericExtractedRow,
   PDFTextItem,
 } from './types';
+import { parseExtratoDataOcrText } from '../ocrExtratoPositional';
+import { getOcrDatePropagationMode } from '../ocrCloudRulesStorage';
+
+function extratoRowTemLancamento(row: Pick<ExtractedRow, 'historyText' | 'valueText' | 'parsedValue'>): boolean {
+  const hasValue =
+    !!(row.valueText?.trim()) ||
+    (row.parsedValue != null && Math.abs(row.parsedValue) > 0.0001);
+  const hasHist = !!(row.historyText?.trim());
+  return hasValue || hasHist;
+}
+
+function resolveExtratoStatementYear(rows: ExtractedRow[], statementYear?: string): string {
+  if (statementYear?.trim()) return statementYear.trim();
+  const blob = rows.map((r) => r.dateText).join(' ');
+  const fromBlob = blob.match(/\b(20\d{2})\b/)?.[1];
+  return fromBlob ?? String(new Date().getFullYear());
+}
+
+/**
+ * Extrato bancário (Bradesco/Itaú etc.): só a 1ª linha do dia traz data na coluna;
+ * as demais herdam a última data válida até aparecer outra.
+ */
+export function propagateExtractedRowDates(
+  rows: ExtractedRow[],
+  statementYear?: string,
+): ExtractedRow[] {
+  if (rows.length === 0) return rows;
+  if (typeof window !== 'undefined' && getOcrDatePropagationMode() === 'one-per-tx') {
+    return rows;
+  }
+
+  const year = resolveExtratoStatementYear(rows, statementYear);
+  let lastDate = '';
+
+  return rows.map((row) => {
+    const parsed = parseExtratoDataOcrText(row.dateText, year);
+    if (parsed) {
+      lastDate = parsed;
+      return parsed !== row.dateText ? { ...row, dateText: parsed } : row;
+    }
+
+    if (!lastDate) return row;
+
+    if (extratoRowTemLancamento(row)) {
+      return { ...row, dateText: lastDate };
+    }
+
+    // Linha só com data (âncora do dia) — mantém lastDate para as próximas.
+    return { ...row, dateText: lastDate };
+  });
+}
 
 /**
  * Groups text items into horizontal rows based on their vertical coordinates.

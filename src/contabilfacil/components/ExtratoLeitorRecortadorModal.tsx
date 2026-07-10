@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import type { OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
 import type { GenericOcrRow } from '../../lib/parcelamentoColunasExtract';
-import { detectRowsFromText, extractDataFromCanvas } from '../../lib/leitorRecortador/cropper';
+import { detectRowsFromText, extractDataFromCanvas, propagateExtractedRowDates } from '../../lib/leitorRecortador/cropper';
 import { exportToCSV } from '../../lib/leitorRecortador/exporter';
 import {
   buildFaixaPorPagina,
@@ -24,9 +24,11 @@ import {
   normColumnsToLeitorColumns,
 } from '../../lib/leitorRecortador/layoutBridge';
 import { exportExtractedRowsToOfx } from '../../lib/leitorRecortador/ofxExport';
-import { parseAndRenderAllPDFPages, parseAndRenderImage } from '../../lib/leitorRecortador/pdfParser';
+import { loadPdfPagesProgressive, parseAndRenderImage } from '../../lib/leitorRecortador/pdfParser';
 import type { DocMetadata, DocumentColumns, ExtractedRow } from '../../lib/leitorRecortador/types';
 import { mapExtractedRowsToRecorteFielOcr } from '../logic/extratoRecorteFielImport';
+import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
+import { extractStatementYear } from '../../extratoVision/utils/parser';
 import {
   deleteExtratoOcrLayout,
   getActiveExtratoOcrLayout,
@@ -37,6 +39,15 @@ import {
   type ExtratoOcrLayoutSaved,
 } from '../logic/extratoOcrLayoutStorage';
 import ExtratoContaPicker, { type ExtratoPlanoContaOption } from './ExtratoContaPicker';
+
+function resolveExtratoYearFromContext(
+  textItems: { text: string }[],
+  fileName: string,
+  extraTextItems: { text: string }[] = [],
+): string {
+  const blob = [fileName, ...textItems.map((t) => t.text), ...extraTextItems.map((t) => t.text)].join(' ');
+  return extractStatementYear(blob) || String(new Date().getFullYear());
+}
 import { LeitorRecortadorTable } from './leitorRecortador/LeitorRecortadorTable';
 import { LeitorRecortadorUploader } from './leitorRecortador/LeitorRecortadorUploader';
 import { LeitorRecortadorWorkspace } from './leitorRecortador/LeitorRecortadorWorkspace';
@@ -161,34 +172,43 @@ export function ExtratoLeitorRecortadorModal({
 
     try {
       if (loadedFile.type === 'application/pdf' || loadedFile.name.toLowerCase().endsWith('.pdf')) {
-        const allPages = await parseAndRenderAllPDFPages(loadedFile);
-        if (allPages.length === 0) throw new Error('Não foi possível carregar nenhuma página deste PDF.');
-
-        setPdfPages(allPages);
-        setCurrentPage(1);
-        setCropStartPage(1);
-        setCropEndPage(allPages.length);
-
-        const firstPage = allPages[0]!;
-        setActiveCanvas(firstPage.canvas);
-        setTextItems(firstPage.textItems);
-        setMetadata({
-          name: loadedFile.name,
-          type: 'pdf',
-          pageNumber: 1,
-          totalPages: allPages.length,
-          width: firstPage.width,
-          height: firstPage.height,
+        let totalPages = 1;
+        await loadPdfPagesProgressive(loadedFile, {
+          onReady: (firstPage, total) => {
+            totalPages = total;
+            setPdfPages([firstPage]);
+            setCurrentPage(1);
+            setCropStartPage(1);
+            setCropEndPage(total);
+            setActiveCanvas(firstPage.canvas);
+            setTextItems(firstPage.textItems);
+            setMetadata({
+              name: loadedFile.name,
+              type: 'pdf',
+              pageNumber: 1,
+              totalPages: total,
+              width: firstPage.width,
+              height: firstPage.height,
+            });
+            setRowMode('auto');
+            const parsedRows = detectRowsFromText(firstPage.textItems, 10);
+            setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
+            setColumns({
+              date: { startX: 5, width: 15 },
+              history: { startX: 22, width: 48 },
+              value: { startX: 72, width: 23 },
+            });
+            setSuccessMessage(`Página 1 de ${total} pronta. Carregando demais páginas em segundo plano…`);
+            setIsProcessing(false);
+          },
+          onProgress: (pages, loaded, total) => {
+            setPdfPages(pages);
+            if (loaded === total) {
+              setSuccessMessage(`PDF carregado com sucesso! ${total} páginas disponíveis.`);
+            }
+          },
         });
-        setRowMode('auto');
-        const parsedRows = detectRowsFromText(firstPage.textItems, 10);
-        setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
-        setColumns({
-          date: { startX: 5, width: 15 },
-          history: { startX: 22, width: 48 },
-          value: { startX: 72, width: 23 },
-        });
-        setSuccessMessage(`PDF carregado com sucesso! ${allPages.length} páginas disponíveis.`);
+        if (totalPages === 0) throw new Error('Não foi possível carregar nenhuma página deste PDF.');
       } else {
         const page = await parseAndRenderImage(loadedFile);
         setActiveCanvas(page.canvas);
@@ -283,7 +303,11 @@ export function ExtratoLeitorRecortadorModal({
         setIsProcessing(false);
         return;
       }
-      const extracted = extractDataFromCanvas(activeCanvas, textItems, columns, filteredRows, true);
+      const stmtYear = resolveExtratoYearFromContext(textItems, file.name);
+      const extracted = propagateExtractedRowDates(
+        extractDataFromCanvas(activeCanvas, textItems, columns, filteredRows, true),
+        stmtYear,
+      );
       setRows(extracted);
       setActiveTab('results');
       setSuccessMessage(`Recorte concluído! ${extracted.length} transações extraídas com sucesso da página ${currentPage}.`);
@@ -331,7 +355,12 @@ export function ExtratoLeitorRecortadorModal({
         setIsProcessing(false);
         return;
       }
-      setRows(allExtractedRows);
+      const stmtYear = resolveExtratoYearFromContext(
+        textItems,
+        file.name,
+        pdfPages.flatMap((p) => p.textItems),
+      );
+      setRows(propagateExtractedRowDates(allExtractedRows, stmtYear));
       setActiveTab('results');
       setSuccessMessage(
         `Extração em lote concluída! ${allExtractedRows.length} transações extraídas com sucesso das páginas ${cropStartPage} a ${cropEndPage}.`,
@@ -392,6 +421,7 @@ export function ExtratoLeitorRecortadorModal({
         `Banco "${saved.bancoNome}" · conta ${saved.contaBanco} salvos para a conciliação.`,
       );
       setSideTab('layouts');
+      void flushPersistenceAfterCriticalWrite();
       return;
     }
     const imgW = refPage.width;
@@ -435,6 +465,7 @@ export function ExtratoLeitorRecortadorModal({
       `Configuração "${saved.bancoNome}" · conta ${saved.contaBanco} salva. Ao usar o layout, a conciliação usa esta conta banco.`,
     );
     setSideTab('layouts');
+    void flushPersistenceAfterCriticalWrite();
   };
 
   const applyLayout = (layout: ExtratoOcrLayoutSaved) => {
@@ -514,8 +545,13 @@ export function ExtratoLeitorRecortadorModal({
       const text = [row.dateText, row.historyText, row.valueText].join(' ').toUpperCase();
       return !exclusionRules.some((rule) => rule.trim() && text.includes(rule.trim().toUpperCase()));
     });
+    const stmtYear = resolveExtratoYearFromContext(
+      textItems,
+      file.name,
+      pdfPages.flatMap((p) => p.textItems),
+    );
     // Mesmos lançamentos/natureza do placar Entradas/Saídas → conciliação 1:1.
-    return mapExtractedRowsToRecorteFielOcr(visibleRows);
+    return mapExtractedRowsToRecorteFielOcr(visibleRows, stmtYear);
   };
 
   const buildReviewMeta = (): OcrConfirmMeta => {
@@ -639,7 +675,6 @@ export function ExtratoLeitorRecortadorModal({
                 <h3 className="text-xs font-bold text-brand-text/60 uppercase tracking-wider mb-3">1. Importar Arquivo</h3>
                 <LeitorRecortadorUploader
                   onFileLoaded={handleFileLoaded}
-                  onLoadSample={() => {}}
                   metadata={metadata}
                   isProcessing={isProcessing}
                   onPageChange={handlePageChange}
@@ -931,6 +966,7 @@ export function ExtratoLeitorRecortadorModal({
                                       deleteExtratoOcrLayout(companyName, layout.id);
                                       refreshSavedLayouts();
                                       if (layoutEditId === layout.id) setLayoutEditId(null);
+                                      void flushPersistenceAfterCriticalWrite();
                                     }}
                                   >
                                     <Trash2 className="w-3 h-3" />
