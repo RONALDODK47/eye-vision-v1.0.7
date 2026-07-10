@@ -28,6 +28,10 @@ export function getDatabaseUrl() {
   return String(process.env.DATABASE_URL || '').trim();
 }
 
+function needsSupabaseSsl(url) {
+  return /supabase\.com|pooler\.supabase/i.test(String(url || ''));
+}
+
 export function getPgPool() {
   if (!isPostgresStorageEnabled()) {
     throw new Error('STORAGE_BACKEND não é postgres');
@@ -41,6 +45,7 @@ export function getPgPool() {
       connectionString: url,
       max: 10,
       idleTimeoutMillis: 30_000,
+      ssl: needsSupabaseSsl(url) ? { rejectUnauthorized: false } : undefined,
     });
     pool.on('error', (err) => {
       console.error('[storage/pg] erro no pool:', err?.message || err);
