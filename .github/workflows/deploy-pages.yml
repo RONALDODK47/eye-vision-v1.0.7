@@ -28,16 +28,19 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build frontend
         run: npm run build
 
-      - name: SPA fallback (GitHub Pages)
-        run: cp dist/eye-vision-v1.0.7/v1.0.7/index.html dist/eye-vision-v1.0.7/v1.0.7/404.html
-
-      - name: Redirect raiz → versão
+      - name: Organizar pastas para GitHub Pages (/eye-vision-v1.0.7/v1.0.7/)
         run: |
+          VERSION_PATH=eye-vision-v1.0.7/v1.0.7
+          mkdir -p "dist/$VERSION_PATH"
+          for item in index.html assets data _redirects; do
+            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/$VERSION_PATH/"; fi
+          done
+          cp "dist/$VERSION_PATH/index.html" "dist/$VERSION_PATH/404.html"
           mkdir -p dist/eye-vision-v1.0.7
           printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.7/"><title>Eye Vision v1.0.7</title></head><body><p><a href="v1.0.7/">Eye Vision v1.0.7</a></p></body></html>' > dist/eye-vision-v1.0.7/index.html
           printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=eye-vision-v1.0.7/v1.0.7/"><title>Eye Vision</title></head><body><p><a href="eye-vision-v1.0.7/v1.0.7/">Eye Vision v1.0.7</a></p></body></html>' > dist/index.html
