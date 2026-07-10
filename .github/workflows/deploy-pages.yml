@@ -33,15 +33,14 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Organizar pastas para GitHub Pages (/eye-vision-v1.0.7/v1.0.7/)
+      - name: Organizar pastas para GitHub Pages (/v1.0.7/)
         run: |
-          VERSION_PATH=eye-vision-v1.0.7/v1.0.7
-          mkdir -p "dist/$VERSION_PATH"
+          mkdir -p dist/v1.0.7
           for item in index.html assets data _redirects; do
-            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/$VERSION_PATH/"; fi
+            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.7/"; fi
           done
-          cp "dist/$VERSION_PATH/index.html" "dist/$VERSION_PATH/404.html"
-          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=eye-vision-v1.0.7/v1.0.7/"><title>Eye Vision v1.0.7</title></head><body><p><a href="eye-vision-v1.0.7/v1.0.7/">Eye Vision v1.0.7</a></p></body></html>' > dist/index.html
+          cp "dist/v1.0.7/index.html" "dist/v1.0.7/404.html"
+          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.7/"><title>Eye Vision v1.0.7</title></head><body><p><a href="v1.0.7/">Eye Vision v1.0.7</a></p></body></html>' > dist/index.html
 
       - uses: peaceiris/actions-gh-pages@v4
         with:
