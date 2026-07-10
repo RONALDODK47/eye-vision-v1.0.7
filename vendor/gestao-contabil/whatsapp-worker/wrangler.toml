@@ -1,0 +1,11 @@
+name = "gestao-contabil-whatsapp"
+main = "src/index.js"
+compatibility_date = "2026-03-13"
+
+[triggers]
+# A cada 5 minutos para respeitar o horário (HH:mm) configurado por conversa
+crons = ["*/5 * * * *"]
+
+[vars]
+FIREBASE_DATABASE_ID = "ai-studio-c1583fcd-5bf8-4d43-abda-09ba743cccfb"
+FOLLOWUP_TIMEZONE = "America/Sao_Paulo"

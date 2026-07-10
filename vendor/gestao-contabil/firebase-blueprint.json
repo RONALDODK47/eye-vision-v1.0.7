@@ -1,0 +1,37 @@
+{
+  "entities": {
+    "Company": {
+      "title": "Company",
+      "description": "A company entity",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "Company code" },
+        "name": { "type": "string", "description": "Company name" },
+        "accounting_responsible": { "type": "string", "description": "Person responsible for accounting" },
+        "uid": { "type": "string", "description": "Owner UID" }
+      },
+      "required": ["name", "uid"]
+    },
+    "CompanyTask": {
+      "title": "CompanyTask",
+      "description": "A task for a company",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Task title" },
+        "company_id": { "type": "string", "description": "Company ID" },
+        "uid": { "type": "string", "description": "Owner UID" }
+      },
+      "required": ["title", "company_id", "uid"]
+    }
+  },
+  "firestore": {
+    "/companies/{companyId}": {
+      "schema": { "$ref": "Company" },
+      "description": "Company collection"
+    },
+    "/companies/{companyId}/tasks/{taskId}": {
+      "schema": { "$ref": "CompanyTask" },
+      "description": "Company tasks collection"
+    }
+  }
+}

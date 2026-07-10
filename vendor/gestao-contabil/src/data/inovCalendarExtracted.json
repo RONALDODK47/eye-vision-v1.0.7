@@ -1,0 +1,517 @@
+{
+  "extracted_at": "2026-04-09",
+  "months": [
+    {
+      "sheet": "Janeiro",
+      "sheet_title": "Janeiro 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Fevereiro",
+      "sheet_title": "Fevereiro 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Março",
+      "sheet_title": "Março 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Abril",
+      "sheet_title": "Abril 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": [
+        {
+          "date": "2026-04-01",
+          "raw": "[PRAZOS CONTÁBIL] TI: Distribuidor de Arquivos fase 1 Criação, DP: FOLHAS PAGAMENTO GRUPO 2 MARÇO INICIO",
+          "seq": 1,
+          "excel_row": 5,
+          "grid_col": 4,
+          "grid_col_label": "quarta-feira",
+          "layout_sidebar": "PRAZOS CONTÁBIL"
+        },
+        {
+          "date": "2026-04-03",
+          "raw": "[PRAZOS CONTÁBIL] DP: FOLHAS PAGAMENTO GRUPO 2 MARÇO,",
+          "seq": 2,
+          "excel_row": 5,
+          "grid_col": 6,
+          "grid_col_label": "sexta-feira",
+          "layout_sidebar": "PRAZOS CONTÁBIL"
+        },
+        {
+          "date": "2026-04-06",
+          "raw": "[GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL] FISCAL:Entrega ISS",
+          "seq": 3,
+          "excel_row": 7,
+          "grid_col": 2,
+          "grid_col_label": "segunda-feira",
+          "layout_sidebar": "GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL"
+        },
+        {
+          "date": "2026-04-07",
+          "raw": "[GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL] PARALEGAL: BAIXA CENTER VETERINÁRIA FASE 2 INICIO. BAIXA JERRY FASE 2 INICIO.",
+          "seq": 4,
+          "excel_row": 7,
+          "grid_col": 3,
+          "grid_col_label": "terça-feira",
+          "layout_sidebar": "GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL"
+        },
+        {
+          "date": "2026-04-08",
+          "raw": "[GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL] PARALEGAL: ABERTURA JE TORNEADORA (KATIANE) FASE 2 INICIO. PARALEGAL: ALTERAÇÃO EDUARDO DE OLIVEIRA (KATIANE) FASE 2 INICIO",
+          "seq": 5,
+          "excel_row": 7,
+          "grid_col": 4,
+          "grid_col_label": "quarta-feira",
+          "layout_sidebar": "GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL"
+        },
+        {
+          "date": "2026-04-09",
+          "raw": "[GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL] DP:  GUIAS DE FGTS DIGITAL E IFECHAMENTO INSS,",
+          "seq": 6,
+          "excel_row": 7,
+          "grid_col": 5,
+          "grid_col_label": "quinta-feira",
+          "layout_sidebar": "GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL"
+        },
+        {
+          "date": "2026-04-10",
+          "raw": "[GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL] CONTABIL: PRÉVIA COOPERBELGO  TI: Distribuidor de Arquivos fase 2 Testes, ABERTURA FILIAL GH 7 FASE 3 INICIO.",
+          "seq": 7,
+          "excel_row": 7,
+          "grid_col": 6,
+          "grid_col_label": "sexta-feira",
+          "layout_sidebar": "GRUPO 1 · LUCRO REAL E ISENTAS E IMUNES PRESTAÇÃO DE CONTAS, · BALANCETE MENSAL"
+        },
+        {
+          "date": "2026-04-13",
+          "raw": "[GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS] TI: Acesórias FASE 2 Subir as empresas enxugar base de tarefas, PARALEGAL: CADASTROS IBAMMA RETROATIVO INICIO ATENDIMENTO / PARALEGAL: CONTROLE DE PENDENCIAS E ENVIO DE PARCELAMENTOS INICIO",
+          "seq": 8,
+          "excel_row": 9,
+          "grid_col": 2,
+          "grid_col_label": "segunda-feira",
+          "layout_sidebar": "GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS"
+        },
+        {
+          "date": "2026-04-14",
+          "raw": "[GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS] FISCAL: EFD REINF. PARALEGAL: BAIXA CENTER VETERINÁRIA FASE 3 INICIO. BAIXA JERRY FASE 3 INICIO.",
+          "seq": 9,
+          "excel_row": 9,
+          "grid_col": 3,
+          "grid_col_label": "terça-feira",
+          "layout_sidebar": "GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS"
+        },
+        {
+          "date": "2026-04-15",
+          "raw": "[GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS] FISCAL: Simples NACIONAL DIFAL CONSUMO SIMPLES, SPEDS FISCAL, IPI, ICMS, PROTEGE E AFINS, ENTREGA GUIAS INSS, FGTS E AFINS, PARALEGAL: BAIXA CENTER VETERINÁRIA FASE 2 FINAL . BAIXA JERRY FASE 2 FINAL.",
+          "seq": 10,
+          "excel_row": 9,
+          "grid_col": 4,
+          "grid_col_label": "quarta-feira",
+          "layout_sidebar": "GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS"
+        },
+        {
+          "date": "2026-04-16",
+          "raw": "[GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS] FISCAL: INICIO LIVROS Entrada e INVENTARIO E RETIFICAÇÕES BLOCO H. PARALEGAL: ABERTURA JE TORNEADORA (KATIANE) FASE 2 FINAL. PARALEGAL: ALTERAÇÃO EDUARDO DE OLIVEIRA (KATIANE) FASE 2 FINAL PARALEGAL: BAIXA CENTER VETERINÁRIA FASE 3 FINAL INICIO. BAIXA JERRY FASE 3 FINAL.",
+          "seq": 11,
+          "excel_row": 9,
+          "grid_col": 5,
+          "grid_col_label": "quinta-feira",
+          "layout_sidebar": "GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS"
+        },
+        {
+          "date": "2026-04-17",
+          "raw": "[GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS] TI: Acesórias FASE 2 Subir as empresas enxugar base de tarefas CONCLUSÂO.  PARALEGAL: CADASTROS IBAMMA RETROATIVO FINAL. ABERTURA FILIAL GH 7 FASE 2 FINAL. ATENDIMENTO / PARALEGAL: CONTROLE DE PENDENCIAS E ENVIO DE PARCELAMENTOS FINAL",
+          "seq": 12,
+          "excel_row": 9,
+          "grid_col": 6,
+          "grid_col_label": "sexta-feira",
+          "layout_sidebar": "GRUPO 3 · SIMPLES NACIONAL, PRESTADORES DE SERVIÇO E DEMAIS · BALANCETE 50 DIAS"
+        },
+        {
+          "date": "2026-04-20",
+          "raw": "[PRAZOS PESSOAL] TI: Acesórias FASE 3 Testes ferramentas. PARALEGAL",
+          "seq": 13,
+          "excel_row": 11,
+          "grid_col": 2,
+          "grid_col_label": "segunda-feira",
+          "layout_sidebar": "PRAZOS PESSOAL"
+        },
+        {
+          "date": "2026-04-21",
+          "raw": "[PRAZOS PESSOAL] FISCAL: Entrega PIS e COFINS GUIAS, DP: IMPORTAÇÃO DE EMPRÉSTIMO CONSIGNADO FOLHA INICIO,",
+          "seq": 14,
+          "excel_row": 11,
+          "grid_col": 3,
+          "grid_col_label": "terça-feira",
+          "layout_sidebar": "PRAZOS PESSOAL"
+        },
+        {
+          "date": "2026-04-22",
+          "raw": "[PRAZOS PESSOAL] DP: FOLHA PAGAMENTO GRUPO 1 ABRIL INICIO,",
+          "seq": 15,
+          "excel_row": 11,
+          "grid_col": 4,
+          "grid_col_label": "quarta-feira",
+          "layout_sidebar": "PRAZOS PESSOAL"
+        },
+        {
+          "date": "2026-04-23",
+          "raw": "[PRAZOS PESSOAL] CONTABIL: FECHAMENTO LEITE COOPERBELGO,  DP: IMPORTAÇÃO DE EMPRÉSTIMO CONSIGNADO FOLHA FIM,",
+          "seq": 16,
+          "excel_row": 11,
+          "grid_col": 5,
+          "grid_col_label": "quinta-feira",
+          "layout_sidebar": "PRAZOS PESSOAL"
+        },
+        {
+          "date": "2026-04-24",
+          "raw": "[PRAZOS PESSOAL] FISCAL: IRPJ e CSLL 1 TRIM PRESUMIDO GUIAS. TI: Acesórias FASE 3 Testes ferramenta Final",
+          "seq": 17,
+          "excel_row": 11,
+          "grid_col": 6,
+          "grid_col_label": "sexta-feira",
+          "layout_sidebar": "PRAZOS PESSOAL"
+        },
+        {
+          "date": "2026-04-27",
+          "raw": "[GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE] FISCAL: IRPJ CSLL 1 TRIM PRESUMIDO conferencia, CONTABIL: FECHAMENTO CONTABIL COOPERBELGO",
+          "seq": 18,
+          "excel_row": 13,
+          "grid_col": 2,
+          "grid_col_label": "segunda-feira",
+          "layout_sidebar": "GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE"
+        },
+        {
+          "date": "2026-04-28",
+          "raw": "[GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE] FISCAL: DIFAL SIMPLES NACIONAL COMERCIO CONTABIL: COOPERAGRO * Acesórias FASE 4 Treinamento geral ACESSÒRIAS todo o GRUPO",
+          "seq": 19,
+          "excel_row": 13,
+          "grid_col": 3,
+          "grid_col_label": "terça-feira",
+          "layout_sidebar": "GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE"
+        },
+        {
+          "date": "2026-04-29",
+          "raw": "[GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE] CONTABIL: COOPERABS* TI: Distribuidor de Arquivos fase 3 Consolidação GERAL ESCRITÓRIO",
+          "seq": 20,
+          "excel_row": 13,
+          "grid_col": 4,
+          "grid_col_label": "quarta-feira",
+          "layout_sidebar": "GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE"
+        },
+        {
+          "date": "2026-04-30",
+          "raw": "[GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE] CONTÁBIL: ENTREGA BALANCETE MENSAL GRUPO 1 MARÇO, CONTABIL ECD E ECF GRUPO 1 LISTA ECD E ECF FISCAL: ENTREGA EFD CONTRIBUIÇÕES, FISCAL: DIRBI, DP: FOLHAS PAGAMENTO GRUPO 1 ABRIL FINAL. DP: NEGATIVA DE EMPRESAS ABERTAS ANTERIORMENTE",
+          "seq": 21,
+          "excel_row": 13,
+          "grid_col": 5,
+          "grid_col_label": "quinta-feira",
+          "layout_sidebar": "GRUPO 1 · INFORMAÇÕES FIXAS DE FOLHA NÃO TEM LANÇAMENTOS VARIÁVEIS (PRODUTIVIDADE, PREMIO, FALTAS, HORAS) OU QUE PASSAM A INFORMAÇÃO ATÉ O FIM DO MÊS E DOMÉSTICAS · FOLHA ATÉ O ULTIMO DIA ÚTIL DO MÊS CORRENTE"
+        },
+        {
+          "date": "2026-04-28",
+          "raw": "[GRUPO 3 · EMPRESAS QUE POSSUEM FATOR R (NO MOMENTO NÃO TEM) · FOLHA APÓS FECHAMENTO DO FISCAL] VERIFICAR SOBRE A COOPERAGRO E COOPERABS WEDERSON FAZ UMA PARTE WEDERSON FAZ OUTRA",
+          "seq": 22,
+          "excel_row": 15,
+          "grid_col": 3,
+          "grid_col_label": "terça-feira",
+          "layout_sidebar": "GRUPO 3 · EMPRESAS QUE POSSUEM FATOR R (NO MOMENTO NÃO TEM) · FOLHA APÓS FECHAMENTO DO FISCAL"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES",
+          "seq": 23,
+          "excel_row": 19,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — GRUPO · CRITÉRIO · ENTREGA",
+          "seq": 24,
+          "excel_row": 20,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — GRUPO · CRITÉRIO · ENTREGA"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 1 · REUNIÃO DE ALINHAMENTO COM O CLIENTE ESTUDO DO MODELO DE NEGOCIO, ANALISE DE REGIMES, OBRIGAÇÕES E CADASTROS E CRITÉRIOS QUE POSSAM CAUSAR PROBLEMAS · 3 DIAS",
+          "seq": 25,
+          "excel_row": 21,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 1 · REUNIÃO DE ALINHAMENTO COM O CLIENTE ESTUDO DO MODELO DE NEGOCIO, ANALISE DE REGIMES, OBRIGAÇÕES E CADASTROS E CRITÉRIOS QUE POSSAM CAUSAR PROBLEMAS · 3 DIAS"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 2 · CONFECÇÃO CONTRATO SOCIAL E PROTOCOLO NA JUNTA COMERCIAL DO ESTADO OU PORTAL DO EMPREENDEDOR SIMULTANEAMENTE RECEITA FEDERAL E MUNICIPIO · 7 DIAS",
+          "seq": 26,
+          "excel_row": 22,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 2 · CONFECÇÃO CONTRATO SOCIAL E PROTOCOLO NA JUNTA COMERCIAL DO ESTADO OU PORTAL DO EMPREENDEDOR SIMULTANEAMENTE RECEITA FEDERAL E MUNICIPIO · 7 DIAS"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 3 · CONFERENCIAS DE INSCRIÇÕES MUNICIPAL ESTADO E ORGÃOS COMPENTENTES BOMBEIROS VIGILÂNCIA, AMBIENTAL ANVISA MAPAH E ORGÃOS COMPETENTES DEPENDENDO DO CASO, (ALTERAÇÕES SE ENCERRA AQUI) · 5 DIAS",
+          "seq": 27,
+          "excel_row": 23,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 3 · CONFERENCIAS DE INSCRIÇÕES MUNICIPAL ESTADO E ORGÃOS COMPENTENTES BOMBEIROS VIGILÂNCIA, AMBIENTAL ANVISA MAPAH E ORGÃOS COMPETENTES DEPENDENDO DO CASO, (ALTERAÇÕES SE ENCERRA AQUI) · 5 DIAS"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 4 · CADASTROS PARA EMISSÃO DE NOTAS, PREFEITURA ESTADO CREDENCIAMENTOS NECESSÁRIOS E MODELOS DE DOCUMENTOS FISCAIS · 3 DIAS",
+          "seq": 28,
+          "excel_row": 24,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 4 · CADASTROS PARA EMISSÃO DE NOTAS, PREFEITURA ESTADO CREDENCIAMENTOS NECESSÁRIOS E MODELOS DE DOCUMENTOS FISCAIS · 3 DIAS"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 5 · CONCLUSÃO EMISSÃO DE DOCUMENTOS FISCAIS TESTES · 1 DIA",
+          "seq": 29,
+          "excel_row": 25,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL ABERTURA DE EMPRESAS E ALTERAÇÕES — FASE 5 · CONCLUSÃO EMISSÃO DE DOCUMENTOS FISCAIS TESTES · 1 DIA"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL PROCESSO DE BAIXA",
+          "seq": 30,
+          "excel_row": 28,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL PROCESSO DE BAIXA"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL PROCESSO DE BAIXA — GRUPO · EMPRESAS · ENTREGA",
+          "seq": 31,
+          "excel_row": 29,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL PROCESSO DE BAIXA — GRUPO · EMPRESAS · ENTREGA"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL PROCESSO DE BAIXA — FASE 1 · REUNIÃO DE ALINHAMENTO, LEVANTAMENTO DE PENDENCIAS E ENVIOS PERTINENTES · 3 DIAS",
+          "seq": 32,
+          "excel_row": 30,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL PROCESSO DE BAIXA — FASE 1 · REUNIÃO DE ALINHAMENTO, LEVANTAMENTO DE PENDENCIAS E ENVIOS PERTINENTES · 3 DIAS"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL PROCESSO DE BAIXA — FASE 2 · CONFECÇÃO DO DISTRATO, DBE RECEITA FEDERAL, JUNTA COMERCIAL OU PORTAL EMPREENDEDOR · 7 DIAS",
+          "seq": 33,
+          "excel_row": 31,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL PROCESSO DE BAIXA — FASE 2 · CONFECÇÃO DO DISTRATO, DBE RECEITA FEDERAL, JUNTA COMERCIAL OU PORTAL EMPREENDEDOR · 7 DIAS"
+        },
+        {
+          "date": "2026-04-01",
+          "raw": "PARALEGAL PROCESSO DE BAIXA — FASE 3 · CONFERENCIA DE BAIXAS ESTADUAL E MUNICIPAL QUE SÃO FEITOS INTERLIGADO COM A JUNTA E PROVIDENCIAR BAIXA DE DEMAIS ORGÕES COMPETENTES · 3 DIAS",
+          "seq": 34,
+          "excel_row": 32,
+          "grid_col": 0,
+          "grid_col_label": "",
+          "layout_sidebar": "PARALEGAL PROCESSO DE BAIXA — FASE 3 · CONFERENCIA DE BAIXAS ESTADUAL E MUNICIPAL QUE SÃO FEITOS INTERLIGADO COM A JUNTA E PROVIDENCIAR BAIXA DE DEMAIS ORGÕES COMPETENTES · 3 DIAS"
+        }
+      ]
+    },
+    {
+      "sheet": "Maio",
+      "sheet_title": "Maio 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": [
+        {
+          "date": "2026-05-01",
+          "raw": "TI: INICIO SITTAX FASE 1, Auto avaliação Clientes FASE 0 Analise de Requisitos,",
+          "seq": 1,
+          "excel_row": 5,
+          "grid_col": 6,
+          "grid_col_label": "sexta-feira",
+          "layout_sidebar": ""
+        },
+        {
+          "date": "2026-05-10",
+          "raw": "CONTABIL: FECHAMENTO EMPRESAS GRUPO 2 MARÇO, ENTREGA PRÉVIA COOPERBELGO",
+          "seq": 2,
+          "excel_row": 9,
+          "grid_col": 1,
+          "grid_col_label": "domingo",
+          "layout_sidebar": ""
+        },
+        {
+          "date": "2026-05-20",
+          "raw": "CONTABIL: ENTREGA  BALANCETE GRUPO 3 MARÇO",
+          "seq": 3,
+          "excel_row": 11,
+          "grid_col": 4,
+          "grid_col_label": "quarta-feira",
+          "layout_sidebar": ""
+        },
+        {
+          "date": "2026-05-29",
+          "raw": "FISCAL: ENTREGAS LIVROS E RETIFICAÇÃO DE BLOCO H CONTÁBIL: ENTREGA BALANCETE MENSAL GRUPO 1 ABRIL, CONTABIL ECD E ECF GRUPO 2 LISTA ECD E ECF",
+          "seq": 4,
+          "excel_row": 13,
+          "grid_col": 6,
+          "grid_col_label": "sexta-feira",
+          "layout_sidebar": ""
+        }
+      ]
+    },
+    {
+      "sheet": "Junho",
+      "sheet_title": "Junho 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Julho",
+      "sheet_title": "Julho 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Agosto",
+      "sheet_title": "Agosto 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Setembro",
+      "sheet_title": "Setembro 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Outubro",
+      "sheet_title": "Outubro 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Novembro",
+      "sheet_title": "Novembro 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    },
+    {
+      "sheet": "Dezembro",
+      "sheet_title": "Dezembro 2026",
+      "weekday_labels": [
+        "domingo",
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado"
+      ],
+      "tasks": []
+    }
+  ]
+}
