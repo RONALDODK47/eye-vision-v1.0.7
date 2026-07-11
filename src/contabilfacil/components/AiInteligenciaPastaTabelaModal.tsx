@@ -40,10 +40,6 @@ export default memo(function AiInteligenciaPastaTabelaModal({
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const [hydratedDocs, setHydratedDocs] = useState<AiInteligenciaDoc[]>(docs);
-  const [storeExtras, setStoreExtras] = useState<{
-    coligadas: AiInteligenciaStore['coligadas'];
-    socios: AiInteligenciaStore['socios'];
-  }>({ coligadas: [], socios: [] });
 
   const reloadDocs = useCallback(async () => {
     if (!pasta) return;
@@ -51,7 +47,6 @@ export default memo(function AiInteligenciaPastaTabelaModal({
     const store = await loadAiInteligenciaAsync(company);
     const byId = new Map(store.docs.map((d) => [d.id, d]));
     setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
-    setStoreExtras({ coligadas: store.coligadas, socios: store.socios ?? [] });
     setLoading(false);
     return store;
   }, [company, docs, pasta]);
@@ -70,10 +65,6 @@ export default memo(function AiInteligenciaPastaTabelaModal({
         onStoreRefresh?.(result.store);
         const byId = new Map(result.store.docs.map((d) => [d.id, d]));
         setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
-        setStoreExtras({
-          coligadas: result.store.coligadas,
-          socios: result.store.socios ?? [],
-        });
         if (result.message && result.message !== 'Nada a extrair.') {
           setStatusMsg(result.message);
         }
@@ -101,8 +92,8 @@ export default memo(function AiInteligenciaPastaTabelaModal({
 
   const rows: PastaTableRow[] = useMemo(() => {
     if (!pasta) return [];
-    return buildPastaTableRows(pasta, hydratedDocs, storeExtras);
-  }, [pasta, hydratedDocs, storeExtras]);
+    return buildPastaTableRows(pasta, hydratedDocs);
+  }, [pasta, hydratedDocs]);
 
   const analiticasPreview = useMemo(() => {
     if (!pasta || !pastaConfig) return '';
@@ -130,7 +121,7 @@ export default memo(function AiInteligenciaPastaTabelaModal({
               Dados extraídos — {PASTA_LABELS[pasta]}
             </h2>
             <p className="text-[9px] text-slate-600 mt-0.5">
-              A IA processa os documentos automaticamente ao abrir esta tabela.
+              Somente o que a IA extraiu do documento que você enviou nesta pasta.
             </p>
           </div>
           <button

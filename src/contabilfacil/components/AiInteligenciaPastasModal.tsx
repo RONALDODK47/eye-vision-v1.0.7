@@ -12,8 +12,7 @@ import {
   ALL_INTELIGENCIA_PASTAS,
   PASTA_LABELS,
   addAiInteligenciaDocs,
-  extractColigadasFromTexto,
-  extractSociosFromTexto,
+  formatIaExtractBlock,
   inferPastaFromFileName,
   loadAiInteligencia,
   loadAiInteligenciaAsync,
@@ -174,80 +173,40 @@ export default memo(function AiInteligenciaPastasModal({
             let texto = `[arquivo] ${file.name}`;
             try {
               const prepared = await prepareAnexoForRegrasAi(file, { maxPdfPages: 3 });
-              if (prepared.text?.trim()) {
-                texto = prepared.text;
-                if (pasta === 'coligadas') {
-                  allExtracted.push(...extractColigadasFromTexto(prepared.text));
-                }
-                if (pasta === 'contratos' || pasta === 'honorarios') {
-                  allSocios.push(...extractSociosFromTexto(prepared.text));
-                }
-              }
-              const precisaVisaoColigadas =
-                pasta === 'coligadas' &&
-                (prepared.images.length > 0 ||
-                  /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '') ||
-                  prepared.text?.trim().length < 40);
-              const precisaVisaoSocios =
-                (pasta === 'contratos' || pasta === 'honorarios') &&
-                (prepared.images.length > 0 ||
-                  /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '') ||
-                  prepared.text?.trim().length < 40);
-              const precisaVisaoFinanceiras =
-                pasta === 'financeiras' &&
-                (prepared.images.length > 0 ||
-                  /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '') ||
-                  prepared.text?.trim().length < 40);
-              if (precisaVisaoColigadas) {
+              const ocrText =
+                prepared.text?.trim() && !/^imagem\s+anexada:/i.test(prepared.text.trim())
+                  ? prepared.text.trim()
+                  : '';
+
+              if (pasta === 'coligadas') {
                 const iaColig = await extractColigadasWithAi({
                   fileName: file.name,
-                  text: /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '')
-                    ? ''
-                    : prepared.text,
+                  text: ocrText,
                   images: prepared.images,
                 });
                 if (iaColig.ok && iaColig.coligadas?.length) {
                   allExtracted.push(...iaColig.coligadas);
-                  const nomes = iaColig.coligadas.map((c) => c.nome).join('; ');
-                  texto = `${prepared.text?.trim() ? `${prepared.text.trim()}\n\n` : ''}[IA coligadas] ${nomes}`.slice(
-                    0,
-                    40_000,
-                  );
+                  texto = formatIaExtractBlock('coligadas', iaColig.coligadas);
+                } else if (prepared.images.length > 0) {
+                  texto = `Imagem anexada: ${file.name}`;
+                } else if (ocrText) {
+                  texto = ocrText.slice(0, 12_000);
                 }
-              }
-              if (precisaVisaoSocios) {
-                const iaSoc = await extractSociosWithAi({
+              } else {
+                const marker =
+                  pasta === 'financeiras' ? 'financeiras' : pasta === 'honorarios' ? 'honorarios' : 'socios';
+                const ia = await extractSociosWithAi({
                   fileName: file.name,
-                  text: /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '')
-                    ? ''
-                    : prepared.text,
+                  text: ocrText,
                   images: prepared.images,
                 });
-                if (iaSoc.ok && iaSoc.coligadas?.length) {
-                  allSocios.push(...iaSoc.coligadas);
-                  const nomes = iaSoc.coligadas.map((c) => c.nome).join('; ');
-                  const marker = pasta === 'honorarios' ? 'honorarios' : 'socios';
-                  texto = `${prepared.text?.trim() ? `${prepared.text.trim()}\n\n` : ''}[IA ${marker}] ${nomes}`.slice(
-                    0,
-                    40_000,
-                  );
-                }
-              }
-              if (precisaVisaoFinanceiras) {
-                const iaFin = await extractSociosWithAi({
-                  fileName: file.name,
-                  text: /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '')
-                    ? ''
-                    : prepared.text,
-                  images: prepared.images,
-                });
-                if (iaFin.ok && iaFin.coligadas?.length) {
-                  allSocios.push(...iaFin.coligadas);
-                  const nomes = iaFin.coligadas.map((c) => c.nome).join('; ');
-                  texto = `${prepared.text?.trim() ? `${prepared.text.trim()}\n\n` : ''}[IA financeiras] ${nomes}`.slice(
-                    0,
-                    40_000,
-                  );
+                if (ia.ok && ia.coligadas?.length) {
+                  allSocios.push(...ia.coligadas);
+                  texto = formatIaExtractBlock(marker, ia.coligadas);
+                } else if (prepared.images.length > 0) {
+                  texto = `Imagem anexada: ${file.name}`;
+                } else if (ocrText) {
+                  texto = ocrText.slice(0, 12_000);
                 }
               }
             } catch {
@@ -377,7 +336,7 @@ export default memo(function AiInteligenciaPastasModal({
               <strong>{storageLabel}</strong>.
             </p>
             <p className="text-[8px] font-mono text-amber-800 mt-1">
-              Versão {APP_VERSION} — a IA extrai os dados automaticamente ao enviar documentos. Use a lupa nos grupos sintéticos.
+              Versão {APP_VERSION} — ao enviar um documento, a IA extrai os dados dele para a Tabela.
             </p>
           </div>
           <button

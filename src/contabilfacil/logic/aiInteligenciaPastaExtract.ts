@@ -1,11 +1,11 @@
 /**
- * Extração automática dos documentos de cada pasta (texto salvo + IA quando possível).
+ * Extração automática via IA — somente do documento enviado na pasta.
  */
 import { extractColigadasWithAi, extractSociosWithAi } from '../../lib/aiColigadasExtractClient';
 import {
   ALL_INTELIGENCIA_PASTAS,
-  extractColigadasFromTexto,
-  extractSociosFromTexto,
+  formatIaExtractBlock,
+  iaMarkersForPasta,
   loadAiInteligenciaAsync,
   saveAiInteligencia,
   upsertColigadasFromExtract,
@@ -27,9 +27,9 @@ export type PastaExtracaoResult = {
 export function docPrecisaExtracaoAutomatica(doc: AiInteligenciaDoc): boolean {
   const texto = String(doc.textoExtraido ?? '').trim();
   if (!texto || texto.startsWith('[arquivo]')) return true;
-  if (/^imagem\s+anexada:/i.test(texto) && !/\[IA\s+/i.test(texto)) return true;
-  if (texto.length < 80 && !/\[IA\s+/i.test(texto)) return true;
-  return false;
+  const markers = iaMarkersForPasta(doc.pasta);
+  if (markers.some((m) => new RegExp(`\\[IA\\s+${m}\\]`, 'i').test(texto))) return false;
+  return true;
 }
 
 function iaMarkerForPasta(pasta: AiInteligenciaPasta): string {
@@ -37,6 +37,50 @@ function iaMarkerForPasta(pasta: AiInteligenciaPasta): string {
   if (pasta === 'financeiras') return 'financeiras';
   if (pasta === 'honorarios') return 'honorarios';
   return 'socios';
+}
+
+async function extrairDocumentoComIa(
+  pasta: AiInteligenciaPasta,
+  doc: AiInteligenciaDoc,
+): Promise<{ texto: string; coligadas: Array<{ nome: string; aliases: string[] }>; socios: Array<{ nome: string; aliases: string[] }> }> {
+  const textoAtual = String(doc.textoExtraido ?? '').trim();
+  const marker = iaMarkerForPasta(pasta);
+  const markers = iaMarkersForPasta(pasta);
+  if (markers.some((m) => new RegExp(`\\[IA\\s+${m}\\]`, 'i').test(textoAtual))) {
+    return { texto: textoAtual, coligadas: [], socios: [] };
+  }
+
+  const ocrText = /^imagem\s+anexada:/i.test(textoAtual) || textoAtual.startsWith('[arquivo]') ? '' : textoAtual;
+
+  if (pasta === 'coligadas') {
+    const ia = await extractColigadasWithAi({
+      fileName: doc.nome,
+      text: ocrText,
+      images: [],
+    });
+    if (ia.ok && ia.coligadas?.length) {
+      return {
+        texto: formatIaExtractBlock('coligadas', ia.coligadas),
+        coligadas: ia.coligadas,
+        socios: [],
+      };
+    }
+    return { texto: textoAtual, coligadas: [], socios: [] };
+  }
+
+  const ia = await extractSociosWithAi({
+    fileName: doc.nome,
+    text: ocrText,
+    images: [],
+  });
+  if (ia.ok && ia.coligadas?.length) {
+    return {
+      texto: formatIaExtractBlock(marker, ia.coligadas),
+      coligadas: [],
+      socios: ia.coligadas,
+    };
+  }
+  return { texto: textoAtual, coligadas: [], socios: [] };
 }
 
 export async function extrairDadosPastaInteligenciaIa(
@@ -48,13 +92,10 @@ export async function extrairDadosPastaInteligenciaIa(
   if (docs.length === 0) {
     return {
       store,
-      linhasTabela: buildPastaTableRows(pasta, [], {
-        coligadas: store.coligadas,
-        socios: store.socios,
-      }).length,
+      linhasTabela: 0,
       docsProcessados: 0,
       docsIgnorados: 0,
-      message: 'Nenhum documento nesta pasta — configure os grupos ou envie arquivos.',
+      message: 'Nenhum documento nesta pasta.',
     };
   }
 
@@ -63,7 +104,6 @@ export async function extrairDadosPastaInteligenciaIa(
   const allColigadas: Array<{ nome: string; aliases: string[] }> = [];
   const allSocios: Array<{ nome: string; aliases: string[] }> = [];
   const docsUpdated = [...store.docs];
-  const marker = iaMarkerForPasta(pasta);
 
   for (const doc of docs) {
     const idx = docsUpdated.findIndex((d) => d.id === doc.id);
@@ -76,48 +116,11 @@ export async function extrairDadosPastaInteligenciaIa(
     }
 
     docsProcessados += 1;
-    let extra = texto;
-
-    if (pasta === 'coligadas') {
-      allColigadas.push(...extractColigadasFromTexto(texto));
-      const precisaIa =
-        /^imagem\s+anexada:/i.test(texto) || texto.length < 80 || !/\[IA\s+coligadas\]/i.test(texto);
-      if (precisaIa && texto.length < 8000) {
-        const ia = await extractColigadasWithAi({
-          fileName: doc.nome,
-          text: /^imagem\s+anexada:/i.test(texto) ? '' : texto,
-          images: [],
-        });
-        if (ia.ok && ia.coligadas?.length) {
-          allColigadas.push(...ia.coligadas);
-          const nomes = ia.coligadas.map((c) => c.nome).join('; ');
-          extra = `${texto}\n\n[IA coligadas] ${nomes}`.slice(0, 12_000);
-        }
-      }
-    }
-
-    if (pasta === 'contratos' || pasta === 'honorarios' || pasta === 'financeiras') {
-      allSocios.push(...extractSociosFromTexto(texto));
-      const precisaIa =
-        /^imagem\s+anexada:/i.test(texto) ||
-        texto.length < 80 ||
-        !new RegExp(`\\[IA\\s+${marker}\\]`, 'i').test(texto);
-      if (precisaIa && texto.length < 8000) {
-        const ia = await extractSociosWithAi({
-          fileName: doc.nome,
-          text: /^imagem\s+anexada:/i.test(texto) ? '' : texto,
-          images: [],
-        });
-        if (ia.ok && ia.coligadas?.length) {
-          allSocios.push(...ia.coligadas);
-          const nomes = ia.coligadas.map((c) => c.nome).join('; ');
-          extra = `${texto}\n\n[IA ${marker}] ${nomes}`.slice(0, 12_000);
-        }
-      }
-    }
-
-    if (extra !== doc.textoExtraido) {
-      docsUpdated[idx] = { ...docsUpdated[idx]!, textoExtraido: extra };
+    const result = await extrairDocumentoComIa(pasta, doc);
+    allColigadas.push(...result.coligadas);
+    allSocios.push(...result.socios);
+    if (result.texto !== doc.textoExtraido) {
+      docsUpdated[idx] = { ...docsUpdated[idx]!, textoExtraido: result.texto };
     }
   }
 
@@ -130,19 +133,16 @@ export async function extrairDadosPastaInteligenciaIa(
   }
 
   const pastaDocs = next.docs.filter((d) => d.pasta === pasta);
-  const linhasTabela = buildPastaTableRows(pasta, pastaDocs, {
-    coligadas: next.coligadas,
-    socios: next.socios,
-  }).length;
+  const linhasTabela = buildPastaTableRows(pasta, pastaDocs).length;
 
   const partes: string[] = [];
   if (docsProcessados > 0) partes.push(`${docsProcessados} doc(s) processado(s)`);
-  if (linhasTabela > 0) partes.push(`${linhasTabela} linha(s) na tabela`);
+  if (linhasTabela > 0) partes.push(`${linhasTabela} linha(s) extraída(s) pela IA`);
   if (docsIgnorados > 0) {
-    partes.push(`${docsIgnorados} aguardando leitura — reenvie o arquivo se necessário`);
+    partes.push(`${docsIgnorados} aguardando leitura — reenvie o arquivo`);
   }
   if (linhasTabela === 0 && docsProcessados > 0) {
-    partes.push('nenhum dado estruturado encontrado — verifique a IA ou reenvie a imagem');
+    partes.push('IA não encontrou dados neste documento — reenvie ou verifique a chave IA');
   }
 
   return {
@@ -166,20 +166,17 @@ export async function extrairPastasPendentesAutomaticamente(
   let current = store;
   const messages: string[] = [];
   for (const pasta of alvo) {
+    const temDocs = current.docs.some((d) => d.pasta === pasta);
+    if (!temDocs) continue;
     const temPendente = current.docs.some(
       (d) => d.pasta === pasta && docPrecisaExtracaoAutomatica(d),
     );
-    const temDocs = current.docs.some((d) => d.pasta === pasta);
-    if (!temDocs) continue;
-    if (
-      !temPendente &&
-      buildPastaTableRows(pasta, current.docs.filter((d) => d.pasta === pasta), {
-        coligadas: current.coligadas,
-        socios: current.socios,
-      }).length > 0
-    ) {
-      continue;
-    }
+    const linhasAtuais = buildPastaTableRows(
+      pasta,
+      current.docs.filter((d) => d.pasta === pasta),
+    ).length;
+    if (!temPendente && linhasAtuais > 0) continue;
+
     const result = await extrairDadosPastaInteligenciaIa(company, pasta);
     current = result.store;
     if (result.message && result.message !== 'Nada a extrair.') {

@@ -209,7 +209,7 @@ function sanitizeColigada(raw: Partial<AiColigada>): AiColigada | null {
   };
 }
 
-function isNomeSocioInvalido(nome: string): boolean {
+export function isNomeSocioInvalido(nome: string): boolean {
   const n = String(nome ?? '').trim().toUpperCase();
   if (!n || n.length < 3) return true;
   if (/^(SOCIO|SÓCIO|NOME|CPF|CNPJ|PARTICIPACAO|PARTICIPAÇÃO|QUADRO)\b/.test(n)) return true;
@@ -641,6 +641,40 @@ export function isNomeColigadaInvalido(nome: string): boolean {
 }
 
 /** Lê blocos «[IA coligadas] nome1; nome2» gravados após extração automática. */
+export function formatIaExtractBlock(
+  marker: string,
+  items: Array<{ nome: string; aliases: string[] }>,
+): string {
+  if (!items.length) return '';
+  const body = items
+    .map((c) => {
+      const nome = String(c.nome ?? '').trim();
+      if (!nome) return '';
+      const extra = (c.aliases ?? [])
+        .map((a) => String(a ?? '').trim())
+        .filter((a) => a && a.toUpperCase() !== nome.toUpperCase());
+      return extra.length ? `${nome}|${extra.join(',')}` : nome;
+    })
+    .filter(Boolean)
+    .join('; ');
+  return `[IA ${marker}] ${body}`.slice(0, 12_000);
+}
+
+export function iaMarkersForPasta(pasta: AiInteligenciaPasta): string[] {
+  switch (pasta) {
+    case 'coligadas':
+      return ['coligadas'];
+    case 'contratos':
+      return ['socios'];
+    case 'honorarios':
+      return ['honorarios', 'socios'];
+    case 'financeiras':
+      return ['financeiras'];
+    default:
+      return [];
+  }
+}
+
 export function parseIaMarkerNomes(
   texto: string,
   markers: string[],
@@ -653,13 +687,25 @@ export function parseIaMarkerNomes(
     let match: RegExpExecArray | null;
     while ((match = re.exec(raw)) !== null) {
       const chunk = String(match[1] ?? '').trim();
-      for (const part of chunk.split(/[;|•·]/)) {
-        const nome = part.trim().replace(/[;,:]+$/g, '');
+      for (const part of chunk.split(';')) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        const pipeIdx = trimmed.indexOf('|');
+        const nome = (pipeIdx >= 0 ? trimmed.slice(0, pipeIdx) : trimmed)
+          .trim()
+          .replace(/[;,:]+$/g, '');
         if (nome.length < 2) continue;
+        const aliasRaw = pipeIdx >= 0 ? trimmed.slice(pipeIdx + 1).trim() : '';
+        const aliases = aliasRaw
+          ? aliasRaw
+              .split(',')
+              .map((a) => a.trim())
+              .filter(Boolean)
+          : [nome.toUpperCase()];
         const key = compactAliasKey(nome) || nome.toUpperCase();
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push({ nome, aliases: [nome.toUpperCase()] });
+        out.push({ nome, aliases });
       }
     }
   }
