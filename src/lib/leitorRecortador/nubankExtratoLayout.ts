@@ -203,6 +203,8 @@ export function suggestNubankExtratoPageLayout(
   };
 }
 
+export type NubankFlowSign = 'entrada' | 'saida';
+
 export type NubankRowConfig = {
   y: number;
   height: number;
@@ -210,6 +212,8 @@ export type NubankRowConfig = {
   /** Posição Y da data no PDF (linha «Total de entradas», não na linha do Pix). */
   anchorDateY?: number;
   anchorDateH?: number;
+  /** Sinal herdado do bloco «Total de entradas» (+) ou «Total de saídas» (−). */
+  flowSign?: NubankFlowSign | null;
 };
 
 function rowBlob(items: PDFTextItem[]): string {
@@ -240,9 +244,19 @@ function findDateInRow(items: PDFTextItem[], geo: NubankGeometry): string {
   return tok?.text.trim() ?? '';
 }
 
+function detectFlowFromRow(blob: string): NubankFlowSign | null {
+  if (/TOTAL DE ENTRADAS/i.test(blob)) return 'entrada';
+  if (/TOTAL DE SAÍDAS/i.test(blob)) return 'saida';
+  return null;
+}
+
 function isDayHeaderRow(blob: string, items: PDFTextItem[], geo: NubankGeometry): boolean {
   const hasDate = findDateInRow(items, geo).length > 0;
   return hasDate && /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/.test(blob);
+}
+
+function isSectionHeaderRow(blob: string): boolean {
+  return /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/i.test(blob);
 }
 
 function shouldSkipNubankRow(
@@ -262,8 +276,10 @@ function shouldSkipNubankRow(
 
   if (isDayHeaderRow(blob, items, geo)) return true;
 
+  if (isSectionHeaderRow(blob)) return true;
+
   if (
-    /SALDO INICIAL|RENDIMENTO LÍQUIDO|TOTAL DE ENTRADAS|TOTAL DE SAÍDAS|SALDO FINAL DO PERÍODO|SALDO DO DIA|VALORES EM R\$|^MOVIMENTAÇÕES$/i.test(
+    /SALDO INICIAL|RENDIMENTO LÍQUIDO|SALDO FINAL DO PERÍODO|SALDO DO DIA|VALORES EM R\$|^MOVIMENTAÇÕES$/i.test(
       blob,
     )
   ) {
@@ -339,9 +355,30 @@ export function getNubankLastDayDate(
   return findLastDayDateInPage(pos, geo);
 }
 
+/** Último bloco de fluxo (entradas/saídas) visível na página. */
+export function getNubankLastFlowSign(
+  textItems: PDFTextItem[],
+  imgWidth: number,
+  imgHeight: number,
+  pageNumber: number,
+): NubankFlowSign | null {
+  const pos = pdfTextItemsToPosicionado(textItems);
+  const geo = calibrateNubankGeometry(pos, imgWidth, imgHeight, pageNumber);
+  const rawRows = detectRowsFromText(textItems, 8);
+  let lastFlow: NubankFlowSign | null = null;
+  for (const row of rawRows) {
+    const rowCenterY = row.y + row.height / 2;
+    if (rowCenterY < geo.faixaStart || rowCenterY > geo.faixaEnd) continue;
+    const flow = detectFlowFromRow(rowBlob(row.items));
+    if (flow) lastFlow = flow;
+  }
+  return lastFlow;
+}
+
 /**
  * Detecta lançamentos reais na faixa «Movimentações», agrupando descrição multilinha (Pix).
  * `carryDate` propaga a data do último dia da página anterior (ex.: 16 JUN continua na pág. 2).
+ * `carryFlow` propaga o bloco «Total de entradas/saídas» da página anterior.
  */
 export function detectNubankTransactionRows(
   textItems: PDFTextItem[],
@@ -349,6 +386,7 @@ export function detectNubankTransactionRows(
   imgHeight?: number,
   pageNumber = 1,
   carryDate = '',
+  carryFlow: NubankFlowSign | null = null,
 ): NubankRowConfig[] {
   if (!textItems.length) return [];
 
@@ -360,6 +398,7 @@ export function detectNubankTransactionRows(
   let currentDate = carryDate.trim() || findLastDayDateInPage(pos, geo);
   let currentDateY = 0;
   let currentDateH = medianTokenHeight(pos);
+  let currentFlow: NubankFlowSign | null = carryFlow;
   const out: NubankRowConfig[] = [];
   let pending: NubankRowConfig | null = null;
 
@@ -381,6 +420,13 @@ export function detectNubankTransactionRows(
       currentDateH = anchorHit.h;
     }
 
+    const flowHit = detectFlowFromRow(blob);
+    if (flowHit && rowCenterY >= geo.faixaStart && rowCenterY <= geo.faixaEnd) {
+      currentFlow = flowHit;
+      flush();
+      continue;
+    }
+
     if (shouldSkipNubankRow(blob, row.items, geo, rowCenterY)) {
       flush();
       continue;
@@ -394,6 +440,7 @@ export function detectNubankTransactionRows(
         anchorDate: currentDate,
         anchorDateY: currentDateY,
         anchorDateH: currentDateH,
+        flowSign: currentFlow,
       };
       continue;
     }
@@ -413,6 +460,7 @@ export function detectNubankTransactionRows(
     anchorDate: r.anchorDate || currentDate,
     anchorDateY: r.anchorDateY ?? currentDateY,
     anchorDateH: r.anchorDateH ?? currentDateH,
+    flowSign: r.flowSign ?? currentFlow,
   }));
 }
 
@@ -499,9 +547,37 @@ function cropSection(
   }
 }
 
-function analyzeNubankValue(valStr: string): { isNegative: boolean; parsedValue: number | null } {
+function analyzeNubankValue(
+  valStr: string,
+  flowSign?: NubankFlowSign | null,
+): { isNegative: boolean; parsedValue: number | null } {
   const t = normVal(valStr);
   if (!t) return { isNegative: false, parsedValue: null };
+
+  const parsed = parseExtratoMoneyValue(t.replace(/^[+-]\s*/, ''));
+  if (parsed == null || Number.isNaN(parsed)) {
+    const legacy = analyzeNubankValueLegacy(t);
+    return legacy;
+  }
+
+  const absVal = Math.abs(parsed);
+  const explicitNegative = /^-/.test(t) || /^\(\s*/.test(t);
+  const explicitPositive = /^\+/.test(t);
+
+  if (flowSign === 'saida') {
+    return { isNegative: true, parsedValue: -absVal };
+  }
+  if (flowSign === 'entrada') {
+    return { isNegative: false, parsedValue: absVal };
+  }
+
+  if (explicitNegative) return { isNegative: true, parsedValue: -absVal };
+  if (explicitPositive) return { isNegative: false, parsedValue: absVal };
+  return { isNegative: false, parsedValue: absVal };
+}
+
+function analyzeNubankValueLegacy(valStr: string): { isNegative: boolean; parsedValue: number | null } {
+  const t = normVal(valStr);
   const isNegative = /^-/.test(t) || /^\(\s*/.test(t);
   const parsed = parseExtratoMoneyValue(t.replace(/^[+]\s*/, ''));
   if (parsed == null || Number.isNaN(parsed)) return { isNegative, parsedValue: null };
@@ -550,7 +626,7 @@ export function extractNubankDataFromCanvas(
     const dateText = dateFromAnchor || dateParts.join(' ').trim();
     const historyText = histParts.join(' ').replace(/\s+/g, ' ').trim();
     const valueText = valParts.join(' ').trim();
-    const { isNegative, parsedValue } = analyzeNubankValue(valueText);
+    const { isNegative, parsedValue } = analyzeNubankValue(valueText, cfg.flowSign);
 
     const dateCol = columns.date;
     const histCol = columns.history;

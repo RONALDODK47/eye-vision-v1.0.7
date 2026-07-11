@@ -29,6 +29,7 @@ import {
   detectNubankTransactionRows,
   extractNubankDataFromCanvas,
   getNubankLastDayDate,
+  getNubankLastFlowSign,
   isNubankExtratoLayout,
   NUBANK_EXCLUSION_RULES,
   pdfTextItemsToPosicionado,
@@ -401,6 +402,7 @@ export function ExtratoLeitorRecortadorModal({
     try {
       let allExtractedRows: ExtractedRow[] = [];
       let nubankCarryDate = '';
+      let nubankCarryFlow: import('../../lib/leitorRecortador/nubankExtratoLayout').NubankFlowSign | null = null;
       pdfPages.forEach((page) => {
         const p = page.pageNumber;
         if (p < cropStartPage || p > cropEndPage) return;
@@ -429,11 +431,14 @@ export function ExtratoLeitorRecortadorModal({
                 page.height,
                 p,
                 nubankCarryDate,
+                nubankCarryFlow,
               ).filter((r) => filterRowsInCropBand([r], startY, endY).length > 0)
             : null;
           if (pageIsNu) {
             nubankCarryDate =
               getNubankLastDayDate(page.textItems, page.width, page.height, p) || nubankCarryDate;
+            nubankCarryFlow =
+              getNubankLastFlowSign(page.textItems, page.width, page.height, p) ?? nubankCarryFlow;
           }
           const extracted =
             pageIsNu && nubankPageRows
