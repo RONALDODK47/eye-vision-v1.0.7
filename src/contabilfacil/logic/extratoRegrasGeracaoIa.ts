@@ -18,7 +18,6 @@ import {
 import { validateAiRegrasLote } from './extratoRegrasAiPrecision';
 import {
   agrupaPadroesExtratoParaIa,
-  buildFallbackRegrasParaCobertura,
   chunkUncoveredForAiBatches,
   corrigeRegrasContasOperacionaisInadequadas,
   extractPadraoOperacionalAgrupado,
@@ -46,7 +45,7 @@ import {
   normContaBancoCode,
   type ExtratoRegraConta,
 } from './extratoRegrasContasStorage';
-import { corrigeRegrasForaGrupoPastaInteligencia } from './aiInteligenciaPastaGrupos';
+import { corrigeRegrasForaGrupoPastaInteligencia, buildFallbackRegrasDentroGrupoPasta } from './aiInteligenciaPastaGrupos';
 import { buildContaCandidatosTextoParaIa, contaTemSentidoLogicoParaHistorico } from './planoContasMatch';
 import {
   assertInteligenciaDocsParaRegras,
@@ -74,13 +73,15 @@ import {
 /** Um padrão por chamada à IA — máxima precisão (sem lote). */
 const PADROES_POR_CHAMADA_IA = 1;
 
-type SubEtapa1Id = 'coligadas' | 'socios' | 'honorarios' | 'financeiras';
+type SubEtapa1Id = 'coligadas' | 'socios' | 'funcionarios' | 'honorarios' | 'despesas' | 'receitas';
 
 const SUB_ETAPA1_LABELS: Record<SubEtapa1Id, string> = {
   coligadas: 'Coligadas / partes relacionadas',
   socios: 'Sócios / pró-labore / retiradas',
+  funcionarios: 'Funcionários / folha',
   honorarios: 'Honorários',
-  financeiras: 'Despesas e receitas financeiras',
+  despesas: 'Despesas operacionais',
+  receitas: 'Receitas',
 };
 
 function splitPadroesEtapa1PorCategoria(
@@ -90,25 +91,40 @@ function splitPadroesEtapa1PorCategoria(
   const out: Record<SubEtapa1Id, PadraoExtratoParaIa[]> = {
     coligadas: [],
     socios: [],
+    funcionarios: [],
     honorarios: [],
-    financeiras: [],
+    despesas: [],
+    receitas: [],
   };
   for (const p of padroes) {
     const hist = normalizeExtratoMatchText(p.description);
+    const nature = p.nature === 'C' ? ('C' as const) : ('D' as const);
     if (matchColigadaNoHistorico(hist, coligadas)) {
       out.coligadas.push(p);
     } else if (
       /PROLABORE|PRO\s*LABORE|RETIRADA\s+SOCIO|DIVIDENDO|DISTRIBUICAO\s+LUCRO|\bSOCIO\b/.test(hist)
     ) {
       out.socios.push(p);
+    } else if (/FOLHA|SALARIO|FERIAS|RESCISAO|ORDENADO|13\s*SALARIO|VALE\s+TRANSPORTE/.test(hist)) {
+      out.funcionarios.push(p);
+    } else if (/HONOR|CONTAD|ESCRITORIO|ASSESSORIA\s+CONT/.test(hist)) {
+      out.honorarios.push(p);
     } else if (
-      /TARIFA|CESTA|PACOTE|MANUTENCAO|IOF|JUROS|RENDIMENTO|APLICAC|FINANCEIR|DESPESA\s+BANC|RECEITA\s+FIN/.test(
+      nature === 'C' &&
+      /RENDIMENTO|RECEITA|JUROS\s+CAP|LIQ\s+COBRAN|CREDITO\s+PIX|CRED\s+PIX/.test(hist)
+    ) {
+      out.receitas.push(p);
+    } else if (
+      nature === 'D' &&
+      /TARIFA|IOF|JUROS|ENCARGO|CESTA|MATERIAL|HIGIENE|LIMPEZA|ESGOTO|ALUGUEL|ENERG|ELETRIC|DESPESA|COMPRA|SUPRIM|MANUTEN|TELEFON|INTERNET|PAPELARIA|SANEAGO|AGUA/.test(
         hist,
       )
     ) {
-      out.financeiras.push(p);
+      out.despesas.push(p);
+    } else if (nature === 'D') {
+      out.despesas.push(p);
     } else {
-      out.honorarios.push(p);
+      out.receitas.push(p);
     }
   }
   return out;
@@ -129,11 +145,15 @@ function buildAnexosSubEtapa1(
     if (coligadasMapa) scoped.push(coligadasMapa);
     scoped.push(...ctx.inteligenciaColigadas);
   } else if (sub === 'socios') {
-    scoped.push(...ctx.inteligenciaContratos, ...ctx.inteligenciaFuncionarios);
+    scoped.push(...ctx.inteligenciaContratos);
+  } else if (sub === 'funcionarios') {
+    scoped.push(...ctx.inteligenciaFuncionarios);
   } else if (sub === 'honorarios') {
     scoped.push(...ctx.inteligenciaHonorarios);
+  } else if (sub === 'despesas') {
+    scoped.push(...ctx.inteligenciaDespesas);
   } else {
-    scoped.push(...ctx.inteligenciaFinanceiras);
+    scoped.push(...ctx.inteligenciaReceitas);
   }
   return scoped;
 }
@@ -206,11 +226,13 @@ export function aplicarCoberturaLocalRegrasExtrato(params: {
   let still = findUncoveredExtratoRows(params.extratoSample, doBanco);
   if (still.length === 0) return { regras: current, added: 0 };
 
-  const fallbacks = buildFallbackRegrasParaCobertura({
+  const fallbacks = buildFallbackRegrasDentroGrupoPasta({
+    company: params.company,
     uncovered: still,
     contaBanco: params.bancoAtivo,
     plano: params.planoOptions,
     coligadas,
+    socios: listAiSociosParaIa(params.company),
     anexosTexto: params.anexosTexto,
   });
   if (fallbacks.length > 0) {
@@ -221,34 +243,6 @@ export function aplicarCoberturaLocalRegrasExtrato(params: {
         contaContrapartida: f.contaContrapartida,
       })),
     );
-  }
-
-  still = findUncoveredExtratoRows(
-    params.extratoSample,
-    filterExtratoRegrasPorBanco(current, params.bancoAtivo),
-  );
-  if (still.length > 0) {
-    const forced = still
-      .map((row) => {
-        const nature = row.nature === 'C' ? ('C' as const) : ('D' as const);
-        const desc = extractEntityFromHistorico(row.description, nature, coligadas);
-        const contra =
-          buildFallbackRegrasParaCobertura({
-            uncovered: [row],
-            contaBanco: params.bancoAtivo,
-            plano: params.planoOptions,
-            coligadas,
-            anexosTexto: params.anexosTexto,
-          })[0]?.contaContrapartida || '';
-        if (!desc || !contra) return null;
-        return { descricao: desc, nature, contaContrapartida: contra };
-      })
-      .filter(Boolean) as Array<{
-      descricao: string;
-      nature: 'D' | 'C';
-      contaContrapartida: string;
-    }>;
-    if (forced.length > 0) applySugestoes(forced);
   }
 
   return { regras: current, added };
@@ -608,7 +602,14 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       const anexosEtapa1Base = buildAnexosTextoEtapa1ParaIa(inteligenciaCtx);
 
       let etapa1Total = 0;
-      const subEtapas1: SubEtapa1Id[] = ['coligadas', 'socios', 'honorarios', 'financeiras'];
+      const subEtapas1: SubEtapa1Id[] = [
+        'coligadas',
+        'socios',
+        'funcionarios',
+        'honorarios',
+        'despesas',
+        'receitas',
+      ];
 
       for (const sub of subEtapas1) {
         const padroesSub = porCategoria[sub];
@@ -764,9 +765,34 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       await yieldToMain();
     }
 
-    // Sem cobertura local que chuta contas — a decisão é da IA.
-    // Lançamentos que a IA não classificou ficam sem regra (o usuário revisa/reprocessa).
-    fallbackAdded = 0;
+    // Cobertura pós-IA: só dentro do grupo configurado (sem buscar no plano inteiro).
+    {
+      await yieldToMain();
+      const local = aplicarCoberturaLocalRegrasExtrato({
+        company,
+        regras: current,
+        bancoAtivo,
+        planoOptions,
+        extratoSample,
+        anexosTexto: docs,
+      });
+      current = local.regras;
+      fallbackAdded = local.added;
+      totalAdded += local.added;
+      if (local.added > 0) {
+        progress(`Cobertura grupo: +${local.added} regra(s) dentro dos grupos configurados.`);
+      }
+      appendRegrasIaProcessMemory(company, bancoAtivo, {
+        fase: 'cobertura_grupo_pasta',
+        regrasCriadas: local.added,
+        resumo: `Cobertura grupo +${local.added}`,
+        regras: filterExtratoRegrasPorBanco(current, bancoAtivo).slice(-80).map((r) => ({
+          descricao: r.descricao,
+          nature: r.nature,
+          contaContrapartida: r.contaContrapartida,
+        })),
+      });
+    }
     await yieldToMain();
 
     {
@@ -804,7 +830,7 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
         : 'Regras já cobrem o extrato ou plano incompleto.',
       stillOpen === 0
         ? 'Cobertura 100% — todos os lançamentos têm regra para conciliação.'
-        : `Faltam ${stillOpen} padrão(ões) que a IA não classificou — ajuste os grupos/documentos e gere novamente (não são chutados automaticamente).`,
+        : `Faltam ${stillOpen} padrão(ões) sem regra — a IA não classificou e não há match no grupo configurado.`,
     ].filter(Boolean);
 
     return {

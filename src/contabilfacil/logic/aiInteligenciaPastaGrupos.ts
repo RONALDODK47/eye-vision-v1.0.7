@@ -7,16 +7,27 @@ import {
   PASTA_LABELS,
   loadAiInteligencia,
   matchColigadaNoHistorico,
+  matchColigadaParaRegra,
   matchSocioNoHistorico,
+  resolveContaColigadaParaNatureza,
   type AiColigada,
   type AiInteligenciaPasta,
   type AiInteligenciaPastaConfig,
   type AiSocio,
 } from './aiInteligenciaStorage';
-import type { PlanoOptionLike } from './extratoRegrasCobertura';
-import { isLancamentoFornecedorOuClienteGenerico } from './extratoRegrasCobertura';
-import { sanitizarHistoricoExtratoParaRegra } from './extratoRegrasCobertura';
+import type { ExtratoLinhaParaRegra, PlanoOptionLike } from './extratoRegrasCobertura';
+import {
+  isLancamentoFornecedorOuClienteGenerico,
+  isMovimentoAplicacaoFinanceira,
+  pickContaRendimentoOuAplicacao,
+  pickFallbackContaPorNatureza,
+  pickFundoFixoCaixaConta,
+  sanitizarHistoricoExtratoParaRegra,
+  shouldUsarFundoFixoPendencia,
+} from './extratoRegrasCobertura';
+import type { ExtratoRegraConta } from './extratoRegrasContasStorage';
 import { normalizeExtratoMatchText } from './extratoRegrasContasStorage';
+import { extractRegraEntityDescricao } from './extratoRegrasEntity';
 import { scorePlanoContaParaHistorico } from './planoContasMatch';
 import { resolveCodigoReduzidoDoPlano, sanitizeCodigoReduzido } from './planoContasMapper';
 
@@ -263,20 +274,101 @@ export function resolverPastaGrupoParaRegra(
   if (matchColigadaNoHistorico(h, coligadas)) return 'coligadas';
   if (matchSocioNoHistorico(h, socios)) return 'contratos';
 
-  // PIX/TED genérico fornecedor/cliente continua na etapa 2 (conta geral).
-  if (isLancamentoFornecedorOuClienteGenerico(h, nature, coligadas)) return null;
-
-  if (nature === 'D' && pastaTemGrupoConfiguradoParaNatureza(company, 'despesas', 'D')) {
-    return 'despesas';
-  }
-  if (nature === 'C' && pastaTemGrupoConfiguradoParaNatureza(company, 'receitas', 'C')) {
-    return 'receitas';
-  }
-
   return null;
 }
 
 const MIN_SCORE_CONTA_NO_GRUPO = 30;
+
+/** Escolhe conta analítica dentro do grupo sintético (sem buscar no plano inteiro). */
+export function resolveContrapartidaNoGrupoPastaInteligencia(input: {
+  company: string;
+  description: string;
+  nature: 'D' | 'C';
+  plano: PlanoOptionLike[];
+  coligadas?: AiColigada[];
+  socios?: AiSocio[];
+}): string {
+  const { company, description, nature, plano, coligadas = [], socios = [] } = input;
+  const desc = sanitizarHistoricoExtratoParaRegra(description, nature, coligadas);
+  const pasta = inferPastaInteligenciaParaRegra(desc, nature, coligadas, socios);
+  if (!pasta || !pastaTemGrupoConfiguradoParaNatureza(company, pasta, nature)) return '';
+
+  const allowed = listReduzidosAnaliticosGrupoPasta(company, pasta, nature);
+  if (allowed.size === 0) return '';
+
+  return pickMelhorContaReduzidaNoGrupo(desc, nature, allowed, plano);
+}
+
+/**
+ * Cobertura pós-IA: só casos especiais (coligada, PIX genérico, tarifa…) ou conta
+ * escolhida por score DENTRO do grupo configurado — nunca busca no plano inteiro.
+ */
+export function buildFallbackRegrasDentroGrupoPasta(input: {
+  company: string;
+  uncovered: ExtratoLinhaParaRegra[];
+  contaBanco: string;
+  plano: PlanoOptionLike[];
+  coligadas?: AiColigada[];
+  socios?: AiSocio[];
+  anexosTexto?: string[];
+}): ExtratoRegraConta[] {
+  const out: ExtratoRegraConta[] = [];
+  const seen = new Set<string>();
+  const banco = input.contaBanco.trim();
+  if (!banco) return out;
+
+  const coligadas = input.coligadas ?? [];
+  const socios = input.socios ?? [];
+
+  for (const row of input.uncovered) {
+    const nature = row.nature === 'C' ? 'C' : 'D';
+    const desc = extractRegraEntityDescricao(row.description, nature, coligadas);
+    if (!desc) continue;
+
+    let contra = '';
+
+    const coligadaHit = matchColigadaParaRegra(row.description, coligadas);
+    if (coligadaHit) {
+      contra = resolveContaColigadaParaNatureza(coligadaHit, nature, input.plano) || '';
+    } else if (
+      shouldUsarFundoFixoPendencia({
+        description: row.description,
+        plano: input.plano,
+        anexosTexto: input.anexosTexto,
+      })
+    ) {
+      contra = pickFundoFixoCaixaConta(input.plano) || '';
+    } else if (isMovimentoAplicacaoFinanceira(row.description, nature)) {
+      contra = pickContaRendimentoOuAplicacao(nature, input.plano) || '';
+    } else if (isLancamentoFornecedorOuClienteGenerico(row.description, nature, coligadas)) {
+      contra = pickFallbackContaPorNatureza(nature, input.plano) || '';
+    } else {
+      contra = resolveContrapartidaNoGrupoPastaInteligencia({
+        company: input.company,
+        description: row.description,
+        nature,
+        plano: input.plano,
+        coligadas,
+        socios,
+      });
+    }
+
+    if (!contra) continue;
+
+    const key = `${nature}|${normalizeExtratoMatchText(desc)}|${contra}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: crypto.randomUUID(),
+      nome: desc.slice(0, 40),
+      descricao: desc,
+      nature,
+      contaBanco: banco,
+      contaContrapartida: contra,
+    });
+  }
+  return out;
+}
 
 function planoItemPorReduzido(
   reduzido: string,
@@ -389,6 +481,9 @@ export function corrigeRegrasForaGrupoPastaInteligencia(input: {
   let changed = false;
   const next = regras.flatMap((r) => {
     const nature = r.nature === 'C' ? ('C' as const) : ('D' as const);
+    const pasta = resolverPastaGrupoParaRegra(company, r.descricao, nature, coligadas, socios);
+    const temGrupo =
+      pasta != null && pastaTemGrupoConfiguradoParaNatureza(company, pasta, nature);
     const enforced = aplicarRestricaoGrupoPastaInteligencia({
       company,
       regra: { descricao: r.descricao, nature, contaContrapartida: r.contaContrapartida },
@@ -397,7 +492,7 @@ export function corrigeRegrasForaGrupoPastaInteligencia(input: {
       coligadas,
       socios,
     });
-    if (!enforced) return [];
+    if (!enforced) return temGrupo ? [] : [r];
     if (
       enforced.contaContrapartida !== r.contaContrapartida ||
       enforced.descricao !== r.descricao
