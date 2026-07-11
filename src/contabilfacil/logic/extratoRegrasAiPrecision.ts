@@ -43,8 +43,10 @@ import {
   isNomeColigadaInvalido,
   contaCombinaComColigada,
   type AiColigada,
+  type AiSocio,
 } from './aiInteligenciaStorage';
 import { matchColigadaParaRegra } from './aiInteligenciaStorage';
+import { aplicarRestricaoGrupoPastaInteligencia } from './aiInteligenciaPastaGrupos';
 import { extractRegraEntityDescricao } from './extratoRegrasEntity';
 import {
   contaTemSentidoLogicoParaHistorico,
@@ -401,6 +403,11 @@ export function validateAiRegraSugestao(
   };
 }
 
+export type ValidateAiRegrasOptions = {
+  company?: string;
+  socios?: AiSocio[];
+};
+
 /** Valida lote; descarta inválidas; deduplica por entidade (não por texto literal). */
 export function validateAiRegrasLote(
   sugestoes: AiRegraSugestao[],
@@ -409,6 +416,7 @@ export function validateAiRegrasLote(
   anexosTexto: string[] = [],
   extratoHistoricos: string[] = [],
   regrasHistoricas: ExtratoRegraConta[] = [],
+  options?: ValidateAiRegrasOptions,
 ): AiRegraValidada[] {
   const historicosLimpos = extratoHistoricos.map((h) =>
     sanitizarHistoricoExtratoParaRegra(h, 'D'),
@@ -416,7 +424,7 @@ export function validateAiRegrasLote(
   const out: AiRegraValidada[] = [];
   const seen = new Set<string>();
   for (const sug of sugestoes) {
-    const v = validateAiRegraSugestao(
+    let v = validateAiRegraSugestao(
       sug,
       plano,
       coligadas,
@@ -424,6 +432,19 @@ export function validateAiRegrasLote(
       historicosLimpos,
       regrasHistoricas,
     );
+    if (!v) continue;
+
+    if (options?.company) {
+      v =
+        aplicarRestricaoGrupoPastaInteligencia({
+          company: options.company,
+          regra: v,
+          historico: v.descricao,
+          plano,
+          coligadas,
+          socios: options.socios ?? [],
+        }) ?? null;
+    }
     if (!v) continue;
     const entity = extractRegraEntityDescricao(v.descricao, v.nature, coligadas);
     const key = `${v.nature}|${normalizeExtratoMatchText(entity)}|${v.contaContrapartida}`;

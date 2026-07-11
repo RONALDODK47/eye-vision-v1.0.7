@@ -472,6 +472,7 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       docs,
       extratoHistoricos,
       regrasHistoricas,
+      { company, socios: listAiSociosParaIa(company) },
     );
   };
 

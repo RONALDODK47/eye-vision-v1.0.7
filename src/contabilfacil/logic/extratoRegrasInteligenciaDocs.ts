@@ -26,7 +26,8 @@ import {
   sanitizeCodigoReduzido,
 } from './planoContasMapper';
 import { buildInteligenciaContextoParaRegrasIaAsync, type RegrasContasInteligenciaContext } from './regrasContasAiContext';
-import { listAiColigadasParaIa } from './aiInteligenciaStorage';
+import { listAiColigadasParaIa, syncSociosFromInteligenciaDocs } from './aiInteligenciaStorage';
+import { aplicarRestricaoGrupoPastaInteligencia } from './aiInteligenciaPastaGrupos';
 
 export type RegrasLocaisInteligenciaResult = {
   regras: ExtratoRegraConta[];
@@ -252,7 +253,26 @@ export function buildRegrasLocaisFromInteligenciaDocs(input: {
   }
 
   return {
-    regras: out,
+    regras: out
+      .map((r) => {
+        const enforced = aplicarRestricaoGrupoPastaInteligencia({
+          company,
+          regra: r,
+          historico: r.descricao,
+          plano,
+          coligadas,
+          socios,
+        });
+        if (!enforced) return null;
+        return {
+          ...r,
+          descricao: enforced.descricao,
+          nature: enforced.nature,
+          contaContrapartida: enforced.contaContrapartida,
+          nome: enforced.descricao.slice(0, 40),
+        };
+      })
+      .filter((r): r is ExtratoRegraConta => Boolean(r)),
     resumo: parts.length ? parts.join('; ') : '',
   };
 }

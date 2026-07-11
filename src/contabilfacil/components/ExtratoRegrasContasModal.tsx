@@ -49,6 +49,7 @@ import {
   enrichColigadasComContasDoPlano,
   isContaFornecedorNome,
   listAiColigadasParaIa,
+  listAiSociosParaIa,
   matchColigadaNoHistorico,
   matchColigadaParaRegra,
   pickContaColigadaNoPlano,
@@ -715,7 +716,10 @@ export default memo(function ExtratoRegrasContasModal({
                     sanitizeCodigoReduzido(r.contaContrapartida);
                   return Boolean(red);
                 })
-              : validateAiRegrasLote(forced, planoOptions, coligadas, docs, historicoChat);
+              : validateAiRegrasLote(forced, planoOptions, coligadas, docs, historicoChat, [], {
+                  company,
+                  socios: listAiSociosParaIa(company),
+                });
             const applied = applySugestoes(current, toApply);
             current = applied.next;
             totalAdded += applied.added;

@@ -820,6 +820,11 @@ function buildUserPayload(body) {
 
   if (pastasGruposContas) {
     lines.push('', pastasGruposContas.slice(0, 14_000));
+    lines.push(
+      '',
+      'REGRA CRÍTICA — GRUPOS POR PASTA: contaContrapartida DEVE ser um dos códigos reduzidos listados no bloco acima para a pasta e o sentido (saída D / entrada C) correspondentes.',
+      'É PROIBIDO usar conta fora do grupo sintético informado pelo usuário.',
+    );
   }
 
   if (inteligenciaFinanceiras.length || inteligenciaBalancetes.length) {
