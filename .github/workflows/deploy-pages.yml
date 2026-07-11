@@ -34,14 +34,14 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Organizar pastas para GitHub Pages (/v1.0.9/)
+      - name: Organizar pastas para GitHub Pages (/v1.0.10/)
         run: |
-          mkdir -p dist/v1.0.9
+          mkdir -p dist/v1.0.10
           for item in index.html assets data _redirects; do
-            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.9/"; fi
+            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.10/"; fi
           done
-          cp "dist/v1.0.9/index.html" "dist/v1.0.9/404.html"
-          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.9/"><title>Contábil ERP Nova Versão v1.0.9</title></head><body><p><a href="v1.0.9/">Contábil ERP Nova Versão v1.0.9</a></p></body></html>' > dist/index.html
+          cp "dist/v1.0.10/index.html" "dist/v1.0.10/404.html"
+          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.10/"><title>Contábil ERP Nova Versão v1.0.10</title></head><body><p><a href="v1.0.10/">Contábil ERP Nova Versão v1.0.10</a></p></body></html>' > dist/index.html
 
       - uses: peaceiris/actions-gh-pages@v4
         with:
