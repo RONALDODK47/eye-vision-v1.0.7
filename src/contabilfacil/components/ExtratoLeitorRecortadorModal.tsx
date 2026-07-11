@@ -28,6 +28,7 @@ import { loadPdfPagesProgressive, parseAndRenderImage } from '../../lib/leitorRe
 import {
   detectNubankTransactionRows,
   extractNubankDataFromCanvas,
+  getNubankLastDayDate,
   isNubankExtratoLayout,
   NUBANK_EXCLUSION_RULES,
   pdfTextItemsToPosicionado,
@@ -147,7 +148,9 @@ export function ExtratoLeitorRecortadorModal({
       if (options?.setBancoIfEmpty) {
         setBancoNome((prev) => prev.trim() || 'NUBANK');
       }
-      setDetectedRows(detectNubankTransactionRows(page.textItems, page.width));
+      setDetectedRows(
+        detectNubankTransactionRows(page.textItems, page.width, page.height, page.pageNumber),
+      );
     },
     [],
   );
@@ -342,7 +345,12 @@ export function ExtratoLeitorRecortadorModal({
       const stmtYear = resolveExtratoYearFromContext(textItems, file.name);
       const nubankRows = isNubankLayoutRef.current
         ? filterRowsInCropBand(
-            detectNubankTransactionRows(textItems, activeCanvas.width),
+            detectNubankTransactionRows(
+              textItems,
+              activeCanvas.width,
+              activeCanvas.height,
+              currentPage,
+            ),
             startY,
             endY,
           )
@@ -356,6 +364,7 @@ export function ExtratoLeitorRecortadorModal({
               columns,
               nubankRows,
               stmtYear,
+              currentPage,
             )
           : extractDataFromCanvas(activeCanvas, textItems, columns, filteredForExtract, true),
         stmtYear,
@@ -378,6 +387,7 @@ export function ExtratoLeitorRecortadorModal({
     setErrorMessage(null);
     try {
       let allExtractedRows: ExtractedRow[] = [];
+      let nubankCarryDate = '';
       pdfPages.forEach((page) => {
         const p = page.pageNumber;
         if (p < cropStartPage || p > cropEndPage) return;
@@ -386,7 +396,7 @@ export function ExtratoLeitorRecortadorModal({
         const pageIsNu = isNubankExtratoLayout(pos, page.width);
         if (rowMode === 'auto') {
           pageRows = pageIsNu
-            ? detectNubankTransactionRows(page.textItems, page.width)
+            ? detectNubankTransactionRows(page.textItems, page.width, page.height, p)
             : detectRowsFromText(page.textItems, 10).map((r) => ({ y: r.y, height: r.height }));
         } else {
           pageRows = Array.from({ length: gridRowCount }).map((_, i) => ({
@@ -400,10 +410,18 @@ export function ExtratoLeitorRecortadorModal({
         if (filteredRows.length > 0) {
           const stmtYearPage = resolveExtratoYearFromContext(page.textItems, file.name);
           const nubankPageRows = pageIsNu
-            ? detectNubankTransactionRows(page.textItems, page.width).filter((r) =>
-                filterRowsInCropBand([r], startY, endY).length > 0,
-              )
+            ? detectNubankTransactionRows(
+                page.textItems,
+                page.width,
+                page.height,
+                p,
+                nubankCarryDate,
+              ).filter((r) => filterRowsInCropBand([r], startY, endY).length > 0)
             : null;
+          if (pageIsNu) {
+            nubankCarryDate =
+              getNubankLastDayDate(page.textItems, page.width, page.height, p) || nubankCarryDate;
+          }
           const extracted =
             pageIsNu && nubankPageRows
               ? extractNubankDataFromCanvas(
@@ -412,6 +430,7 @@ export function ExtratoLeitorRecortadorModal({
                   columns,
                   nubankPageRows,
                   stmtYearPage,
+                  p,
                 )
               : extractDataFromCanvas(page.canvas, page.textItems, columns, filteredRows, true);
           allExtractedRows = [...allExtractedRows, ...extracted];

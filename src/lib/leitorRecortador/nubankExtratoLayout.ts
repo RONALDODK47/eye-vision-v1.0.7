@@ -1,12 +1,16 @@
-import type { PDFTextItem } from './types';
-import type { DocumentColumns } from './types';
-import { detectRowsFromText, extractDataFromCanvas, type ExtractedRow } from './cropper';
+import type { PDFTextItem, DocumentColumns, ExtractedRow } from './types';
+import { detectRowsFromText } from './cropper';
 import { parseExtratoDataOcrText } from '../ocrExtratoPositional';
+import { parseExtratoMoneyValue } from '../../extratoVision/utils/extratoMoneyParse';
 
 export type PosicionadoLike = { str: string; x: number; y: number; w: number; h: number };
 
 const RE_NUBANK_DATE = /^\d{1,2}\s+[A-ZÁÉÍÓÚÇ]{3,9}\s+\d{4}$/i;
 const RE_NUBANK_VAL = /^[+-]?\s*\d{1,3}(?:\.\d{3})*,\d{2}$/;
+
+/** Padrões de lançamento real (não totais/resumo). */
+const RE_NUBANK_TX_HINT =
+  /transfer[eê]ncia|pagamento de fatura|valor adicionado|pix|tarifa|compra|estorno|recebido|enviad/i;
 
 export const NUBANK_EXCLUSION_RULES = [
   'SALDO ANTERIOR',
@@ -27,8 +31,31 @@ export const NUBANK_EXCLUSION_RULES = [
   'NU FINANCEIRA',
 ];
 
+/** Limites horizontais calibrados a partir do PDF (px). */
+export type NubankGeometry = {
+  imgWidth: number;
+  /** Coluna data: tokens «08 JUN 2026» — x ≈ 87 */
+  dateMaxX: number;
+  /** Coluna histórico: x ≈ 180 e continuação x ≈ 392 */
+  histMinX: number;
+  /** Coluna valor: x ≈ 736–780 */
+  valueMinX: number;
+  movimentacoesY: number | null;
+  faixaStart: number;
+  faixaEnd: number;
+  columns: DocumentColumns;
+};
+
 export function pdfTextItemsToPosicionado(items: PDFTextItem[]): PosicionadoLike[] {
   return items.map((t) => ({ str: t.text, x: t.x, y: t.y, w: t.width, h: t.height }));
+}
+
+function normVal(str: string): string {
+  return str.trim().replace(/\s+/g, ' ');
+}
+
+function isValueToken(str: string): boolean {
+  return RE_NUBANK_VAL.test(normVal(str));
 }
 
 export function isNubankExtratoLayout(items: PosicionadoLike[], imgWidth: number): boolean {
@@ -43,11 +70,114 @@ export function isNubankExtratoLayout(items: PosicionadoLike[], imgWidth: number
   return looksNu && hasMov && nubankDates.length >= 1;
 }
 
+function pct(startPx: number, endPx: number, imgWidth: number): { startX: number; width: number } {
+  const startX = Math.max(0, (startPx / imgWidth) * 100);
+  const endPct = Math.min(100, (endPx / imgWidth) * 100);
+  return { startX: Number(startX.toFixed(2)), width: Number((endPct - startX).toFixed(2)) };
+}
+
+/**
+ * Calibra colunas a partir das posições reais do PDF Nubank.
+ * Layout típico (893px): data x≈87 | hist x≈180 + x≈392 | valor x≈736–780
+ */
+export function calibrateNubankGeometry(
+  items: PosicionadoLike[],
+  imgWidth: number,
+  imgHeight: number,
+  pageNumber = 1,
+): NubankGeometry {
+  const heights = items.map((i) => i.h).filter((h) => h > 0).sort((a, b) => a - b);
+  const medianH = heights[Math.floor(heights.length / 2)] || 12;
+  const pad = Math.max(6, medianH * 0.35);
+
+  const dateTokens = items.filter(
+    (it) => it.x < imgWidth * 0.22 && RE_NUBANK_DATE.test(it.str.trim()),
+  );
+  const valTokens = items.filter(
+    (it) => it.x > imgWidth * 0.65 && isValueToken(it.str),
+  );
+  const histTokens = items.filter(
+    (it) => it.x >= imgWidth * 0.17 && it.x < imgWidth * 0.72 && it.str.trim().length > 2,
+  );
+
+  const dateMaxX =
+    dateTokens.length > 0
+      ? Math.max(...dateTokens.map((t) => t.x + t.w)) + pad
+      : imgWidth * 0.175;
+
+  const valueMinX =
+    valTokens.length > 0
+      ? Math.min(...valTokens.map((t) => t.x)) - pad
+      : imgWidth * 0.815;
+
+  const histMinX =
+    histTokens.length > 0
+      ? Math.min(...histTokens.map((t) => t.x)) - pad * 0.5
+      : imgWidth * 0.19;
+
+  const mov = items.find((it) => /^movimenta/i.test(it.str.trim()));
+  const movimentacoesY = mov ? mov.y : null;
+
+  const footerYs = items
+    .filter((it) =>
+      /tem alguma dúvida|extrato gerado|ouvidoria|nubank\.com\.br\/contatos|o saldo líquido corresponde|não nos responsabilizamos|asseguramos a autenticidade/i.test(
+        it.str,
+      ),
+    )
+    .map((it) => it.y);
+
+  const firstTx = items
+    .filter((it) => {
+      if (it.x < histMinX || it.x >= valueMinX) return false;
+      if (!RE_NUBANK_TX_HINT.test(it.str)) return false;
+      return items.some(
+        (o) =>
+          Math.abs(o.y - it.y) < medianH * 0.65 &&
+          o.x >= valueMinX &&
+          isValueToken(o.str),
+      );
+    })
+    .sort((a, b) => a.y - b.y)[0];
+
+  let faixaStart = pad;
+  if (movimentacoesY != null && pageNumber <= 1) {
+    faixaStart = mov.y + mov.h + pad;
+  } else if (firstTx) {
+    faixaStart = Math.max(pad, firstTx.y - pad * 0.5);
+  } else if (dateTokens.length > 0) {
+    faixaStart = Math.max(pad, Math.min(...dateTokens.map((d) => d.y)) - pad);
+  }
+
+  const bodyBottom = items.length ? Math.max(...items.map((i) => i.y + i.h)) : imgHeight;
+  let faixaEnd =
+    footerYs.length > 0 && Math.min(...footerYs) > faixaStart + medianH * 2
+      ? Math.min(...footerYs) - pad
+      : bodyBottom - pad;
+  faixaEnd = Math.max(faixaEnd, faixaStart + medianH * 3);
+
+  const columns: DocumentColumns = {
+    date: pct(0, dateMaxX, imgWidth),
+    history: pct(histMinX, valueMinX, imgWidth),
+    value: pct(valueMinX, imgWidth, imgWidth),
+  };
+
+  return {
+    imgWidth,
+    dateMaxX,
+    histMinX,
+    valueMinX,
+    movimentacoesY,
+    faixaStart,
+    faixaEnd,
+    columns,
+  };
+}
+
 export function nubankDefaultColumns(): DocumentColumns {
   return {
-    date: { startX: 0, width: 17 },
-    history: { startX: 16, width: 62 },
-    value: { startX: 78, width: 22 },
+    date: { startX: 0, width: 17.5 },
+    history: { startX: 17, width: 64.5 },
+    value: { startX: 81.5, width: 18.5 },
   };
 }
 
@@ -55,6 +185,7 @@ export type NubankPageLayout = {
   columns: DocumentColumns;
   faixaStartPct: number;
   faixaEndPct: number;
+  geometry: NubankGeometry;
 };
 
 export function suggestNubankExtratoPageLayout(
@@ -63,63 +194,20 @@ export function suggestNubankExtratoPageLayout(
   imgHeight: number,
   pageNumber = 1,
 ): NubankPageLayout {
-  const heights = items.map((i) => i.h).filter((h) => h > 0).sort((a, b) => a - b);
-  const medianH = heights[Math.floor(heights.length / 2)] || 12;
-  const pad = Math.max(6, medianH * 0.4);
-
-  const mov = items.find((it) => /^movimenta/i.test(it.str.trim()));
-  const footerYs = items
-    .filter((it) =>
-      /tem alguma dúvida|extrato gerado|ouvidoria|nubank\.com\.br\/contatos|o saldo líquido corresponde/i.test(
-        it.str,
-      ),
-    )
-    .map((it) => it.y);
-
-  const txStart = items
-    .filter((it) => {
-      const isHist =
-        it.x >= imgWidth * 0.17 &&
-        it.x < imgWidth * 0.72 &&
-        /transferência|pagamento de fatura|valor adicionado/i.test(it.str);
-      const hasValSibling = items.some(
-        (o) =>
-          Math.abs(o.y - it.y) < medianH * 0.6 &&
-          o.x > imgWidth * 0.74 &&
-          RE_NUBANK_VAL.test(o.str.trim()),
-      );
-      return isHist && hasValSibling;
-    })
-    .sort((a, b) => a.y - b.y)[0];
-
-  let faixaStart = pad;
-  if (mov && pageNumber <= 1) {
-    faixaStart = mov.y + mov.h + pad;
-  } else if (txStart) {
-    faixaStart = Math.max(pad, txStart.y - pad);
-  } else {
-    const firstDate = items
-      .filter((it) => it.x < imgWidth * 0.2 && RE_NUBANK_DATE.test(it.str.trim()))
-      .sort((a, b) => a.y - b.y)[0];
-    if (firstDate) faixaStart = Math.max(pad, firstDate.y - pad * 0.5);
-  }
-
-  const bodyBottom = items.length ? Math.max(...items.map((i) => i.y + i.h)) : imgHeight;
-  let faixaEnd =
-    footerYs.length > 0 && Math.min(...footerYs) > faixaStart + medianH * 3
-      ? Math.min(...footerYs) - pad
-      : bodyBottom - pad;
-
-  faixaEnd = Math.max(faixaEnd, faixaStart + medianH * 4);
-
+  const geo = calibrateNubankGeometry(items, imgWidth, imgHeight, pageNumber);
   return {
-    columns: nubankDefaultColumns(),
-    faixaStartPct: Math.max(0, (faixaStart / imgHeight) * 100),
-    faixaEndPct: Math.min(100, (faixaEnd / imgHeight) * 100),
+    columns: geo.columns,
+    faixaStartPct: Math.max(0, (geo.faixaStart / imgHeight) * 100),
+    faixaEndPct: Math.min(100, (geo.faixaEnd / imgHeight) * 100),
+    geometry: geo,
   };
 }
 
-export type NubankRowConfig = { y: number; height: number; anchorDate: string };
+export type NubankRowConfig = {
+  y: number;
+  height: number;
+  anchorDate: string;
+};
 
 function rowBlob(items: PDFTextItem[]): string {
   return [...items]
@@ -129,45 +217,128 @@ function rowBlob(items: PDFTextItem[]): string {
     .toUpperCase();
 }
 
-function shouldSkipNubankRow(blob: string): boolean {
-  if (!blob.trim()) return true;
-  if (/^CASTELO DE ACUCAR|^CNPJ\s|^AGÊNCIA\s|^CONTA\s|^\d{2}\.\d{3}\.\d{3}/i.test(blob)) return true;
-  if (/^\d{1,2}\s+DE\s+[A-Z]+\s+DE\s+\d{4}\s+A\s/i.test(blob)) return true;
-  if (/SALDO INICIAL|RENDIMENTO LÍQUIDO|TOTAL DE ENTRADAS|TOTAL DE SAÍDAS|SALDO FINAL DO PERÍODO|SALDO DO DIA|VALORES EM R\$|^MOVIMENTAÇÕES$/i.test(blob)) {
-    return true;
-  }
-  if (/^SALDO FINAL DO PERÍODO/i.test(blob)) return true;
-  if (/TEM ALGUMA DÚVIDA|EXTRATO GERADO|OUVIDORIA|NU PAGAMENTOS|NU FINANCEIRA|NUPAGAMENTOS/i.test(blob)) {
-    return true;
-  }
-  if (/TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/.test(blob) && RE_NUBANK_DATE.test(blob)) return true;
-  return false;
+function inZoneDate(item: PDFTextItem, geo: NubankGeometry): boolean {
+  return item.x + item.width <= geo.dateMaxX + 4;
 }
 
-function findDateAnchor(items: PDFTextItem[], imgWidth: number): string {
-  const tok = items.find((it) => it.x < imgWidth * 0.2 && RE_NUBANK_DATE.test(it.text.trim()));
+function inZoneHist(item: PDFTextItem, geo: NubankGeometry): boolean {
+  const cx = item.x + item.width / 2;
+  return cx >= geo.histMinX && cx < geo.valueMinX;
+}
+
+function inZoneValue(item: PDFTextItem, geo: NubankGeometry): boolean {
+  return item.x >= geo.valueMinX - 4;
+}
+
+function findDateInRow(items: PDFTextItem[], geo: NubankGeometry): string {
+  const tok = items.find(
+    (it) => inZoneDate(it, geo) && RE_NUBANK_DATE.test(it.text.trim()),
+  );
   return tok?.text.trim() ?? '';
 }
 
-function rowHasTransactionValue(items: PDFTextItem[], imgWidth: number): boolean {
-  return items.some(
-    (it) => it.x > imgWidth * 0.74 && RE_NUBANK_VAL.test(it.text.trim().replace(/\s+/g, ' ')),
-  );
+function isDayHeaderRow(blob: string, items: PDFTextItem[], geo: NubankGeometry): boolean {
+  const hasDate = findDateInRow(items, geo).length > 0;
+  return hasDate && /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/.test(blob);
 }
 
-function rowHasHistory(items: PDFTextItem[], imgWidth: number): boolean {
-  return items.some((it) => it.x >= imgWidth * 0.16 && it.x < imgWidth * 0.76 && it.text.trim().length > 2);
+function shouldSkipNubankRow(
+  blob: string,
+  items: PDFTextItem[],
+  geo: NubankGeometry,
+  rowCenterY: number,
+): boolean {
+  if (rowCenterY < geo.faixaStart || rowCenterY > geo.faixaEnd) return true;
+  if (!blob.trim()) return true;
+
+  if (geo.movimentacoesY != null && rowCenterY < geo.movimentacoesY) return true;
+
+  if (/^CASTELO DE ACUCAR|^CNPJ\s|^AGÊNCIA\s|^CONTA\s|^\d{2}\.\d{3}\.\d{3}/i.test(blob)) return true;
+  if (/^\d{1,2}\s+DE\s+[A-Z]+\s+DE\s+\d{4}\s+A\s/i.test(blob)) return true;
+  if (/^R\$/.test(blob) && /TOTAL DE ENTRADAS|SALDO FINAL/.test(blob)) return true;
+
+  if (isDayHeaderRow(blob, items, geo)) return true;
+
+  if (
+    /SALDO INICIAL|RENDIMENTO LÍQUIDO|TOTAL DE ENTRADAS|TOTAL DE SAÍDAS|SALDO FINAL DO PERÍODO|SALDO DO DIA|VALORES EM R\$|^MOVIMENTAÇÕES$/i.test(
+      blob,
+    )
+  ) {
+    return true;
+  }
+  if (/TEM ALGUMA DÚVIDA|EXTRATO GERADO|OUVIDORIA|NU PAGAMENTOS|NU FINANCEIRA|NUPAGAMENTOS|O SALDO LÍQUIDO/i.test(blob)) {
+    return true;
+  }
+  return false;
 }
 
-/** Agrupa lançamentos Nubank (descrição multilinha + valor à direita). */
+function rowHasTransactionValue(items: PDFTextItem[], geo: NubankGeometry): boolean {
+  return items.some((it) => inZoneValue(it, geo) && isValueToken(it.text));
+}
+
+function rowHasHistory(items: PDFTextItem[], geo: NubankGeometry): boolean {
+  return items.some((it) => inZoneHist(it, geo) && it.text.trim().length > 1);
+}
+
+function isContinuationRow(items: PDFTextItem[], geo: NubankGeometry): boolean {
+  if (rowHasTransactionValue(items, geo)) return false;
+  return rowHasHistory(items, geo);
+}
+
+function isTransactionStartRow(items: PDFTextItem[], geo: NubankGeometry, blob: string): boolean {
+  if (!rowHasTransactionValue(items, geo)) return false;
+  if (/SALDO DO DIA|TOTAL DE ENTRADAS|TOTAL DE SAÍDAS|RENDIMENTO|SALDO FINAL|SALDO INICIAL/i.test(blob)) {
+    return false;
+  }
+  if (rowHasHistory(items, geo)) return true;
+  return RE_NUBANK_TX_HINT.test(blob);
+}
+
+function findLastDayDateInPage(items: PosicionadoLike[], geo: NubankGeometry): string {
+  const minY = geo.movimentacoesY ?? geo.faixaStart;
+  const dates = items
+    .filter(
+      (it) =>
+        it.x < geo.dateMaxX &&
+        RE_NUBANK_DATE.test(it.str.trim()) &&
+        it.y >= minY - 4 &&
+        it.y <= geo.faixaEnd + 4,
+    )
+    .sort((a, b) => b.y - a.y);
+  return dates[0]?.str.trim() ?? '';
+}
+
+/** Última data de dia visível na página (para propagar à página seguinte). */
+export function getNubankLastDayDate(
+  textItems: PDFTextItem[],
+  imgWidth: number,
+  imgHeight: number,
+  pageNumber: number,
+): string {
+  const pos = pdfTextItemsToPosicionado(textItems);
+  const geo = calibrateNubankGeometry(pos, imgWidth, imgHeight, pageNumber);
+  return findLastDayDateInPage(pos, geo);
+}
+
+/**
+ * Detecta lançamentos reais na faixa «Movimentações», agrupando descrição multilinha (Pix).
+ * `carryDate` propaga a data do último dia da página anterior (ex.: 16 JUN continua na pág. 2).
+ */
 export function detectNubankTransactionRows(
   textItems: PDFTextItem[],
   imgWidth: number,
+  imgHeight?: number,
+  pageNumber = 1,
+  carryDate = '',
 ): NubankRowConfig[] {
   if (!textItems.length) return [];
 
+  const pos = pdfTextItemsToPosicionado(textItems);
+  const h = imgHeight ?? Math.max(...pos.map((i) => i.y + i.h), 400);
+  const geo = calibrateNubankGeometry(pos, imgWidth, h, pageNumber);
+
   const rawRows = detectRowsFromText(textItems, 8);
-  let currentDate = '';
+  let currentDate = carryDate.trim() || findLastDayDateInPage(pos, geo);
   const out: NubankRowConfig[] = [];
   let pending: NubankRowConfig | null = null;
 
@@ -179,19 +350,18 @@ export function detectNubankTransactionRows(
   };
 
   for (const row of rawRows) {
+    const rowCenterY = row.y + row.height / 2;
     const blob = rowBlob(row.items);
-    const anchor = findDateAnchor(row.items, imgWidth);
+
+    const anchor = findDateInRow(row.items, geo);
     if (anchor) currentDate = anchor;
 
-    if (shouldSkipNubankRow(blob)) {
+    if (shouldSkipNubankRow(blob, row.items, geo, rowCenterY)) {
       flush();
       continue;
     }
 
-    const hasVal = rowHasTransactionValue(row.items, imgWidth);
-    const hasHist = rowHasHistory(row.items, imgWidth);
-
-    if (hasVal && hasHist) {
+    if (isTransactionStartRow(row.items, geo, blob)) {
       flush();
       pending = {
         y: row.y,
@@ -201,39 +371,125 @@ export function detectNubankTransactionRows(
       continue;
     }
 
-    if (pending && hasHist && !hasVal) {
+    if (pending && isContinuationRow(row.items, geo)) {
       const bottom = row.y + row.height;
       pending.height = bottom - pending.y;
       continue;
     }
 
-    if (hasVal && !hasHist) {
-      flush();
-    }
+    flush();
   }
 
   flush();
-  return out;
+  return out.map((r) => ({
+    ...r,
+    anchorDate: r.anchorDate || currentDate,
+  }));
 }
 
+function cropSection(
+  canvas: HTMLCanvasElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): string {
+  try {
+    const docW = canvas.width;
+    const docH = canvas.height;
+    const sx = Math.max(0, Math.min(x, docW - 1));
+    const sy = Math.max(0, Math.min(y, docH - 1));
+    const sw = Math.max(1, Math.min(w, docW - sx));
+    const sh = Math.max(1, Math.min(h, docH - sy));
+    const c = document.createElement('canvas');
+    c.width = sw;
+    c.height = sh;
+    const ctx = c.getContext('2d');
+    if (!ctx) return '';
+    ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    return c.toDataURL('image/png');
+  } catch {
+    return '';
+  }
+}
+
+function analyzeNubankValue(valStr: string): { isNegative: boolean; parsedValue: number | null } {
+  const t = normVal(valStr);
+  if (!t) return { isNegative: false, parsedValue: null };
+  const isNegative = /^-/.test(t) || /^\(\s*/.test(t);
+  const parsed = parseExtratoMoneyValue(t.replace(/^[+]\s*/, ''));
+  if (parsed == null || Number.isNaN(parsed)) return { isNegative, parsedValue: null };
+  return { isNegative: parsed < 0 || isNegative, parsedValue: isNegative ? -Math.abs(parsed) : parsed };
+}
+
+/** Extração por zonas calibradas — precisão no layout Nubank. */
 export function extractNubankDataFromCanvas(
   canvas: HTMLCanvasElement,
   textItems: PDFTextItem[],
   columns: DocumentColumns,
   rowConfigs: NubankRowConfig[],
   statementYear?: string,
+  pageNumber = 1,
 ): ExtractedRow[] {
-  const base = extractDataFromCanvas(
-    canvas,
-    textItems,
-    columns,
-    rowConfigs.map((r) => ({ y: r.y, height: r.height })),
-    true,
-  );
-  return base.map((row, idx) => {
-    const anchor = rowConfigs[idx]?.anchorDate;
-    if (!anchor) return row;
-    const parsed = parseExtratoDataOcrText(anchor, statementYear);
-    return parsed ? { ...row, dateText: parsed } : row;
+  const pos = pdfTextItemsToPosicionado(textItems);
+  const geo = calibrateNubankGeometry(pos, canvas.width, canvas.height, pageNumber);
+  const pad = 7;
+
+  return rowConfigs.map((cfg, index) => {
+    const y0 = cfg.y - pad;
+    const y1 = cfg.y + cfg.height + pad;
+
+    const rowItems = textItems.filter((it) => {
+      const cy = it.y + it.height / 2;
+      return cy >= cfg.y - 2 && cy <= cfg.y + cfg.height + 2;
+    });
+
+    const dateParts: string[] = [];
+    const histParts: string[] = [];
+    const valParts: string[] = [];
+
+    for (const it of rowItems.sort((a, b) => a.x - b.x || a.y - b.y)) {
+      if (inZoneValue(it, geo) && isValueToken(it.text)) {
+        valParts.push(normVal(it.text));
+      } else if (inZoneHist(it, geo)) {
+        histParts.push(it.text.trim());
+      } else if (inZoneDate(it, geo) && !RE_NUBANK_DATE.test(it.text.trim())) {
+        dateParts.push(it.text.trim());
+      }
+    }
+
+    const dateFromAnchor = cfg.anchorDate
+      ? parseExtratoDataOcrText(cfg.anchorDate, statementYear)
+      : '';
+    const dateText = dateFromAnchor || dateParts.join(' ').trim();
+    const historyText = histParts.join(' ').replace(/\s+/g, ' ').trim();
+    const valueText = valParts.join(' ').trim();
+    const { isNegative, parsedValue } = analyzeNubankValue(valueText);
+
+    const dateCol = columns.date;
+    const histCol = columns.history;
+    const valCol = columns.value;
+    const toPx = (col: { startX: number; width: number }) => ({
+      x: (col.startX / 100) * canvas.width,
+      w: (col.width / 100) * canvas.width,
+    });
+    const dPx = toPx(dateCol);
+    const hPx = toPx(histCol);
+    const vPx = toPx(valCol);
+
+    return {
+      id: `nubank-row-${index}-${Date.now()}`,
+      dateText,
+      historyText,
+      valueText,
+      dateCropUrl: cropSection(canvas, dPx.x, y0, dPx.w, y1 - y0),
+      historyCropUrl: cropSection(canvas, hPx.x, y0, hPx.w, y1 - y0),
+      valueCropUrl: cropSection(canvas, vPx.x, y0, vPx.w, y1 - y0),
+      isNegative,
+      parsedValue,
+      y: cfg.y,
+      height: cfg.height,
+      pageNumber,
+    };
   });
 }
