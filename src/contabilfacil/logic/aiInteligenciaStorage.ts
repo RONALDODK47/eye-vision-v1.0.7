@@ -136,6 +136,23 @@ function emptyStore(): AiInteligenciaStore {
   };
 }
 
+/** Mantém a versão mais recente (ex.: exclusão local não pode ser sobrescrita pelo IDB). */
+export function mergeInteligenciaStorePreferNewer(
+  local: AiInteligenciaStore,
+  remote: AiInteligenciaStore,
+): AiInteligenciaStore {
+  const localTs = Date.parse(local.updatedAt || 0);
+  const remoteTs = Date.parse(remote.updatedAt || 0);
+  const winner = localTs >= remoteTs ? local : remote;
+  return {
+    docs: winner.docs.map((d) => ({ ...d })),
+    coligadas: winner.coligadas.map((c) => ({ ...c, aliases: [...c.aliases] })),
+    socios: (winner.socios ?? []).map((s) => ({ ...s, aliases: [...s.aliases] })),
+    pastaConfigs: mergePastaConfigs(winner.pastaConfigs),
+    updatedAt: winner.updatedAt,
+  };
+}
+
 function getTextMap(slug: string): Map<string, string> {
   let m = textCache.get(slug);
   if (!m) {
@@ -322,22 +339,19 @@ async function hydrateFromIdb(company: string): Promise<void> {
     const mem = storeCache.get(slug);
 
     if (fromIdb) {
-      const memCount = mem?.docs.length ?? 0;
-      const idbCount = fromIdb.docs.length;
-      const useIdb =
-        memCount === 0 ||
-        idbCount > memCount ||
-        (idbCount === memCount &&
-          Date.parse(fromIdb.updatedAt) > Date.parse(mem?.updatedAt || 0));
-
-      if (useIdb) {
+      if (!mem) {
         storeCache.set(slug, fromIdb);
         safeLocalStorageSetItem(storageKey(company), JSON.stringify(toLightStore(fromIdb)));
-      } else if (mem && memCount > idbCount) {
-        try {
-          await idbPutInteligenciaStore(slug, JSON.stringify(toLightStore(mem)));
-        } catch {
-          /* ignore */
+      } else {
+        const merged = mergeInteligenciaStorePreferNewer(mem, fromIdb);
+        storeCache.set(slug, merged);
+        safeLocalStorageSetItem(storageKey(company), JSON.stringify(toLightStore(merged)));
+        if (Date.parse(mem.updatedAt || 0) > Date.parse(fromIdb.updatedAt || 0)) {
+          try {
+            await idbPutInteligenciaStore(slug, JSON.stringify(toLightStore(merged)));
+          } catch {
+            /* ignore */
+          }
         }
       }
     }
@@ -443,6 +457,24 @@ export async function persistAiInteligenciaToBackend(
   } catch {
     /* continua — LS já tem a meta */
   }
+
+  const activeDocIds = new Set(next.docs.map((d) => d.id));
+  try {
+    const orphanTexts = await idbGetAllDocTexts(slug);
+    for (const docId of orphanTexts.keys()) {
+      if (!activeDocIds.has(docId)) {
+        await idbDeleteDocText(slug, docId);
+        cache.delete(docId);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  for (const docId of [...cache.keys()]) {
+    if (!activeDocIds.has(docId)) cache.delete(docId);
+  }
+
   for (const d of next.docs) {
     const full = cache.get(d.id) || d.textoExtraido;
     if (full) {
@@ -1271,6 +1303,7 @@ export function removeAiInteligenciaDoc(company: string, id: string): AiIntelige
   return saveAiInteligencia(company, {
     ...store,
     docs: store.docs.filter((d) => d.id !== id),
+    updatedAt: new Date().toISOString(),
   });
 }
 

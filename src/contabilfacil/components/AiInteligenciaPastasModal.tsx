@@ -16,6 +16,7 @@ import {
   inferPastaFromFileName,
   loadAiInteligencia,
   loadAiInteligenciaAsync,
+  mergeInteligenciaStorePreferNewer,
   persistAiInteligenciaToBackend,
   removeAiInteligenciaDoc,
   saveAiInteligencia,
@@ -80,14 +81,16 @@ export default memo(function AiInteligenciaPastasModal({
     let cancelled = false;
     void loadAiInteligenciaAsync(company).then(async (s) => {
       if (cancelled) return;
-      setStore((prev) => (prev.docs.length > s.docs.length ? prev : s));
-      if (!s.docs.length) return;
+      setStore((prev) => mergeInteligenciaStorePreferNewer(prev, s));
+      const current = loadAiInteligencia(company);
+      if (!current.docs.length) return;
       setAutoExtracting(true);
       try {
         const auto = await extrairPastasPendentesAutomaticamente(company);
         if (cancelled) return;
-        refresh(auto.store);
-        void persistAiInteligenciaToBackend(company, auto.store);
+        const merged = mergeInteligenciaStorePreferNewer(loadAiInteligencia(company), auto.store);
+        refresh(merged);
+        await persistAiInteligenciaToBackend(company, merged);
         if (auto.messages.length) {
           setOkMsg(auto.messages.map((m) => m.replace(/^(\w+):/, (_, p) => `${PASTA_LABELS[p as AiInteligenciaPasta] || p}:`)).join(' · '));
         }
@@ -302,10 +305,13 @@ export default memo(function AiInteligenciaPastasModal({
   );
 
   const handleRemoveDoc = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const next = removeAiInteligenciaDoc(company, id);
       refresh(next);
-      void persistAiInteligenciaToBackend(company, next);
+      const sync = await persistAiInteligenciaToBackend(company, next);
+      if (!sync.ok) {
+        setError(sync.error || 'Falha ao salvar exclusão no backend.');
+      }
       setOkMsg('Documento removido.');
     },
     [company, refresh],
@@ -475,7 +481,7 @@ export default memo(function AiInteligenciaPastasModal({
                         </span>
                         <button
                           type="button"
-                          onClick={() => handleRemoveDoc(d.id)}
+                          onClick={() => void handleRemoveDoc(d.id)}
                           className="shrink-0 text-rose-700 hover:underline"
                           aria-label={`Remover ${d.nome}`}
                           title={`Remover ${d.nome}`}
