@@ -2,7 +2,7 @@
  * Leitor e recortador de extratos — port fiel do software em leitor-e-recortador-de-extratos.
  * Visual: cores e bordas quadradas do ContábilFácil (sem alterar layout/dimensões).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Sliders,
   Columns,
@@ -25,6 +25,14 @@ import {
 } from '../../lib/leitorRecortador/layoutBridge';
 import { exportExtractedRowsToOfx } from '../../lib/leitorRecortador/ofxExport';
 import { loadPdfPagesProgressive, parseAndRenderImage } from '../../lib/leitorRecortador/pdfParser';
+import {
+  detectNubankTransactionRows,
+  extractNubankDataFromCanvas,
+  isNubankExtratoLayout,
+  NUBANK_EXCLUSION_RULES,
+  pdfTextItemsToPosicionado,
+  suggestNubankExtratoPageLayout,
+} from '../../lib/leitorRecortador/nubankExtratoLayout';
 import type { DocMetadata, DocumentColumns, ExtractedRow } from '../../lib/leitorRecortador/types';
 import { mapExtractedRowsToRecorteFielOcr } from '../logic/extratoRecorteFielImport';
 import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
@@ -109,6 +117,40 @@ export function ExtratoLeitorRecortadorModal({
   const [layoutEditId, setLayoutEditId] = useState<string | null>(null);
   const [savedLayouts, setSavedLayouts] = useState<ExtratoOcrLayoutSaved[]>([]);
   const [sideTab, setSideTab] = useState<'config' | 'layouts'>('config');
+  const isNubankLayoutRef = useRef(false);
+
+  const applyAutoLayoutForPage = useCallback(
+    (
+      page: {
+        pageNumber: number;
+        textItems: import('../../lib/leitorRecortador/types').PDFTextItem[];
+        width: number;
+        height: number;
+      },
+      options?: { setBancoIfEmpty?: boolean },
+    ) => {
+      const pos = pdfTextItemsToPosicionado(page.textItems);
+      const isNu = isNubankExtratoLayout(pos, page.width);
+      isNubankLayoutRef.current = isNu;
+
+      if (!isNu) {
+        const parsedRows = detectRowsFromText(page.textItems, 10);
+        setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
+        return;
+      }
+
+      const layout = suggestNubankExtratoPageLayout(pos, page.width, page.height, page.pageNumber);
+      setColumns(layout.columns);
+      setCropStartPct(layout.faixaStartPct);
+      setCropEndPct(layout.faixaEndPct);
+      setExclusionRules((prev) => [...new Set([...prev, ...NUBANK_EXCLUSION_RULES])]);
+      if (options?.setBancoIfEmpty) {
+        setBancoNome((prev) => prev.trim() || 'NUBANK');
+      }
+      setDetectedRows(detectNubankTransactionRows(page.textItems, page.width));
+    },
+    [],
+  );
 
   const refreshSavedLayouts = useCallback(() => {
     if (!companyName.trim()) {
@@ -155,11 +197,15 @@ export function ExtratoLeitorRecortadorModal({
   }, [rowMode, gridStartY, gridRowHeight, gridRowCount, activeCanvas]);
 
   useEffect(() => {
-    if (rowMode === 'auto' && textItems.length > 0) {
-      const parsedRows = detectRowsFromText(textItems, 10);
-      setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
+    if (rowMode === 'auto' && textItems.length > 0 && activeCanvas) {
+      applyAutoLayoutForPage({
+        pageNumber: currentPage,
+        textItems,
+        width: activeCanvas.width,
+        height: activeCanvas.height,
+      });
     }
-  }, [rowMode, textItems]);
+  }, [rowMode, textItems, activeCanvas, currentPage, applyAutoLayoutForPage]);
 
   const handleFileLoaded = useCallback(async (loadedFile: File) => {
     setIsProcessing(true);
@@ -191,13 +237,7 @@ export function ExtratoLeitorRecortadorModal({
               height: firstPage.height,
             });
             setRowMode('auto');
-            const parsedRows = detectRowsFromText(firstPage.textItems, 10);
-            setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
-            setColumns({
-              date: { startX: 5, width: 15 },
-              history: { startX: 22, width: 48 },
-              value: { startX: 72, width: 23 },
-            });
+            applyAutoLayoutForPage(firstPage, { setBancoIfEmpty: true });
             setSuccessMessage(`Página 1 de ${total} pronta. Carregando demais páginas em segundo plano…`);
             setIsProcessing(false);
           },
@@ -264,8 +304,7 @@ export function ExtratoLeitorRecortadorModal({
           : null,
       );
       if (rowMode === 'auto') {
-        const parsedRows = detectRowsFromText(page.textItems, 10);
-        setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
+        applyAutoLayoutForPage(page);
       }
       setSuccessMessage(`Visualizando página ${newPageNumber}`);
     } catch (err: unknown) {
@@ -301,8 +340,24 @@ export function ExtratoLeitorRecortadorModal({
         return;
       }
       const stmtYear = resolveExtratoYearFromContext(textItems, file.name);
+      const nubankRows = isNubankLayoutRef.current
+        ? filterRowsInCropBand(
+            detectNubankTransactionRows(textItems, activeCanvas.width),
+            startY,
+            endY,
+          )
+        : null;
+      const filteredForExtract = nubankRows ?? filteredRows;
       const extracted = propagateExtractedRowDates(
-        extractDataFromCanvas(activeCanvas, textItems, columns, filteredRows, true),
+        isNubankLayoutRef.current && nubankRows
+          ? extractNubankDataFromCanvas(
+              activeCanvas,
+              textItems,
+              columns,
+              nubankRows,
+              stmtYear,
+            )
+          : extractDataFromCanvas(activeCanvas, textItems, columns, filteredForExtract, true),
         stmtYear,
       );
       setRows(extracted);
@@ -327,9 +382,12 @@ export function ExtratoLeitorRecortadorModal({
         const p = page.pageNumber;
         if (p < cropStartPage || p > cropEndPage) return;
         let pageRows: { y: number; height: number }[] = [];
+        const pos = pdfTextItemsToPosicionado(page.textItems);
+        const pageIsNu = isNubankExtratoLayout(pos, page.width);
         if (rowMode === 'auto') {
-          const parsed = detectRowsFromText(page.textItems, 10);
-          pageRows = parsed.map((r) => ({ y: r.y, height: r.height }));
+          pageRows = pageIsNu
+            ? detectNubankTransactionRows(page.textItems, page.width)
+            : detectRowsFromText(page.textItems, 10).map((r) => ({ y: r.y, height: r.height }));
         } else {
           pageRows = Array.from({ length: gridRowCount }).map((_, i) => ({
             y: gridStartY + i * gridRowHeight,
@@ -340,7 +398,22 @@ export function ExtratoLeitorRecortadorModal({
         const endY = p === cropEndPage ? (cropEndPct / 100) * page.height : page.height;
         const filteredRows = filterRowsInCropBand(pageRows, startY, endY);
         if (filteredRows.length > 0) {
-          const extracted = extractDataFromCanvas(page.canvas, page.textItems, columns, filteredRows, true);
+          const stmtYearPage = resolveExtratoYearFromContext(page.textItems, file.name);
+          const nubankPageRows = pageIsNu
+            ? detectNubankTransactionRows(page.textItems, page.width).filter((r) =>
+                filterRowsInCropBand([r], startY, endY).length > 0,
+              )
+            : null;
+          const extracted =
+            pageIsNu && nubankPageRows
+              ? extractNubankDataFromCanvas(
+                  page.canvas,
+                  page.textItems,
+                  columns,
+                  nubankPageRows,
+                  stmtYearPage,
+                )
+              : extractDataFromCanvas(page.canvas, page.textItems, columns, filteredRows, true);
           allExtractedRows = [...allExtractedRows, ...extracted];
         }
       });

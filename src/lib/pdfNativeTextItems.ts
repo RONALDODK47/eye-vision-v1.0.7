@@ -11,6 +11,10 @@ import {
   extratoValorTextoEhSaldoDoDia,
   scanValoresParaSplitExtrato,
 } from './ocrExtratoPositional';
+import {
+  isNubankExtratoLayout,
+  suggestNubankExtratoPageLayout,
+} from './leitorRecortador/nubankExtratoLayout';
 
 const RE_DATA = /\d{1,2}\s*[/.-]\s*\d{1,2}(?:\s*[/.-]\s*\d{2,4})?/;
 const RE_MOEDA = /[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+\.[0-9]{2}/;
@@ -1007,6 +1011,32 @@ export function suggestExtratoBancarioColumns(
 ): { columns: GenericColunaDef[]; faixaStart: number; faixaEnd: number } | null {
   if (items.length < 20 || imgWidth <= 0) return null;
 
+  const posLike = items.map((i) => ({ str: i.str, x: i.x, y: i.y, w: i.w, h: i.h }));
+  if (isNubankExtratoLayout(posLike, imgWidth)) {
+    const imgHeight = Math.max(...items.map((i) => i.y + i.h), 400);
+    const layout = suggestNubankExtratoPageLayout(posLike, imgWidth, imgHeight, 1);
+    const cols = layout.columns;
+    return {
+      columns: [
+        { id: 'data', start: 0, end: (cols.date.width / 100) * imgWidth, color: 'bg-cyan-500' },
+        {
+          id: 'descricao',
+          start: (cols.history.startX / 100) * imgWidth,
+          end: ((cols.history.startX + cols.history.width) / 100) * imgWidth,
+          color: 'bg-blue-500',
+        },
+        {
+          id: 'valorMisto',
+          start: (cols.value.startX / 100) * imgWidth,
+          end: imgWidth,
+          color: 'bg-amber-600',
+        },
+      ],
+      faixaStart: (layout.faixaStartPct / 100) * imgHeight,
+      faixaEnd: (layout.faixaEndPct / 100) * imgHeight,
+    };
+  }
+
   const heights = items.map((i) => i.h).sort((a, b) => a - b);
   const medianH = heights[Math.floor(heights.length / 2)] || 10;
   const pad = Math.max(4, imgWidth * 0.008);
@@ -1260,12 +1290,22 @@ export function suggestExtratoFaixaForPage(
   items: PosicionadoItem[],
   imgHeight: number,
   imgWidth?: number,
+  pageNumber = 1,
 ): { faixaStart: number; faixaEnd: number } {
+  const widthEst = imgWidth ?? Math.max(...items.map((i) => i.x + i.w), 400);
+  const posLike = items.map((i) => ({ str: i.str, x: i.x, y: i.y, w: i.w, h: i.h }));
+  if (isNubankExtratoLayout(posLike, widthEst)) {
+    const layout = suggestNubankExtratoPageLayout(posLike, widthEst, imgHeight, pageNumber);
+    return {
+      faixaStart: (layout.faixaStartPct / 100) * imgHeight,
+      faixaEnd: (layout.faixaEndPct / 100) * imgHeight,
+    };
+  }
+
   const heights = items.map((i) => i.h).filter((h) => h > 0).sort((a, b) => a - b);
   const medianH = heights[Math.floor(heights.length / 2)] || 10;
   const pad = Math.max(4, medianH * 0.35);
   const rows = clusterRowsByY(items);
-  const widthEst = imgWidth ?? Math.max(...items.map((i) => i.x + i.w), 400);
   const pageTop = items.length ? Math.min(...items.map((i) => i.y)) : 0;
   const pageBottom = items.length ? Math.max(...items.map((i) => i.y + i.h)) : imgHeight;
   const upperLimitY = pageTop + (pageBottom - pageTop) * 0.48;
