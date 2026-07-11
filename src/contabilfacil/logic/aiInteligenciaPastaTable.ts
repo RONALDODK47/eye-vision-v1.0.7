@@ -4,13 +4,21 @@
 import {
   extractColigadasFromTexto,
   extractSociosFromTexto,
+  parseIaMarkerNomes,
+  type AiColigada,
   type AiInteligenciaDoc,
   type AiInteligenciaPasta,
   type AiInteligenciaPastaConfig,
+  type AiSocio,
 } from './aiInteligenciaStorage';
 
 export type PastaTableColumn = { key: string; label: string };
 export type PastaTableRow = Record<string, string>;
+
+export type PastaTableStoreExtras = {
+  coligadas?: AiColigada[];
+  socios?: AiSocio[];
+};
 
 export function getPastaTableColumns(pasta: AiInteligenciaPasta): PastaTableColumn[] {
   switch (pasta) {
@@ -81,6 +89,12 @@ function extractHonorariosFromTexto(texto: string): Array<{ nome: string; aliase
     out.push({ nome: cleaned, aliases: [cleaned.toUpperCase()] });
     if (out.length >= 20) break;
   }
+  for (const item of parseIaMarkerNomes(texto, ['honorarios'])) {
+    const key = item.nome.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
   return out;
 }
 
@@ -101,14 +115,50 @@ function extractFinanceirasFromTexto(texto: string): Array<{ nome: string; alias
     out.push({ nome: cleaned, aliases: [cleaned.toUpperCase()], tipo });
     if (out.length >= 20) break;
   }
+  for (const item of parseIaMarkerNomes(texto, ['financeiras'])) {
+    const key = item.nome.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const tipo = /rendimento|aplicac|juros|receita/i.test(item.nome)
+      ? 'Receita financeira'
+      : 'Despesa financeira';
+    out.push({ ...item, tipo });
+  }
   return out;
+}
+
+function rowKey(row: PastaTableRow): string {
+  return `${row.nome ?? ''}|${row.documento ?? ''}`.toUpperCase();
+}
+
+function appendStoreRows(
+  rows: PastaTableRow[],
+  seen: Set<string>,
+  items: Array<{ nome: string; aliases: string[] }>,
+  docLabel: string,
+  extra?: Partial<PastaTableRow>,
+): void {
+  for (const item of items) {
+    const row: PastaTableRow = {
+      documento: docLabel,
+      nome: item.nome,
+      aliases: item.aliases.join(' · '),
+      ...extra,
+    };
+    const key = rowKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(row);
+  }
 }
 
 export function buildPastaTableRows(
   pasta: AiInteligenciaPasta,
   docs: AiInteligenciaDoc[],
+  storeExtras?: PastaTableStoreExtras,
 ): PastaTableRow[] {
   const rows: PastaTableRow[] = [];
+  const seen = new Set<string>();
 
   for (const doc of docs) {
     const texto = String(doc.textoExtraido || '').trim();
@@ -117,56 +167,77 @@ export function buildPastaTableRows(
 
     if (pasta === 'coligadas') {
       for (const item of extractColigadasFromTexto(texto)) {
-        rows.push({
-          documento: docLabel,
-          nome: item.nome,
-          aliases: item.aliases.join(' · '),
-        });
+        const row = { documento: docLabel, nome: item.nome, aliases: item.aliases.join(' · ') };
+        const key = rowKey(row);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(row);
       }
       continue;
     }
 
     if (pasta === 'contratos') {
       for (const item of extractSociosFromTexto(texto)) {
-        rows.push({
-          documento: docLabel,
-          nome: item.nome,
-          aliases: item.aliases.join(' · '),
-        });
+        const row = { documento: docLabel, nome: item.nome, aliases: item.aliases.join(' · ') };
+        const key = rowKey(row);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(row);
       }
       continue;
     }
 
     if (pasta === 'honorarios') {
       for (const item of extractHonorariosFromTexto(texto)) {
-        rows.push({
+        const row = {
           documento: docLabel,
           tipo: 'Honorário',
           nome: item.nome,
           aliases: item.aliases.join(' · '),
-        });
+        };
+        const key = rowKey(row);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(row);
       }
       for (const item of extractSociosFromTexto(texto)) {
-        rows.push({
+        const row = {
           documento: docLabel,
           tipo: 'Sócio / parte',
           nome: item.nome,
           aliases: item.aliases.join(' · '),
-        });
+        };
+        const key = rowKey(row);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(row);
       }
       continue;
     }
 
     if (pasta === 'financeiras') {
       for (const item of extractFinanceirasFromTexto(texto)) {
-        rows.push({
+        const row = {
           documento: docLabel,
           tipo: item.tipo,
           nome: item.nome,
           aliases: item.aliases.join(' · '),
-        });
+        };
+        const key = rowKey(row);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(row);
       }
     }
+  }
+
+  if (pasta === 'coligadas' && storeExtras?.coligadas?.length) {
+    appendStoreRows(rows, seen, storeExtras.coligadas, '(cadastro IA)', {});
+  }
+  if ((pasta === 'contratos' || pasta === 'honorarios') && storeExtras?.socios?.length) {
+    appendStoreRows(rows, seen, storeExtras.socios, '(cadastro IA)', {
+      tipo: pasta === 'honorarios' ? 'Sócio / parte' : undefined,
+    });
   }
 
   return rows.slice(0, 200);

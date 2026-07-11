@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { Sparkles, Table2, X } from 'lucide-react';
+import { Table2, X } from 'lucide-react';
 import {
   PASTA_LABELS,
   loadAiInteligenciaAsync,
@@ -38,9 +38,12 @@ export default memo(function AiInteligenciaPastaTabelaModal({
   onStoreRefresh,
 }: AiInteligenciaPastaTabelaModalProps) {
   const [loading, setLoading] = useState(false);
-  const [extracting, setExtracting] = useState(false);
-  const [extractMsg, setExtractMsg] = useState('');
+  const [statusMsg, setStatusMsg] = useState('');
   const [hydratedDocs, setHydratedDocs] = useState<AiInteligenciaDoc[]>(docs);
+  const [storeExtras, setStoreExtras] = useState<{
+    coligadas: AiInteligenciaStore['coligadas'];
+    socios: AiInteligenciaStore['socios'];
+  }>({ coligadas: [], socios: [] });
 
   const reloadDocs = useCallback(async () => {
     if (!pasta) return;
@@ -48,15 +51,42 @@ export default memo(function AiInteligenciaPastaTabelaModal({
     const store = await loadAiInteligenciaAsync(company);
     const byId = new Map(store.docs.map((d) => [d.id, d]));
     setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
+    setStoreExtras({ coligadas: store.coligadas, socios: store.socios ?? [] });
     setLoading(false);
+    return store;
   }, [company, docs, pasta]);
 
   useEffect(() => {
     if (!open || !pasta) return;
     setHydratedDocs(docs);
-    setExtractMsg('');
-    void reloadDocs();
-  }, [open, pasta, docs, reloadDocs]);
+    setStatusMsg('');
+    let cancelled = false;
+    void (async () => {
+      await reloadDocs();
+      if (cancelled) return;
+      try {
+        const result = await extrairDadosPastaInteligenciaIa(company, pasta);
+        if (cancelled) return;
+        onStoreRefresh?.(result.store);
+        const byId = new Map(result.store.docs.map((d) => [d.id, d]));
+        setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
+        setStoreExtras({
+          coligadas: result.store.coligadas,
+          socios: result.store.socios ?? [],
+        });
+        if (result.message && result.message !== 'Nada a extrair.') {
+          setStatusMsg(result.message);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setStatusMsg(err instanceof Error ? err.message : 'Falha na extração automática');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, pasta, docs, company, reloadDocs, onStoreRefresh]);
 
   const columns = useMemo(
     () => (pasta ? getPastaTableColumns(pasta) : []),
@@ -71,30 +101,13 @@ export default memo(function AiInteligenciaPastaTabelaModal({
 
   const rows: PastaTableRow[] = useMemo(() => {
     if (!pasta) return [];
-    return buildPastaTableRows(pasta, hydratedDocs);
-  }, [pasta, hydratedDocs]);
+    return buildPastaTableRows(pasta, hydratedDocs, storeExtras);
+  }, [pasta, hydratedDocs, storeExtras]);
 
   const analiticasPreview = useMemo(() => {
     if (!pasta || !pastaConfig) return '';
     return buildPastasGruposContasParaIa(company, { [pasta]: pastaConfig });
   }, [company, pasta, pastaConfig]);
-
-  const handleExtract = useCallback(async () => {
-    if (!pasta) return;
-    setExtracting(true);
-    setExtractMsg('');
-    try {
-      const result = await extrairDadosPastaInteligenciaIa(company, pasta);
-      onStoreRefresh?.(result.store);
-      const byId = new Map(result.store.docs.map((d) => [d.id, d]));
-      setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
-      setExtractMsg(result.message);
-    } catch (err) {
-      setExtractMsg(err instanceof Error ? err.message : 'Falha na extração');
-    } finally {
-      setExtracting(false);
-    }
-  }, [company, docs, onStoreRefresh, pasta]);
 
   if (!open || !pasta) return null;
 
@@ -117,39 +130,28 @@ export default memo(function AiInteligenciaPastaTabelaModal({
               Dados extraídos — {PASTA_LABELS[pasta]}
             </h2>
             <p className="text-[9px] text-slate-600 mt-0.5">
-              Clique em «Extrair IA» para processar os documentos e montar a tabela antes de criar regras.
+              A IA processa os documentos automaticamente ao abrir esta tabela.
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              disabled={extracting || docs.length === 0}
-              onClick={() => void handleExtract()}
-              className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1 disabled:opacity-40"
-            >
-              <Sparkles size={12} />
-              {extracting ? 'Extraindo…' : 'Extrair IA'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1 text-slate-500 hover:text-red-600"
-              aria-label="Fechar tabela"
-            >
-              <X size={16} />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-slate-500 hover:text-red-600"
+            aria-label="Fechar tabela"
+          >
+            <X size={16} />
+          </button>
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto p-3 space-y-4">
-          {extractMsg ? (
-            <p className="text-[9px] font-bold uppercase text-green-800">{extractMsg}</p>
+          {statusMsg ? (
+            <p className="text-[9px] font-bold uppercase text-green-800">{statusMsg}</p>
           ) : null}
           {loading ? (
             <p className="text-[10px] font-bold uppercase text-brand-text/60">Carregando textos…</p>
           ) : !temConteudo ? (
             <p className="text-[10px] text-brand-text/60 leading-relaxed">
-              Configure os grupos de contas (entrada/saída) ou clique em «Extrair IA» com documentos na pasta.
+              Configure os grupos de contas (entrada/saída) ou envie documentos — a extração é automática.
             </p>
           ) : (
             <>

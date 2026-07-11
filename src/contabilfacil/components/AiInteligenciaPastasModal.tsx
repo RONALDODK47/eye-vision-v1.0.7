@@ -3,7 +3,7 @@
  * Só pastas + arquivos salvos — cada upload grava de forma independente.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, FolderOpen, Sparkles, Table2, Trash2, X } from 'lucide-react';
+import { Brain, FolderOpen, Table2, Trash2, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import AiInteligenciaPastaTabelaModal from './AiInteligenciaPastaTabelaModal';
 import PlanoGrupoSinteticoPicker from './PlanoGrupoSinteticoPicker';
@@ -29,7 +29,7 @@ import {
   type AiInteligenciaStore,
 } from '../logic/aiInteligenciaStorage';
 import { pastaConfigTemGrupos } from '../logic/aiInteligenciaPastaGrupos';
-import { extrairDadosPastaInteligenciaIa } from '../logic/aiInteligenciaPastaExtract';
+import { extrairPastasPendentesAutomaticamente } from '../logic/aiInteligenciaPastaExtract';
 import { prepareAnexoForRegrasAi } from '../../lib/aiRegrasAnexos';
 import { extractColigadasWithAi, extractSociosWithAi } from '../../lib/aiColigadasExtractClient';
 import { storageBackendLabel, resolveStorageBackendMode } from '../../lib/storageBackend';
@@ -57,7 +57,7 @@ export default memo(function AiInteligenciaPastasModal({
 }: AiInteligenciaPastasModalProps) {
   const [store, setStore] = useState<AiInteligenciaStore>(() => loadAiInteligencia(company));
   const [busy, setBusy] = useState(false);
-  const [extractingPasta, setExtractingPasta] = useState<AiInteligenciaPasta | null>(null);
+  const [autoExtracting, setAutoExtracting] = useState(false);
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
   const [tabelaPasta, setTabelaPasta] = useState<AiInteligenciaPasta | null>(null);
@@ -65,21 +65,43 @@ export default memo(function AiInteligenciaPastasModal({
   const uploadPastaRef = useRef<AiInteligenciaPasta | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const refresh = useCallback(
+    (next: AiInteligenciaStore) => {
+      setStore(next);
+      onChanged?.(next);
+    },
+    [onChanged],
+  );
+
   useEffect(() => {
     if (!open) return;
     setStore(loadAiInteligencia(company));
     setError('');
     setOkMsg('');
     let cancelled = false;
-    void loadAiInteligenciaAsync(company).then((s) => {
+    void loadAiInteligenciaAsync(company).then(async (s) => {
       if (cancelled) return;
-      // Não sobrescreve se o usuário já adicionou arquivos nesta abertura
       setStore((prev) => (prev.docs.length > s.docs.length ? prev : s));
+      if (!s.docs.length) return;
+      setAutoExtracting(true);
+      try {
+        const auto = await extrairPastasPendentesAutomaticamente(company);
+        if (cancelled) return;
+        refresh(auto.store);
+        void persistAiInteligenciaToBackend(company, auto.store);
+        if (auto.messages.length) {
+          setOkMsg(auto.messages.map((m) => m.replace(/^(\w+):/, (_, p) => `${PASTA_LABELS[p as AiInteligenciaPasta] || p}:`)).join(' · '));
+        }
+      } catch {
+        /* extração automática opcional */
+      } finally {
+        if (!cancelled) setAutoExtracting(false);
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [open, company]);
+  }, [open, company, refresh]);
 
   const docsByPasta = useMemo(() => {
     const map: Record<AiInteligenciaPasta, AiInteligenciaDoc[]> = {
@@ -94,37 +116,11 @@ export default memo(function AiInteligenciaPastasModal({
 
   const pastaConfigs = store.pastaConfigs ?? {};
 
-  const refresh = useCallback(
-    (next: AiInteligenciaStore) => {
-      setStore(next);
-      onChanged?.(next);
-    },
-    [onChanged],
-  );
-
   const handlePastaConfigChange = useCallback(
     (pasta: AiInteligenciaPasta, field: 'contaGrupoSaida' | 'contaGrupoEntrada', value: string) => {
       const next = updateAiInteligenciaPastaConfig(company, pasta, { [field]: value });
       refresh(next);
       void persistAiInteligenciaToBackend(company, next);
-    },
-    [company, refresh],
-  );
-
-  const handleExtractPasta = useCallback(
-    async (pasta: AiInteligenciaPasta) => {
-      setExtractingPasta(pasta);
-      setError('');
-      try {
-        const result = await extrairDadosPastaInteligenciaIa(company, pasta);
-        refresh(result.store);
-        void persistAiInteligenciaToBackend(company, result.store);
-        setOkMsg(`${PASTA_LABELS[pasta]}: ${result.message}`);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Falha na extração IA');
-      } finally {
-        setExtractingPasta(null);
-      }
     },
     [company, refresh],
   );
@@ -197,6 +193,11 @@ export default memo(function AiInteligenciaPastasModal({
                 (prepared.images.length > 0 ||
                   /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '') ||
                   prepared.text?.trim().length < 40);
+              const precisaVisaoFinanceiras =
+                pasta === 'financeiras' &&
+                (prepared.images.length > 0 ||
+                  /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '') ||
+                  prepared.text?.trim().length < 40);
               if (precisaVisaoColigadas) {
                 const iaColig = await extractColigadasWithAi({
                   fileName: file.name,
@@ -225,7 +226,25 @@ export default memo(function AiInteligenciaPastasModal({
                 if (iaSoc.ok && iaSoc.coligadas?.length) {
                   allSocios.push(...iaSoc.coligadas);
                   const nomes = iaSoc.coligadas.map((c) => c.nome).join('; ');
-                  texto = `${prepared.text?.trim() ? `${prepared.text.trim()}\n\n` : ''}[IA socios] ${nomes}`.slice(
+                  const marker = pasta === 'honorarios' ? 'honorarios' : 'socios';
+                  texto = `${prepared.text?.trim() ? `${prepared.text.trim()}\n\n` : ''}[IA ${marker}] ${nomes}`.slice(
+                    0,
+                    40_000,
+                  );
+                }
+              }
+              if (precisaVisaoFinanceiras) {
+                const iaFin = await extractSociosWithAi({
+                  fileName: file.name,
+                  text: /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '')
+                    ? ''
+                    : prepared.text,
+                  images: prepared.images,
+                });
+                if (iaFin.ok && iaFin.coligadas?.length) {
+                  allSocios.push(...iaFin.coligadas);
+                  const nomes = iaFin.coligadas.map((c) => c.nome).join('; ');
+                  texto = `${prepared.text?.trim() ? `${prepared.text.trim()}\n\n` : ''}[IA financeiras] ${nomes}`.slice(
                     0,
                     40_000,
                   );
@@ -268,6 +287,17 @@ export default memo(function AiInteligenciaPastasModal({
               aliases: ['AJTF', 'A.J.T.F', 'A J T F', 'A. J. T. F', 'A.J.T.F.'],
               notas: 'Empresa coligada — NÃO é cliente',
             });
+          }
+
+          const pastasAfetadas = [...new Set(quickDocs.map((d) => d.pasta))];
+          setAutoExtracting(true);
+          try {
+            const auto = await extrairPastasPendentesAutomaticamente(company, pastasAfetadas);
+            next = auto.store;
+          } catch {
+            /* mantém next enriquecido acima */
+          } finally {
+            setAutoExtracting(false);
           }
 
           const syncResult = await persistAiInteligenciaToBackend(company, next);
@@ -347,7 +377,7 @@ export default memo(function AiInteligenciaPastasModal({
               <strong>{storageLabel}</strong>.
             </p>
             <p className="text-[8px] font-mono text-amber-800 mt-1">
-              Versão {APP_VERSION} — use a lupa nos grupos sintéticos e «Extrair IA» antes de abrir a Tabela.
+              Versão {APP_VERSION} — a IA extrai os dados automaticamente ao enviar documentos. Use a lupa nos grupos sintéticos.
             </p>
           </div>
           <button
@@ -383,10 +413,11 @@ export default memo(function AiInteligenciaPastasModal({
           <div className="flex items-center justify-between gap-2">
             <p className="text-[9px] font-black uppercase tracking-wider">
               Pastas · {store.docs.length} doc(s)
+              {autoExtracting ? ' · IA extraindo…' : ''}
             </p>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || autoExtracting}
               onClick={() => openPicker()}
               className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1 disabled:opacity-40"
             >
@@ -401,7 +432,6 @@ export default memo(function AiInteligenciaPastasModal({
               const temGrupos = pastaConfigTemGrupos(cfg);
               const docCount = docsByPasta[pasta].length;
               const podeAbrirTabela = docCount > 0 || temGrupos;
-              const extraindo = extractingPasta === pasta;
               return (
               <div
                 key={pasta}
@@ -414,16 +444,6 @@ export default memo(function AiInteligenciaPastasModal({
                     <span className="opacity-50">({docsByPasta[pasta].length})</span>
                   </p>
                   <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-                    <button
-                      type="button"
-                      disabled={busy || extraindo || docCount === 0}
-                      onClick={() => void handleExtractPasta(pasta)}
-                      className="text-[8px] font-bold uppercase inline-flex items-center gap-0.5 opacity-70 hover:opacity-100 disabled:opacity-30"
-                      title="IA extrai dados dos documentos desta pasta para a tabela"
-                    >
-                      <Sparkles size={10} />
-                      {extraindo ? '…' : 'Extrair IA'}
-                    </button>
                     <button
                       type="button"
                       disabled={busy || !podeAbrirTabela}

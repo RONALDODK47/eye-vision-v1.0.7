@@ -640,6 +640,32 @@ export function isNomeColigadaInvalido(nome: string): boolean {
   return false;
 }
 
+/** Lê blocos «[IA coligadas] nome1; nome2» gravados após extração automática. */
+export function parseIaMarkerNomes(
+  texto: string,
+  markers: string[],
+): Array<{ nome: string; aliases: string[] }> {
+  const raw = String(texto ?? '');
+  const out: Array<{ nome: string; aliases: string[] }> = [];
+  const seen = new Set<string>();
+  for (const marker of markers) {
+    const re = new RegExp(`\\[IA\\s+${marker}\\]\\s*([^\\n\\[]+)`, 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(raw)) !== null) {
+      const chunk = String(match[1] ?? '').trim();
+      for (const part of chunk.split(/[;|•·]/)) {
+        const nome = part.trim().replace(/[;,:]+$/g, '');
+        if (nome.length < 2) continue;
+        const key = compactAliasKey(nome) || nome.toUpperCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ nome, aliases: [nome.toUpperCase()] });
+      }
+    }
+  }
+  return out;
+}
+
 export function extractColigadasFromTexto(texto: string): Array<{ nome: string; aliases: string[] }> {
   const raw = String(texto ?? '');
   const lines = raw
@@ -763,6 +789,10 @@ export function extractColigadasFromTexto(texto: string): Array<{ nome: string; 
     ]);
   }
 
+  for (const item of parseIaMarkerNomes(raw, ['coligadas'])) {
+    push(item.nome, item.aliases);
+  }
+
   return found.slice(0, 40);
 }
 
@@ -843,6 +873,10 @@ export function extractSociosFromTexto(texto: string): Array<{ nome: string; ali
       const cleaned = line.replace(/^[-*•·\d.)\]]+\s*/, '').trim();
       if (cleaned.length >= 3) push(cleaned, [cleaned]);
     }
+  }
+
+  for (const item of parseIaMarkerNomes(raw, ['socios', 'honorarios', 'financeiras'])) {
+    push(item.nome, item.aliases);
   }
 
   return found.slice(0, 30);
