@@ -3,7 +3,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { DynamicStyleDiv } from '../lib/dynamicStyle';
 import { cn } from '../lib/utils';
 import type { ExtratoPlanoContaOption } from './ExtratoContaPicker';
@@ -248,7 +248,7 @@ export default memo(function PlanoGrupoSinteticoPicker({
           aria-label="Buscar grupo sintético no plano"
           title="Buscar conta sintética"
         >
-          <ChevronDown size={12} />
+          <Search size={11} />
         </button>
       </div>
       {nomeGrupo ? (
