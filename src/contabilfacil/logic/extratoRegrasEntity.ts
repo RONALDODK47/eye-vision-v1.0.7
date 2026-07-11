@@ -9,6 +9,7 @@ import {
   resolveDescricaoRegraColigada,
   resolveDescricaoRegraSocio,
   razaoSocialColigadaDescricao,
+  sanitizarHistoricoExtratoParaRegra,
 } from './extratoRegrasCobertura';
 import type { ExtratoRegraConta } from './extratoRegrasContasStorage';
 import {
@@ -131,7 +132,9 @@ export function mergeSugestoesIntoRegras(input: {
     const contra = input.resolveContra(sug.contaContrapartida);
     const nature = sug.nature === 'C' ? ('C' as const) : ('D' as const);
     let entityDesc = extractRegraEntityDescricao(sug.descricao, nature, coligadas);
-    let descRegra = normalizeExtratoMatchText(sug.descricao) || entityDesc;
+    let descRegra =
+      normalizeExtratoMatchText(sanitizarHistoricoExtratoParaRegra(sug.descricao, nature, coligadas)) ||
+      entityDesc;
 
     const coligHit = matchColigadaNoHistorico(sug.descricao, coligadas);
     if (coligHit && isNomeColigadaInvalido(descRegra)) {

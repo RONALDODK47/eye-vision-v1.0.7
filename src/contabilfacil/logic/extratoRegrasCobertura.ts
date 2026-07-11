@@ -8,6 +8,10 @@ import {
   resolveCodigoReduzidoDoPlano,
   sanitizeCodigoReduzido,
 } from './planoContasMapper';
+import {
+  extratoHistoricoEhPlausivel,
+  limparHistoricoExtratoMisturado,
+} from '../../lib/ocrExtratoPositional';
 import type { AiColigada, AiSocio } from './aiInteligenciaStorage';
 import {
   compactAliasKey,
@@ -82,7 +86,7 @@ export function findUncoveredExtratoRows(
     const hit = matchExtratoRegraConta(hist, nature, regrasDoBanco);
     if (!hit) {
       uncovered.push({
-        description: row.description,
+        description: sanitizarHistoricoExtratoParaRegra(row.description, nature),
         nature,
         value: row.value,
       });
@@ -121,14 +125,10 @@ export function agrupaPadroesExtratoParaIa(
     const cur = map.get(key);
     if (cur) {
       cur.ocorrencias += 1;
-      const nextDesc = normalizeExtratoRegraTexto(row.description);
-      const curDesc = normalizeExtratoRegraTexto(cur.description);
-      if (nextDesc.length > curDesc.length) {
-        cur.description = row.description;
-      }
+      cur.description = escolherMelhorHistoricoExtratoExemplo(cur.description, row.description);
     } else {
       map.set(key, {
-        description: row.description,
+        description: sanitizarHistoricoExtratoParaRegra(row.description, nature, coligadas),
         nature,
         value: row.value,
         ocorrencias: 1,
@@ -142,7 +142,10 @@ export function agrupaPadroesExtratoParaIa(
 /** Converte padrões agrupados para o payload da API (com contagem e exemplo de histórico). */
 export function padroesParaPayloadIa(padroes: PadraoExtratoParaIa[]): ExtratoLinhaParaRegra[] {
   return padroes.map((p) => {
-    const exemplo = String(p.description ?? '').trim();
+    const exemplo = sanitizarHistoricoExtratoParaRegra(
+      String(p.description ?? '').trim(),
+      p.nature === 'C' ? 'C' : 'D',
+    );
     const entidade = String(p.entidade ?? '').trim();
     const entNorm = entidade ? normalizeExtratoMatchText(entidade) : '';
     const exNorm = normalizeExtratoRegraTexto(exemplo);
@@ -846,7 +849,11 @@ export function findHistoricoExtratoParaColigada(
     const n = row.nature === 'C' ? 'C' : 'D';
     if (nature && n !== nature) continue;
     if (!matchColigadaNoHistorico(row.description, [coligada])) continue;
-    const desc = normalizeExtratoRegraTexto(row.description);
+    const desc = sanitizarHistoricoExtratoParaRegra(
+      normalizeExtratoRegraTexto(row.description),
+      nature ?? 'D',
+      [coligada],
+    );
     if (!desc) continue;
     const score = desc.length + (typeof row.value === 'number' ? row.value * 0.01 : 0);
     if (score > bestScore) {
@@ -956,6 +963,118 @@ export function extractRegraEntityDescricao(
 
   // Terceiros / operacional → poucas regras agrupadas (PIX REC, RENDIMENTO APLICACAO…)
   return extractPadraoOperacionalAgrupado(hist, nature);
+}
+
+const RE_FRAGMENTO_VALOR_OCR =
+  /\b\d{2,4}\s+(?:\d\s+){2,}\d+[DCdc]?\s+(?:\d\s+){1,}\d{2}\b/;
+
+const RE_OPERACOES_DISTINTAS = [
+  /\bIMPOSTOS?\b/i,
+  /\bSERVICOS\b/i,
+  /\bTARIFA\b/i,
+  /\bPIX\b/i,
+  /\bTED\b/i,
+  /\bRENDIMENTOS?\b/i,
+  /\bSALARIOS?\b/i,
+  /\bFOLHA\b/i,
+  /\bFORNECEDOR\b/i,
+];
+
+/** Histórico parece mistura de lançamentos / ruído OCR. */
+export function extratoHistoricoPareceMisturadoOcr(text: string | undefined): boolean {
+  const s = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!s || s.length < 10) return false;
+  if (RE_FRAGMENTO_VALOR_OCR.test(s)) return true;
+  const tokens = s.split(/\s+/);
+  const singles = tokens.filter((t) => t.length === 1 && !/^[DCdc]$/.test(t)).length;
+  if (singles >= 4) return true;
+  let opsHit = 0;
+  for (const re of RE_OPERACOES_DISTINTAS) {
+    if (re.test(s)) opsHit += 1;
+  }
+  if (opsHit >= 2 && tokens.length >= 8) return true;
+  if (/\b[A-ZÀ-Ú]{2,}\s+\d{1,3}(?:\s+\d){3,}/i.test(s)) return true;
+  const cleaned = limparHistoricoExtratoMisturado(s);
+  if (
+    cleaned &&
+    cleaned.length >= 4 &&
+    cleaned.length < s.length * 0.55 &&
+    normalizeExtratoRegraTexto(cleaned) !== normalizeExtratoRegraTexto(s)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function extrairFraseOperacionalDominante(text: string): string {
+  const s = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  const frases = [
+    /\bIMPOSTOS?\s+SOBRE\s+VENDAS\b/i,
+    /\bIMPOSTOS?\s+SOBRE\s+SERVICOS\b/i,
+    /\bPAGAMENTOS?\s+TRIB(?:UTO)?\b/i,
+    /\bTAR(?:\.|\s)?PLANO\s+ADAPT\b/i,
+    /\bPIX\s*(?:ENVIADO|RECEBIDO|REC\.?|EMIT\.?)\b[\w\s./-]{0,40}/i,
+    /\bTED\s*(?:ENV|RECEB)[\w\s./-]{0,40}/i,
+    /\bRENDIMENTOS?\b[\w\s./-]{0,24}/i,
+    /\bIOF\b[\w\s./-]{0,20}/i,
+    /\bSALARIOS?\b[\w\s./-]{0,24}/i,
+    /\bFOLHA\b[\w\s./-]{0,24}/i,
+  ];
+  for (const re of frases) {
+    const m = s.match(re);
+    if (m?.[0]?.trim()) return m[0].replace(/\s+/g, ' ').trim().toUpperCase();
+  }
+  return '';
+}
+
+export function scoreHistoricoParaExemploRegra(text: string | undefined): number {
+  const s = normalizeExtratoRegraTexto(String(text ?? ''));
+  if (!s) return -999;
+  if (extratoHistoricoPareceMisturadoOcr(s)) return -100 + Math.min(s.length, 120) * 0.01;
+  if (!extratoHistoricoEhPlausivel(s)) return -50;
+  let score = 120 - Math.min(s.length, 90);
+  if (/\b(PIX|TED|IMPOSTO|TARIFA|RENDIMENTO|SALARIO|FOLHA|IOF)\b/i.test(s)) score += 15;
+  if (s.length <= 48) score += 10;
+  return score;
+}
+
+export function escolherMelhorHistoricoExtratoExemplo(a: string, b: string): string {
+  const sa = scoreHistoricoParaExemploRegra(a);
+  const sb = scoreHistoricoParaExemploRegra(b);
+  if (sa !== sb) return sa > sb ? a : b;
+  const na = normalizeExtratoRegraTexto(a);
+  const nb = normalizeExtratoRegraTexto(b);
+  return na.length <= nb.length ? a : b;
+}
+
+/** Limpa histórico misturado pelo OCR antes de gravar regra ou enviar à IA. */
+export function sanitizarHistoricoExtratoParaRegra(
+  raw: string,
+  nature: 'D' | 'C' = 'D',
+  coligadas: AiColigada[] = [],
+): string {
+  let s = normalizeExtratoRegraTexto(raw);
+  if (!s) return '';
+  if (!extratoHistoricoPareceMisturadoOcr(s) && extratoHistoricoEhPlausivel(s)) return s;
+  const dominante = extrairFraseOperacionalDominante(s);
+  if (dominante && extratoHistoricoEhPlausivel(dominante)) return dominante;
+  const cleaned = limparHistoricoExtratoMisturado(s);
+  if (
+    cleaned &&
+    extratoHistoricoEhPlausivel(cleaned) &&
+    !extratoHistoricoPareceMisturadoOcr(cleaned)
+  ) {
+    return normalizeExtratoRegraTexto(cleaned);
+  }
+  const entity = extractRegraEntityDescricao(s, nature, coligadas);
+  if (entity && !extratoHistoricoPareceMisturadoOcr(entity)) return entity;
+  const padrao = extractPadraoOperacionalAgrupado(s, nature);
+  if (padrao) return padrao;
+  if (cleaned && extratoHistoricoEhPlausivel(cleaned)) {
+    return normalizeExtratoRegraTexto(cleaned);
+  }
+  return s.slice(0, 60);
 }
 
 /**

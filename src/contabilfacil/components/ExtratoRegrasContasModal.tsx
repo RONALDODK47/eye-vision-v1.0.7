@@ -35,6 +35,7 @@ import {
   isMovimentoAplicacaoFinanceira,
   pickContaRendimentoOuAplicacao,
   pickFallbackContaPorNatureza,
+  sanitizarHistoricoExtratoParaRegra,
 } from '../logic/extratoRegrasCobertura';
 import { validateAiRegrasLote } from '../logic/extratoRegrasAiPrecision';
 import {
@@ -339,7 +340,7 @@ export default memo(function ExtratoRegrasContasModal({
     >();
     for (const row of uncoveredRows) {
       const nature: ExtratoRegraContaNature = row.nature === 'C' ? 'C' : 'D';
-      const descricao = normalizeExtratoRegraTexto(row.description);
+      const descricao = sanitizarHistoricoExtratoParaRegra(row.description, nature);
       if (!descricao) continue;
       const key = `${nature}|${descricao}`;
       const cur = map.get(key);

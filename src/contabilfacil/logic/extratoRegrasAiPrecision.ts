@@ -23,6 +23,7 @@ import {
   temEvidenciaContratoEmprestimo,
   historicoStringsParaLinhasExtrato,
   resolveDescricaoRegraColigada,
+  sanitizarHistoricoExtratoParaRegra,
   type PlanoOptionLike,
 } from './extratoRegrasCobertura';
 import type { ExtratoRegraConta } from './extratoRegrasContasStorage';
@@ -121,6 +122,9 @@ export function validateAiRegraSugestao(
   if (!descricao || descricao.length < 3) return null;
 
   const nature: 'D' | 'C' = sug.nature === 'C' ? 'C' : 'D';
+  descricao = sanitizarHistoricoExtratoParaRegra(descricao, nature, coligadas);
+  if (!descricao || descricao.length < 3) return null;
+
   const byRed = planoByReduzido(plano);
   let contra = resolveContra(sug.contaContrapartida, plano);
   if (!contra || !byRed.has(contra)) return null;
@@ -406,6 +410,9 @@ export function validateAiRegrasLote(
   extratoHistoricos: string[] = [],
   regrasHistoricas: ExtratoRegraConta[] = [],
 ): AiRegraValidada[] {
+  const historicosLimpos = extratoHistoricos.map((h) =>
+    sanitizarHistoricoExtratoParaRegra(h, 'D'),
+  );
   const out: AiRegraValidada[] = [];
   const seen = new Set<string>();
   for (const sug of sugestoes) {
@@ -414,7 +421,7 @@ export function validateAiRegrasLote(
       plano,
       coligadas,
       anexosTexto,
-      extratoHistoricos,
+      historicosLimpos,
       regrasHistoricas,
     );
     if (!v) continue;
