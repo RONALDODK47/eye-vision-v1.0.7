@@ -764,31 +764,9 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       await yieldToMain();
     }
 
-    // Cobertura local obrigatória (100%)
-    {
-      await yieldToMain();
-      const local = aplicarCoberturaLocalRegrasExtrato({
-        company,
-        regras: current,
-        bancoAtivo,
-        planoOptions,
-        extratoSample,
-        anexosTexto: docs,
-      });
-      current = local.regras;
-      fallbackAdded = local.added;
-      totalAdded += local.added;
-      appendRegrasIaProcessMemory(company, bancoAtivo, {
-        fase: 'cobertura_local_100',
-        regrasCriadas: local.added,
-        resumo: `Cobertura local +${local.added}`,
-        regras: filterExtratoRegrasPorBanco(current, bancoAtivo).slice(-80).map((r) => ({
-          descricao: r.descricao,
-          nature: r.nature,
-          contaContrapartida: r.contaContrapartida,
-        })),
-      });
-    }
+    // Sem cobertura local que chuta contas — a decisão é da IA.
+    // Lançamentos que a IA não classificou ficam sem regra (o usuário revisa/reprocessa).
+    fallbackAdded = 0;
     await yieldToMain();
 
     {
@@ -826,7 +804,7 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
         : 'Regras já cobrem o extrato ou plano incompleto.',
       stillOpen === 0
         ? 'Cobertura 100% — todos os lançamentos têm regra para conciliação.'
-        : `Ainda faltam ${stillOpen} padrão(ões) — confira código reduzido no plano.`,
+        : `Faltam ${stillOpen} padrão(ões) que a IA não classificou — ajuste os grupos/documentos e gere novamente (não são chutados automaticamente).`,
     ].filter(Boolean);
 
     return {

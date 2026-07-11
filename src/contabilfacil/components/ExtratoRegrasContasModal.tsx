@@ -21,7 +21,6 @@ import {
 } from '../logic/planoContasMapper';
 import {
   findUncoveredExtratoRows,
-  buildFallbackRegrasParaCobertura,
   agrupaPadroesExtratoParaIa,
   padroesParaPayloadIa,
   filterUncoveredByUserHint,
