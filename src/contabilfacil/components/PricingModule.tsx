@@ -26,7 +26,6 @@ import PricingPrecificacaoReportPanel from './pricing/PricingPrecificacaoReportP
 import PricingPrecificacaoVirtualTable from './pricing/PricingPrecificacaoVirtualTable';
 import PricingRoaVirtualTable from './pricing/PricingRoaVirtualTable';
 import PricingIcmsEstadosPanel from './PricingIcmsEstadosPanel';
-import PricingNotasFiscaisPanel from './pricing/PricingNotasFiscaisPanel';
 import PricingDrePanel from './pricing/PricingDrePanel';
 import { CfSegmentedControl } from './CfSegmentedControl';
 import {
@@ -165,7 +164,6 @@ const STOCK_CATALOG_TABS: { id: StockCatalogTab; label: string }[] = [
 const MAIN_TABS: { id: PricingMainTab; label: string; icon: typeof Package }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
   { id: 'estoque', label: 'Estoque', icon: Package },
-  { id: 'notas-fiscais', label: 'Notas Fiscais', icon: FileText },
   { id: 'custos', label: 'Custos e Despesas', icon: Receipt },
   { id: 'creditos', label: 'Créditos', icon: Layers },
   { id: 'dre', label: 'DRE', icon: ScrollText },
@@ -2687,14 +2685,6 @@ export default function PricingModule({
     </div>
   );
 
-  const renderNotasFiscais = () => (
-    <PricingNotasFiscaisPanel
-      selectedCompany={selectedCompany}
-      workspace={workspace}
-      onWorkspaceChange={updateWorkspace}
-    />
-  );
-
   const renderCreditos = () => {
     const scopeLabel =
       creditSegmentFilter === 'geral'
@@ -3028,7 +3018,6 @@ export default function PricingModule({
 
       {mainTab === 'dashboard' && renderDashboard()}
       {mainTab === 'estoque' && renderEstoque()}
-      {mainTab === 'notas-fiscais' && renderNotasFiscais()}
       {mainTab === 'custos' && renderCustos()}
       {mainTab === 'creditos' && renderCreditos()}
       {mainTab === 'dre' && renderDre()}

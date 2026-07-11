@@ -134,10 +134,10 @@ function pricingBotRun(company: string): TabBotAutomationResult {
   details.push(nfe.message);
 
   if (nfe.needsSync) {
-    details.push('Abra Precificação → Notas Fiscais, informe certificado A1 e senha, depois «Sincronizar NF-e SEFAZ».');
+    details.push('Sincronize NF-e com certificado A1 (integração SEFAZ) antes de aplicar créditos.');
     return {
       ok: false,
-      summary: 'Sincronize NF-e na aba Notas Fiscais (certificado + senha).',
+      summary: 'NF-e ainda não sincronizada — configure certificado A1 e sincronize.',
       details,
       data: { needsSync: true },
     };
@@ -147,7 +147,7 @@ function pricingBotRun(company: string): TabBotAutomationResult {
     ok: nfe.ok,
     summary: nfe.ok
       ? `Créditos a recuperar lançados (${nfe.creditsAdded} crédito(s), ${nfe.stockAdded} item(ns) estoque).`
-      : 'NF-e sem créditos novos — sincronize na aba Notas Fiscais.',
+      : 'NF-e sem créditos novos — sincronize com certificado A1.',
     details,
     data: {
       creditsAdded: nfe.creditsAdded,

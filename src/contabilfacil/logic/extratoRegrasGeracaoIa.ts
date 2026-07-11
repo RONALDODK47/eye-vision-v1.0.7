@@ -72,12 +72,13 @@ import {
 /** Um padrão por chamada à IA — máxima precisão (sem lote). */
 const PADROES_POR_CHAMADA_IA = 1;
 
-type SubEtapa1Id = 'coligadas' | 'socios' | 'honorarios_outros';
+type SubEtapa1Id = 'coligadas' | 'socios' | 'honorarios' | 'financeiras';
 
 const SUB_ETAPA1_LABELS: Record<SubEtapa1Id, string> = {
   coligadas: 'Coligadas / partes relacionadas',
   socios: 'Sócios / pró-labore / retiradas',
-  honorarios_outros: 'Honorários e outros (documentos)',
+  honorarios: 'Honorários',
+  financeiras: 'Despesas e receitas financeiras',
 };
 
 function splitPadroesEtapa1PorCategoria(
@@ -87,7 +88,8 @@ function splitPadroesEtapa1PorCategoria(
   const out: Record<SubEtapa1Id, PadraoExtratoParaIa[]> = {
     coligadas: [],
     socios: [],
-    honorarios_outros: [],
+    honorarios: [],
+    financeiras: [],
   };
   for (const p of padroes) {
     const hist = normalizeExtratoMatchText(p.description);
@@ -97,8 +99,14 @@ function splitPadroesEtapa1PorCategoria(
       /PROLABORE|PRO\s*LABORE|RETIRADA\s+SOCIO|DIVIDENDO|DISTRIBUICAO\s+LUCRO|\bSOCIO\b/.test(hist)
     ) {
       out.socios.push(p);
+    } else if (
+      /TARIFA|CESTA|PACOTE|MANUTENCAO|IOF|JUROS|RENDIMENTO|APLICAC|FINANCEIR|DESPESA\s+BANC|RECEITA\s+FIN/.test(
+        hist,
+      )
+    ) {
+      out.financeiras.push(p);
     } else {
-      out.honorarios_outros.push(p);
+      out.honorarios.push(p);
     }
   }
   return out;
@@ -113,14 +121,17 @@ function buildAnexosSubEtapa1(
   const coligadasMapa = anexosBase.find((b) => b.includes('MAPA COLIGADAS'));
   const scoped: string[] = [];
   if (planoBlock) scoped.push(planoBlock);
+  if (ctx.pastasGruposContas) scoped.push(ctx.pastasGruposContas);
   if (ctx.balanceteUsoContas) scoped.push(ctx.balanceteUsoContas);
   if (sub === 'coligadas') {
     if (coligadasMapa) scoped.push(coligadasMapa);
-    scoped.push(...ctx.inteligenciaBalancetes, ...ctx.inteligenciaColigadas);
+    scoped.push(...ctx.inteligenciaColigadas);
   } else if (sub === 'socios') {
-    scoped.push(...ctx.inteligenciaBalancetes, ...ctx.inteligenciaContratos);
+    scoped.push(...ctx.inteligenciaContratos);
+  } else if (sub === 'honorarios') {
+    scoped.push(...ctx.inteligenciaHonorarios);
   } else {
-    scoped.push(...ctx.inteligenciaBalancetes, ...ctx.inteligenciaOutros);
+    scoped.push(...ctx.inteligenciaFinanceiras);
   }
   return scoped;
 }
@@ -309,7 +320,10 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
 
   const podeUsarIaRemota =
     useAi &&
-    (docsStatus.ok || Boolean(inteligenciaCtx.balanceteUsoContas?.trim()) || coligadas.length > 0);
+    (docsStatus.ok ||
+      Boolean(inteligenciaCtx.balanceteUsoContas?.trim()) ||
+      coligadas.length > 0 ||
+      inteligenciaCtx.pastasComGrupos > 0);
 
   if (useAi && !docsStatus.ok) {
     progress(
@@ -574,23 +588,24 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
         bancoNome: bancoNome || bancoAtivo,
         plano: planoOptions,
         balanceteUsoContas: inteligenciaCtx.balanceteUsoContas,
-        inteligenciaBalancetes: inteligenciaCtx.inteligenciaBalancetes,
+        pastasGruposContas: inteligenciaCtx.pastasGruposContas,
         inteligenciaColigadas: inteligenciaCtx.inteligenciaColigadas,
         inteligenciaContratos: inteligenciaCtx.inteligenciaContratos,
-        inteligenciaOutros: inteligenciaCtx.inteligenciaOutros,
+        inteligenciaHonorarios: inteligenciaCtx.inteligenciaHonorarios,
+        inteligenciaFinanceiras: inteligenciaCtx.inteligenciaFinanceiras,
         coligadas: coligadasPayload,
         socios: sociosIa,
         precisaoMaxima: true as const,
       };
 
-      // ——— ETAPA 1: coligadas → sócios → honorários/outros (1 padrão por chamada) ———
+      // ——— ETAPA 1: coligadas → sócios → honorários → financeiras ———
       const extratoEtapa1 = filterExtratoEtapa1Inteligencia(extratoSample, coligadas, inteligenciaCtx);
       const padroesEtapa1 = agrupaPadroesExtratoParaIa(extratoEtapa1, coligadas);
       const porCategoria = splitPadroesEtapa1PorCategoria(padroesEtapa1, coligadas);
       const anexosEtapa1Base = buildAnexosTextoEtapa1ParaIa(inteligenciaCtx);
 
       let etapa1Total = 0;
-      const subEtapas1: SubEtapa1Id[] = ['coligadas', 'socios', 'honorarios_outros'];
+      const subEtapas1: SubEtapa1Id[] = ['coligadas', 'socios', 'honorarios', 'financeiras'];
 
       for (const sub of subEtapas1) {
         const padroesSub = porCategoria[sub];

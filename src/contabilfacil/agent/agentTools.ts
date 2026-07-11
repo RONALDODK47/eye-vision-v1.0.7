@@ -154,7 +154,7 @@ export const AGENT_TOOL_DECLARATIONS = [
   {
     name: 'navegar_subaba_precificacao',
     description:
-      'Abre subaba da precificação: dashboard, estoque, notas-fiscais, custos, creditos, dre, precificacao, calculos, roa.',
+      'Abre subaba da precificação: dashboard, estoque, custos, creditos, dre, precificacao, calculos, roa.',
     parameters: {
       type: 'object',
       properties: {
@@ -163,7 +163,6 @@ export const AGENT_TOOL_DECLARATIONS = [
           enum: [
             'dashboard',
             'estoque',
-            'notas-fiscais',
             'custos',
             'creditos',
             'dre',

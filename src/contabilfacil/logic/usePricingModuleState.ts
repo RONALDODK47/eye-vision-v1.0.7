@@ -40,7 +40,6 @@ export type PricingMainTab =
   | 'estoque'
   | 'custos'
   | 'creditos'
-  | 'notas-fiscais'
   | 'dre'
   | 'precificacao'
   | 'comparacao-aliquotas'

@@ -56,14 +56,16 @@ export type AiSuggestRegrasParams = {
   anexosTexto?: string[];
   /** Mapa de contas usadas no razão/balancete importado. */
   balanceteUsoContas?: string;
-  /** Documentos da pasta balancetes na Inteligência IA. */
-  inteligenciaBalancetes?: string[];
+  /** Mapa de grupos sintéticos por pasta (entrada/saída). */
+  pastasGruposContas?: string;
   /** Documentos da pasta coligadas na Inteligência IA. */
   inteligenciaColigadas?: string[];
   /** Contratos / sócios na Inteligência IA. */
   inteligenciaContratos?: string[];
-  /** Honorários e outros na Inteligência IA. */
-  inteligenciaOutros?: string[];
+  /** Honorários na Inteligência IA. */
+  inteligenciaHonorarios?: string[];
+  /** Despesas e receitas financeiras na Inteligência IA. */
+  inteligenciaFinanceiras?: string[];
   /** Contexto honorários/folha/categorias obrigatórias. */
   modulosContexto?: string;
   /** Empresas coligadas — NÃO são clientes (AJTF, A.J.T.F, A J T F…). */
@@ -106,10 +108,11 @@ export async function suggestRegrasContasWithAi(
           images: params.images,
           anexosTexto: params.anexosTexto,
           balanceteUsoContas: params.balanceteUsoContas,
-          inteligenciaBalancetes: params.inteligenciaBalancetes,
+          pastasGruposContas: params.pastasGruposContas,
           inteligenciaColigadas: params.inteligenciaColigadas,
           inteligenciaContratos: params.inteligenciaContratos,
-          inteligenciaOutros: params.inteligenciaOutros,
+          inteligenciaHonorarios: params.inteligenciaHonorarios,
+          inteligenciaFinanceiras: params.inteligenciaFinanceiras,
           modulosContexto: params.modulosContexto,
           coligadas: params.coligadas,
           socios: params.socios,

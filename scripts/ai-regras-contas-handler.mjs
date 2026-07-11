@@ -623,15 +623,24 @@ function buildUserPayload(body) {
   const regrasExistentes = Array.isArray(body?.regrasExistentes) ? body.regrasExistentes : [];
   const anexosTexto = Array.isArray(body?.anexosTexto) ? body.anexosTexto : [];
   const balanceteUsoContas = String(body?.balanceteUsoContas ?? '').trim();
-  const inteligenciaBalancetes = Array.isArray(body?.inteligenciaBalancetes)
-    ? body.inteligenciaBalancetes
-    : [];
+  const pastasGruposContas = String(body?.pastasGruposContas ?? '').trim();
   const inteligenciaColigadas = Array.isArray(body?.inteligenciaColigadas)
     ? body.inteligenciaColigadas
     : [];
   const inteligenciaContratos = Array.isArray(body?.inteligenciaContratos)
     ? body.inteligenciaContratos
     : [];
+  const inteligenciaHonorarios = Array.isArray(body?.inteligenciaHonorarios)
+    ? body.inteligenciaHonorarios
+    : [];
+  const inteligenciaFinanceiras = Array.isArray(body?.inteligenciaFinanceiras)
+    ? body.inteligenciaFinanceiras
+    : [];
+  /** @deprecated legado */
+  const inteligenciaBalancetes = Array.isArray(body?.inteligenciaBalancetes)
+    ? body.inteligenciaBalancetes
+    : [];
+  /** @deprecated legado */
   const inteligenciaOutros = Array.isArray(body?.inteligenciaOutros)
     ? body.inteligenciaOutros
     : [];
@@ -809,23 +818,38 @@ function buildUserPayload(body) {
     );
   }
 
-  if (inteligenciaBalancetes.length) {
+  if (pastasGruposContas) {
+    lines.push('', pastasGruposContas.slice(0, 14_000));
+  }
+
+  if (inteligenciaFinanceiras.length || inteligenciaBalancetes.length) {
+    const docs = [...inteligenciaFinanceiras, ...inteligenciaBalancetes];
     lines.push(
       '',
-      `--- Balancetes / razão na Inteligência IA (${inteligenciaBalancetes.length} doc(s)) ---`,
-      inteligenciaBalancetes.join('\n---\n').slice(0, 32_000),
+      `--- Despesas e receitas financeiras (${docs.length}) ---`,
+      docs.join('\n---\n').slice(0, 32_000),
     );
   }
 
-  const outrosAnexosPayload = inteligenciaOutros.length
-    ? inteligenciaOutros
-    : anexosTexto.filter(
+  const honorariosDocs = [...inteligenciaHonorarios, ...inteligenciaOutros];
+  if (honorariosDocs.length) {
+    lines.push(
+      '',
+      `--- Honorários (${honorariosDocs.length}) ---`,
+      honorariosDocs.join('\n---\n').slice(0, 24_000),
+    );
+  }
+
+  const outrosAnexosPayload = anexosTexto.filter(
         (t) =>
           !t.includes('MAPA DE USO DE CONTAS') &&
           !t.includes('MAPA COLIGADAS') &&
-          !inteligenciaBalancetes.some((b) => b && t.includes(b.slice(0, 40))) &&
+          !t.includes('GRUPOS DE CONTAS POR PASTA') &&
           !inteligenciaColigadas.some((b) => b && t.includes(b.slice(0, 40))) &&
-          !inteligenciaContratos.some((b) => b && t.includes(b.slice(0, 40))),
+          !inteligenciaContratos.some((b) => b && t.includes(b.slice(0, 40))) &&
+          !honorariosDocs.some((b) => b && t.includes(b.slice(0, 40))) &&
+          !inteligenciaFinanceiras.some((b) => b && t.includes(b.slice(0, 40))) &&
+          !inteligenciaBalancetes.some((b) => b && t.includes(b.slice(0, 40))),
       );
   if (outrosAnexosPayload.length) {
     lines.push(
@@ -836,9 +860,11 @@ function buildUserPayload(body) {
   } else if (
     anexosTexto.length &&
     !balanceteUsoContas &&
-    !inteligenciaBalancetes.length &&
+    !pastasGruposContas &&
     !inteligenciaColigadas.length &&
     !inteligenciaContratos.length &&
+    !honorariosDocs.length &&
+    !inteligenciaFinanceiras.length &&
     mode !== 'documentos_inteligencia'
   ) {
     lines.push(

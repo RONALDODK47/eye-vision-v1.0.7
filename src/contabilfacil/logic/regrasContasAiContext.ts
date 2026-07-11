@@ -15,22 +15,28 @@ import {
 import { readManagerData, requireCompanyScope } from './companyWorkspace';
 import { sanitizeCodigoReduzido } from './planoContasMapper';
 import { buildPlanoHierarquiaSinteticasParaIa } from './planoContasAiContext';
+import { buildPastasGruposContasParaIa, pastaConfigTemGrupos } from './aiInteligenciaPastaGrupos';
+import { ALL_INTELIGENCIA_PASTAS } from './aiInteligenciaStorage';
 
 export type RegrasContasInteligenciaContext = {
-  /** Todos os textos para a IA — balancete/razão primeiro. */
+  /** Todos os textos para a IA — grupos de contas + docs por pasta. */
   anexosTexto: string[];
-  /** Só documentos da pasta balancetes na Inteligência. */
-  inteligenciaBalancetes: string[];
+  /** Mapa de grupos sintéticos (entrada/saída) por pasta. */
+  pastasGruposContas: string;
   /** Documentos da pasta coligadas. */
   inteligenciaColigadas: string[];
   /** Contratos / sócios. */
   inteligenciaContratos: string[];
-  /** Demais anexos (honorários, outros). */
-  inteligenciaOutros: string[];
+  /** Honorários. */
+  inteligenciaHonorarios: string[];
+  /** Despesas e receitas financeiras. */
+  inteligenciaFinanceiras: string[];
   /** Mapa estruturado: contas que a empresa já usa no razão/balancete. */
   balanceteUsoContas: string;
-  /** Total de documentos com texto extraído (obrigatório para IA de regras). */
+  /** Total de documentos com texto extraído. */
   docsComTexto: number;
+  /** Pastas com grupo de contas configurado (sem documento). */
+  pastasComGrupos: number;
 };
 
 type PlanoRowLike = {
@@ -211,7 +217,7 @@ export function buildColigadasContasPlanoBalanceteParaIa(
   return lines.join('\n').slice(0, 12_000);
 }
 
-/** Ordena docs: balancetes da Inteligência → mapa razão → demais anexos. */
+/** Ordena docs + grupos sintéticos por pasta. */
 export async function buildInteligenciaContextoParaRegrasIaAsync(
   company: string,
   coligadas: AiColigada[] = [],
@@ -222,42 +228,49 @@ export async function buildInteligenciaContextoParaRegrasIaAsync(
   const coligs = coligadas.length ? coligadas : store.coligadas;
   const plano = readManagerData<PlanoRowLike>(scoped, 'plano');
 
-  const balanceteDocs: string[] = [];
   const coligadasDocs: string[] = [];
   const contratosDocs: string[] = [];
-  const outrosDocs: string[] = [];
+  const honorariosDocs: string[] = [];
+  const financeirasDocs: string[] = [];
 
   for (const d of store.docs) {
     const texto = d.textoExtraido.trim();
     if (!texto || texto.startsWith('[arquivo]')) continue;
     const block = `[${d.pasta.toUpperCase()} · ${d.nome}]\n${texto}`;
-    if (d.pasta === 'balancetes') balanceteDocs.push(block);
-    else if (d.pasta === 'coligadas') coligadasDocs.push(block);
+    if (d.pasta === 'coligadas') coligadasDocs.push(block);
     else if (d.pasta === 'contratos') contratosDocs.push(block);
-    else outrosDocs.push(block);
+    else if (d.pasta === 'honorarios') honorariosDocs.push(block);
+    else if (d.pasta === 'financeiras') financeirasDocs.push(block);
   }
 
   const balanceteUsoContas = buildBalanceteUsoContasParaIa(scoped);
   const planoHierarquia = buildPlanoHierarquiaSinteticasParaIa(scoped);
   const coligadasMapa = buildColigadasContasPlanoBalanceteParaIa(scoped, coligs, plano);
+  const pastasGruposContas = buildPastasGruposContasParaIa(scoped, store.pastaConfigs ?? {});
 
   const anexosTexto: string[] = [];
   if (planoHierarquia) anexosTexto.push(planoHierarquia);
+  if (pastasGruposContas) anexosTexto.push(pastasGruposContas);
   if (balanceteUsoContas) anexosTexto.push(balanceteUsoContas);
   if (coligadasMapa) anexosTexto.push(coligadasMapa);
-  anexosTexto.push(...balanceteDocs, ...coligadasDocs, ...contratosDocs, ...outrosDocs);
+  anexosTexto.push(...coligadasDocs, ...contratosDocs, ...honorariosDocs, ...financeirasDocs);
 
   const docsComTexto =
-    balanceteDocs.length + coligadasDocs.length + contratosDocs.length + outrosDocs.length;
+    coligadasDocs.length + contratosDocs.length + honorariosDocs.length + financeirasDocs.length;
+  const pastasComGrupos = ALL_INTELIGENCIA_PASTAS.filter((p) =>
+    pastaConfigTemGrupos(store.pastaConfigs?.[p]),
+  ).length;
 
   return {
     anexosTexto,
-    inteligenciaBalancetes: balanceteDocs,
+    pastasGruposContas,
     inteligenciaColigadas: coligadasDocs,
     inteligenciaContratos: contratosDocs,
-    inteligenciaOutros: outrosDocs,
+    inteligenciaHonorarios: honorariosDocs,
+    inteligenciaFinanceiras: financeirasDocs,
     balanceteUsoContas,
     docsComTexto,
+    pastasComGrupos,
   };
 }
 
@@ -319,19 +332,19 @@ export function buildModulosContextoParaRegrasIa(company: string): string {
 }
 
 /**
- * Anexos focados na etapa 1: coligadas, sócios, honorários/outros + balancete + plano.
- * Ordem: plano → balancete/razão → mapa coligadas → docs por pasta.
+ * Anexos focados na etapa 1: coligadas, sócios, honorários, financeiras + plano + grupos.
  */
 export function buildAnexosTextoEtapa1ParaIa(ctx: RegrasContasInteligenciaContext): string[] {
   const scoped: string[] = [];
   const planoBlock = ctx.anexosTexto.find((b) => b.includes('HIERARQUIA DO PLANO'));
   if (planoBlock) scoped.push(planoBlock);
+  if (ctx.pastasGruposContas) scoped.push(ctx.pastasGruposContas);
   if (ctx.balanceteUsoContas) scoped.push(ctx.balanceteUsoContas);
   const coligadasMapa = ctx.anexosTexto.find((b) => b.includes('MAPA COLIGADAS'));
   if (coligadasMapa) scoped.push(coligadasMapa);
-  scoped.push(...ctx.inteligenciaBalancetes);
   scoped.push(...ctx.inteligenciaColigadas);
   scoped.push(...ctx.inteligenciaContratos);
-  scoped.push(...ctx.inteligenciaOutros);
+  scoped.push(...ctx.inteligenciaHonorarios);
+  scoped.push(...ctx.inteligenciaFinanceiras);
   return scoped;
 }

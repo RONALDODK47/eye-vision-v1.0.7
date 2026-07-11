@@ -3,9 +3,11 @@
  * Só pastas + arquivos salvos — cada upload grava de forma independente.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, FolderOpen, Trash2, X } from 'lucide-react';
+import { Brain, FolderOpen, Table2, Trash2, X } from 'lucide-react';
 import { cn } from '../lib/utils';
+import AiInteligenciaPastaTabelaModal from './AiInteligenciaPastaTabelaModal';
 import {
+  ALL_INTELIGENCIA_PASTAS,
   PASTA_LABELS,
   addAiInteligenciaDocs,
   extractColigadasFromTexto,
@@ -16,6 +18,7 @@ import {
   persistAiInteligenciaToBackend,
   removeAiInteligenciaDoc,
   saveAiInteligencia,
+  updateAiInteligenciaPastaConfig,
   upsertAiColigada,
   upsertColigadasFromExtract,
   upsertSociosFromExtract,
@@ -23,6 +26,7 @@ import {
   type AiInteligenciaPasta,
   type AiInteligenciaStore,
 } from '../logic/aiInteligenciaStorage';
+import { pastaConfigTemGrupos } from '../logic/aiInteligenciaPastaGrupos';
 import { prepareAnexoForRegrasAi } from '../../lib/aiRegrasAnexos';
 import { extractColigadasWithAi, extractSociosWithAi } from '../../lib/aiColigadasExtractClient';
 import { storageBackendLabel, resolveStorageBackendMode } from '../../lib/storageBackend';
@@ -37,7 +41,7 @@ export type AiInteligenciaPastasModalProps = {
 const ACCEPT =
   '.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.xlsx,.xls,.csv,application/pdf,image/*,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-const PASTAS: AiInteligenciaPasta[] = ['coligadas', 'contratos', 'balancetes', 'outros'];
+const PASTAS = ALL_INTELIGENCIA_PASTAS;
 
 export default memo(function AiInteligenciaPastasModal({
   open,
@@ -49,6 +53,7 @@ export default memo(function AiInteligenciaPastasModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
+  const [tabelaPasta, setTabelaPasta] = useState<AiInteligenciaPasta | null>(null);
   const storageLabel = storageBackendLabel(resolveStorageBackendMode());
   const uploadPastaRef = useRef<AiInteligenciaPasta | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -73,12 +78,14 @@ export default memo(function AiInteligenciaPastasModal({
     const map: Record<AiInteligenciaPasta, AiInteligenciaDoc[]> = {
       coligadas: [],
       contratos: [],
-      balancetes: [],
-      outros: [],
+      honorarios: [],
+      financeiras: [],
     };
     for (const d of store.docs) map[d.pasta].push(d);
     return map;
   }, [store.docs]);
+
+  const pastaConfigs = store.pastaConfigs ?? {};
 
   const refresh = useCallback(
     (next: AiInteligenciaStore) => {
@@ -86,6 +93,15 @@ export default memo(function AiInteligenciaPastasModal({
       onChanged?.(next);
     },
     [onChanged],
+  );
+
+  const handlePastaConfigChange = useCallback(
+    (pasta: AiInteligenciaPasta, field: 'contaGrupoSaida' | 'contaGrupoEntrada', value: string) => {
+      const next = updateAiInteligenciaPastaConfig(company, pasta, { [field]: value });
+      refresh(next);
+      void persistAiInteligenciaToBackend(company, next);
+    },
+    [company, refresh],
   );
 
   const openPicker = useCallback((pasta?: AiInteligenciaPasta) => {
@@ -142,7 +158,7 @@ export default memo(function AiInteligenciaPastasModal({
                 if (pasta === 'coligadas') {
                   allExtracted.push(...extractColigadasFromTexto(prepared.text));
                 }
-                if (pasta === 'contratos' || pasta === 'outros') {
+                if (pasta === 'contratos' || pasta === 'honorarios') {
                   allSocios.push(...extractSociosFromTexto(prepared.text));
                 }
               }
@@ -152,7 +168,7 @@ export default memo(function AiInteligenciaPastasModal({
                   /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '') ||
                   prepared.text?.trim().length < 40);
               const precisaVisaoSocios =
-                (pasta === 'contratos' || pasta === 'outros') &&
+                (pasta === 'contratos' || pasta === 'honorarios') &&
                 (prepared.images.length > 0 ||
                   /^imagem\s+anexada:/i.test(prepared.text?.trim() ?? '') ||
                   prepared.text?.trim().length < 40);
@@ -300,9 +316,9 @@ export default memo(function AiInteligenciaPastasModal({
               Inteligência da IA
             </h2>
             <p className="text-[9px] text-slate-600 mt-0.5 leading-snug">
-              Pastas com documentos salvos para a IA. A conciliação{' '}
-              <strong>obrigatoriamente</strong> usa estes arquivos para criar regras (coligadas,
-              sócios, balancetes, honorários). Grava automaticamente em{' '}
+              Pastas com grupos de contas (entrada/saída) e documentos opcionais. A conciliação{' '}
+              <strong>obrigatoriamente</strong> usa esta configuração para criar regras (coligadas,
+              sócios, honorários, financeiras). Grava automaticamente em{' '}
               <strong>{storageLabel}</strong>.
             </p>
           </div>
@@ -352,10 +368,14 @@ export default memo(function AiInteligenciaPastasModal({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {PASTAS.map((pasta) => (
+            {PASTAS.map((pasta) => {
+              const cfg = pastaConfigs[pasta];
+              const temGrupos = pastaConfigTemGrupos(cfg);
+              const podeAbrirTabela = docsByPasta[pasta].length > 0 || temGrupos;
+              return (
               <div
                 key={pasta}
-                className="border border-brand-border bg-brand-sidebar/10 p-2 min-h-[140px] flex flex-col"
+                className="border border-brand-border bg-brand-sidebar/10 p-2 min-h-[180px] flex flex-col"
               >
                 <div className="flex items-center justify-between gap-2 mb-2 shrink-0">
                   <p className="text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1">
@@ -363,18 +383,62 @@ export default memo(function AiInteligenciaPastasModal({
                     {PASTA_LABELS[pasta]}
                     <span className="opacity-50">({docsByPasta[pasta].length})</span>
                   </p>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => openPicker(pasta)}
-                    className="text-[8px] font-bold uppercase underline opacity-70 hover:opacity-100 disabled:opacity-40"
-                  >
-                    + arquivo
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={busy || !podeAbrirTabela}
+                      onClick={() => setTabelaPasta(pasta)}
+                      className="text-[8px] font-bold uppercase inline-flex items-center gap-0.5 opacity-70 hover:opacity-100 disabled:opacity-30"
+                      title="Ver dados extraídos e grupos de contas"
+                    >
+                      <Table2 size={10} />
+                      Tabela
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => openPicker(pasta)}
+                      className="text-[8px] font-bold uppercase underline opacity-70 hover:opacity-100 disabled:opacity-40"
+                    >
+                      + arquivo
+                    </button>
+                  </div>
                 </div>
+
+                <div className="grid grid-cols-2 gap-1.5 mb-2 shrink-0">
+                  <label className="flex flex-col gap-0.5">
+                    <span className="text-[7px] font-bold uppercase opacity-60">Saída (sintética)</span>
+                    <input
+                      type="text"
+                      value={cfg?.contaGrupoSaida ?? ''}
+                      onChange={(e) =>
+                        handlePastaConfigChange(pasta, 'contaGrupoSaida', e.target.value)
+                      }
+                      placeholder="ex. 4.2.1"
+                      className="text-[8px] font-mono border border-brand-border/50 px-1 py-0.5 bg-white"
+                      title="Conta sintética para saídas (D no banco)"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-0.5">
+                    <span className="text-[7px] font-bold uppercase opacity-60">Entrada (sintética)</span>
+                    <input
+                      type="text"
+                      value={cfg?.contaGrupoEntrada ?? ''}
+                      onChange={(e) =>
+                        handlePastaConfigChange(pasta, 'contaGrupoEntrada', e.target.value)
+                      }
+                      placeholder="ex. 3.1.2"
+                      className="text-[8px] font-mono border border-brand-border/50 px-1 py-0.5 bg-white"
+                      title="Conta sintética para entradas (C no banco)"
+                    />
+                  </label>
+                </div>
+
                 {docsByPasta[pasta].length === 0 ? (
                   <p className="text-[8px] text-brand-text/40 italic flex-1">
-                    Vazia — clique em + arquivo para salvar documentos aqui
+                    {temGrupos
+                      ? 'Sem documentos — grupos de contas já orientam a IA.'
+                      : 'Configure os grupos acima ou envie um arquivo.'}
                   </p>
                 ) : (
                   <ul className="space-y-1 flex-1 overflow-y-auto">
@@ -403,7 +467,8 @@ export default memo(function AiInteligenciaPastasModal({
                   </ul>
                 )}
               </div>
-            ))}
+            );
+            })}
           </div>
         </div>
 
@@ -413,6 +478,15 @@ export default memo(function AiInteligenciaPastasModal({
           </button>
         </div>
       </div>
+
+      <AiInteligenciaPastaTabelaModal
+        open={tabelaPasta !== null}
+        company={company}
+        pasta={tabelaPasta}
+        docs={tabelaPasta ? docsByPasta[tabelaPasta] : []}
+        pastaConfig={tabelaPasta ? pastaConfigs[tabelaPasta] : undefined}
+        onClose={() => setTabelaPasta(null)}
+      />
     </div>
   );
 });

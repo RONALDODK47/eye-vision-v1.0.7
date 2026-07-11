@@ -683,7 +683,11 @@ export default memo(function ExtratoRegrasContasModal({
             uncoveredExtrato: padroesParaPayloadIa(padroesChat),
             anexosTexto: docs,
             balanceteUsoContas: inteligenciaCtx.balanceteUsoContas,
-            inteligenciaBalancetes: inteligenciaCtx.inteligenciaBalancetes,
+            pastasGruposContas: inteligenciaCtx.pastasGruposContas,
+            inteligenciaColigadas: inteligenciaCtx.inteligenciaColigadas,
+            inteligenciaContratos: inteligenciaCtx.inteligenciaContratos,
+            inteligenciaHonorarios: inteligenciaCtx.inteligenciaHonorarios,
+            inteligenciaFinanceiras: inteligenciaCtx.inteligenciaFinanceiras,
             modulosContexto: modulosCtx,
             coligadas: coligadas.map((c) => ({
               nome: c.nome,

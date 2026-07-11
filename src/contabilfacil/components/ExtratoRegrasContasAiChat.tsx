@@ -135,7 +135,7 @@ export default memo(function ExtratoRegrasContasAiChat({
         {docsCount === 0 ? (
           <p className="text-[9px] text-rose-800 font-bold leading-snug">
             Obrigatório: envie documentos na Inteligência IA (coligadas, contratos/sócios,
-            balancetes ou outros) — a IA só gera regras com base nesses arquivos.
+            coligadas, sócios, honorários ou financeiras) — ou configure os grupos de contas por pasta.
           </p>
         ) : (
           <p className="text-[9px] text-green-800 font-bold uppercase">

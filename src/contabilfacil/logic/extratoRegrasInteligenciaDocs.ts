@@ -41,7 +41,7 @@ export function extractNomesInteligenciaEtapa1(
   coligadas: AiColigada[],
   ctx?: Pick<
     RegrasContasInteligenciaContext,
-    'inteligenciaColigadas' | 'inteligenciaContratos' | 'inteligenciaOutros'
+    'inteligenciaColigadas' | 'inteligenciaContratos' | 'inteligenciaHonorarios' | 'inteligenciaFinanceiras'
   >,
 ): string[] {
   const nomes = new Set<string>();
@@ -56,7 +56,8 @@ export function extractNomesInteligenciaEtapa1(
   const blocos = [
     ...(ctx?.inteligenciaColigadas ?? []),
     ...(ctx?.inteligenciaContratos ?? []),
-    ...(ctx?.inteligenciaOutros ?? []),
+    ...(ctx?.inteligenciaHonorarios ?? []),
+    ...(ctx?.inteligenciaFinanceiras ?? []),
   ].join('\n');
   for (const raw of blocos.split(/\s+/)) {
     const t = normalizeExtratoMatchText(raw);
@@ -74,7 +75,7 @@ export function filterExtratoEtapa1Inteligencia(
   coligadas: AiColigada[],
   ctx?: Pick<
     RegrasContasInteligenciaContext,
-    'inteligenciaColigadas' | 'inteligenciaContratos' | 'inteligenciaOutros'
+    'inteligenciaColigadas' | 'inteligenciaContratos' | 'inteligenciaHonorarios' | 'inteligenciaFinanceiras'
   >,
 ): ExtratoLinhaParaRegra[] {
   const nomesDocs = extractNomesInteligenciaEtapa1(coligadas, ctx);
@@ -265,9 +266,12 @@ export async function assertInteligenciaDocsParaRegras(
   const temColigadas = coligadas.length > 0;
   const temDocs = ctx.docsComTexto > 0;
 
-  if (temDocs || temRazao || temColigadas) {
+  const temGrupos = ctx.pastasComGrupos > 0;
+
+  if (temDocs || temRazao || temColigadas || temGrupos) {
     const partes: string[] = [];
     if (temDocs) partes.push(`${ctx.docsComTexto} doc(s) Inteligência IA`);
+    if (temGrupos) partes.push(`${ctx.pastasComGrupos} pasta(s) com grupos de contas`);
     if (temRazao) partes.push('mapa do razão/balancete');
     if (temColigadas) partes.push(`${coligadas.length} coligada(s)`);
     return {
@@ -286,6 +290,6 @@ export async function assertInteligenciaDocsParaRegras(
     mensagem:
       razaoCount > 0
         ? 'Importe o plano com código reduzido e abra o balancete — ou envie docs na Inteligência IA.'
-        : 'Envie documentos na Inteligência IA (coligadas, contratos/sócios, balancetes) ou importe o razão/balancete.',
+        : 'Configure grupos de contas na Inteligência IA ou envie documentos (coligadas, sócios, honorários, financeiras).',
   };
 }

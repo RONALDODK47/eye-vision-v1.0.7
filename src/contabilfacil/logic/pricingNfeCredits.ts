@@ -135,7 +135,7 @@ export function applyNfeCreditsToWorkspace(
       workspace,
       creditsAdded: 0,
       stockAdded: 0,
-      message: 'Nenhuma NFe sincronizada — use a aba Notas Fiscais com certificado A1.',
+      message: 'Nenhuma NFe sincronizada — configure certificado A1 e sincronize com a SEFAZ.',
     };
   }
 

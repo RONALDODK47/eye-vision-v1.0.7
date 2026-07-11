@@ -17,8 +17,23 @@ import { sanitizeCodigoReduzido, resolveCodigoReduzidoDoPlano } from './planoCon
 export type AiInteligenciaPasta =
   | 'coligadas'
   | 'contratos'
-  | 'balancetes'
-  | 'outros';
+  | 'honorarios'
+  | 'financeiras';
+
+/** Grupos sintéticos por pasta — orientam a IA sem precisar de documento. */
+export type AiInteligenciaPastaConfig = {
+  /** Classificação ou reduzido da conta sintética para saídas (D no banco). */
+  contaGrupoSaida?: string;
+  /** Classificação ou reduzido da conta sintética para entradas (C no banco). */
+  contaGrupoEntrada?: string;
+};
+
+export const ALL_INTELIGENCIA_PASTAS: AiInteligenciaPasta[] = [
+  'coligadas',
+  'contratos',
+  'honorarios',
+  'financeiras',
+];
 
 export type AiInteligenciaDoc = {
   id: string;
@@ -50,6 +65,7 @@ export type AiInteligenciaStore = {
   docs: AiInteligenciaDoc[];
   coligadas: AiColigada[];
   socios?: AiSocio[];
+  pastaConfigs?: Partial<Record<AiInteligenciaPasta, AiInteligenciaPastaConfig>>;
   updatedAt: string;
 };
 
@@ -68,8 +84,56 @@ function storageKey(company: string): string {
   return `contabilfacil_${companyStorageSlug(company)}_${SUFFIX}`;
 }
 
+function emptyPastaConfigs(): Record<AiInteligenciaPasta, AiInteligenciaPastaConfig> {
+  return {
+    coligadas: {},
+    contratos: {},
+    honorarios: {},
+    financeiras: {},
+  };
+}
+
+function sanitizePastaConfig(raw: Partial<AiInteligenciaPastaConfig> | null | undefined): AiInteligenciaPastaConfig {
+  return {
+    contaGrupoSaida: String(raw?.contaGrupoSaida ?? '').trim() || undefined,
+    contaGrupoEntrada: String(raw?.contaGrupoEntrada ?? '').trim() || undefined,
+  };
+}
+
+function mergePastaConfigs(
+  raw: Partial<Record<string, Partial<AiInteligenciaPastaConfig>>> | null | undefined,
+): Record<AiInteligenciaPasta, AiInteligenciaPastaConfig> {
+  const base = emptyPastaConfigs();
+  if (!raw || typeof raw !== 'object') return base;
+  for (const pasta of ALL_INTELIGENCIA_PASTAS) {
+    base[pasta] = sanitizePastaConfig(raw[pasta]);
+  }
+  return base;
+}
+
+/** Migra pastas legadas (balancetes → financeiras, outros → honorarios). */
+export function normalizeLegacyInteligenciaPasta(pasta: string): AiInteligenciaPasta {
+  if (pasta === 'balancetes') return 'financeiras';
+  if (pasta === 'outros') return 'honorarios';
+  if (
+    pasta === 'coligadas' ||
+    pasta === 'contratos' ||
+    pasta === 'honorarios' ||
+    pasta === 'financeiras'
+  ) {
+    return pasta;
+  }
+  return 'honorarios';
+}
+
 function emptyStore(): AiInteligenciaStore {
-  return { docs: [], coligadas: [], socios: [], updatedAt: new Date().toISOString() };
+  return {
+    docs: [],
+    coligadas: [],
+    socios: [],
+    pastaConfigs: emptyPastaConfigs(),
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function getTextMap(slug: string): Map<string, string> {
@@ -85,19 +149,27 @@ function parseStoreRaw(raw: string | null | undefined): AiInteligenciaStore | nu
   if (!raw?.trim()) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<AiInteligenciaStore>;
-    const docs = Array.isArray(parsed.docs)
-      ? parsed.docs.map(sanitizeDoc).filter((d): d is AiInteligenciaDoc => Boolean(d))
-      : [];
     const coligadas = Array.isArray(parsed.coligadas)
       ? parsed.coligadas.map(sanitizeColigada).filter((c): c is AiColigada => Boolean(c))
       : [];
     const socios = Array.isArray(parsed.socios)
       ? parsed.socios.map(sanitizeSocio).filter((s): s is AiSocio => Boolean(s))
       : [];
+    const pastaConfigs = mergePastaConfigs(parsed.pastaConfigs as Partial<Record<string, Partial<AiInteligenciaPastaConfig>>>);
+    const docs = Array.isArray(parsed.docs)
+      ? parsed.docs
+          .map((d) => {
+            const sanitized = sanitizeDoc(d as Partial<AiInteligenciaDoc>);
+            if (!sanitized) return null;
+            return { ...sanitized, pasta: normalizeLegacyInteligenciaPasta(String((d as Partial<AiInteligenciaDoc>).pasta ?? sanitized.pasta)) };
+          })
+          .filter((d): d is AiInteligenciaDoc => Boolean(d))
+      : [];
     return {
       docs,
       coligadas,
       socios,
+      pastaConfigs,
       updatedAt: parsed.updatedAt || new Date().toISOString(),
     };
   } catch {
@@ -164,13 +236,7 @@ function sanitizeSocio(raw: Partial<AiSocio>): AiSocio | null {
 function sanitizeDoc(raw: Partial<AiInteligenciaDoc>): AiInteligenciaDoc | null {
   const nome = String(raw.nome ?? '').trim();
   if (!nome) return null;
-  const pasta: AiInteligenciaPasta =
-    raw.pasta === 'coligadas' ||
-    raw.pasta === 'contratos' ||
-    raw.pasta === 'balancetes' ||
-    raw.pasta === 'outros'
-      ? raw.pasta
-      : 'outros';
+  const pasta: AiInteligenciaPasta = normalizeLegacyInteligenciaPasta(String(raw.pasta ?? 'honorarios'));
   return {
     id: raw.id?.trim() || crypto.randomUUID(),
     nome,
@@ -213,6 +279,7 @@ export function loadAiInteligencia(company: string): AiInteligenciaStore {
       docs: cached.docs.map((d) => ({ ...d })),
       coligadas: cached.coligadas.map((c) => ({ ...c, aliases: [...c.aliases] })),
       socios: (cached.socios ?? []).map((s) => ({ ...s, aliases: [...s.aliases] })),
+      pastaConfigs: mergePastaConfigs(cached.pastaConfigs),
       updatedAt: cached.updatedAt,
     });
   }
@@ -237,6 +304,7 @@ export function loadAiInteligencia(company: string): AiInteligenciaStore {
       docs: existing.docs.map((d) => ({ ...d })),
       coligadas: existing.coligadas.map((c) => ({ ...c, aliases: [...c.aliases] })),
       socios: (existing.socios ?? []).map((s) => ({ ...s, aliases: [...s.aliases] })),
+      pastaConfigs: mergePastaConfigs(existing.pastaConfigs),
       updatedAt: existing.updatedAt,
     });
   }
@@ -334,6 +402,7 @@ export function saveAiInteligencia(
       .map(sanitizeSocio)
       .filter((s): s is AiSocio => Boolean(s))
       .slice(0, 40),
+    pastaConfigs: mergePastaConfigs(store.pastaConfigs),
     updatedAt: new Date().toISOString(),
   };
 
@@ -411,6 +480,8 @@ export async function loadAiInteligenciaAsync(company: string): Promise<AiInteli
   return applyTextCache(slug, {
     docs: store.docs.map((d) => ({ ...d })),
     coligadas: store.coligadas.map((c) => ({ ...c, aliases: [...c.aliases] })),
+    socios: (store.socios ?? []).map((s) => ({ ...s, aliases: [...s.aliases] })),
+    pastaConfigs: mergePastaConfigs(store.pastaConfigs),
     updatedAt: store.updatedAt,
   });
 }
@@ -425,10 +496,10 @@ export function listAiInteligenciaTextoParaIa(company: string): string[] {
   const slug = companyStorageSlug(company);
   const cache = getTextMap(slug);
   const pastaOrdem: Record<AiInteligenciaPasta, number> = {
-    balancetes: 0,
-    coligadas: 1,
-    contratos: 2,
-    outros: 3,
+    coligadas: 0,
+    contratos: 1,
+    honorarios: 2,
+    financeiras: 3,
   };
   return [...store.docs]
     .sort((a, b) => (pastaOrdem[a.pasta] ?? 9) - (pastaOrdem[b.pasta] ?? 9))
@@ -454,8 +525,12 @@ export function inferPastaFromFileName(name: string): AiInteligenciaPasta {
   const n = name.toLowerCase();
   if (/coligad|grupo|participad|controlad|ajtf|relacionad/.test(n)) return 'coligadas';
   if (/contrato|social|socios|sócios|estatuto/.test(n)) return 'contratos';
-  if (/balanc|razao|razão|dre|plano/.test(n)) return 'balancetes';
-  return 'outros';
+  if (/honor[aá]rio|contador|escritorio|escritório/.test(n)) return 'honorarios';
+  if (/financeir|tarifa|juros|rendimento|aplicac|despesa\s+fin|receita\s+fin/.test(n)) {
+    return 'financeiras';
+  }
+  if (/balanc|razao|razão|dre|plano/.test(n)) return 'financeiras';
+  return 'honorarios';
 }
 
 export function compactAliasKey(text: string): string {
@@ -823,7 +898,7 @@ export function syncSociosFromInteligenciaDocs(company: string): AiSocio[] {
   const store = loadAiInteligencia(company);
   const extracted: Array<{ nome: string; aliases: string[] }> = [];
   for (const d of store.docs) {
-    if (d.pasta !== 'contratos' && d.pasta !== 'outros') continue;
+    if (d.pasta !== 'contratos' && d.pasta !== 'honorarios') continue;
     const texto = d.textoExtraido || '';
     if (!texto.trim() || texto.startsWith('[arquivo]')) continue;
     if (/^imagem\s+anexada:/i.test(texto.trim()) && texto.trim().length < 120) continue;
@@ -1151,9 +1226,20 @@ export function purgeAiInteligenciaCachesForCompany(company: string): void {
 export const PASTA_LABELS: Record<AiInteligenciaPasta, string> = {
   coligadas: 'Coligadas',
   contratos: 'Contratos / sócios',
-  balancetes: 'Balancetes',
-  outros: 'Outros',
+  honorarios: 'Honorários',
+  financeiras: 'Despesas e receitas financeiras',
 };
+
+export function updateAiInteligenciaPastaConfig(
+  company: string,
+  pasta: AiInteligenciaPasta,
+  patch: Partial<AiInteligenciaPastaConfig>,
+): AiInteligenciaStore {
+  const store = loadAiInteligencia(company);
+  const configs = mergePastaConfigs(store.pastaConfigs);
+  configs[pasta] = sanitizePastaConfig({ ...configs[pasta], ...patch });
+  return saveAiInteligencia(company, { ...store, pastaConfigs: configs });
+}
 
 /** Limpa só textos GIGANTES legados — preserva lista de documentos nas pastas. */
 export function migrateAiInteligenciaOutOfLocalStorage(company: string): void {

@@ -32,7 +32,6 @@ export type PricingSubTab =
   | 'custos'
   | 'creditos'
   | 'dre'
-  | 'notas-fiscais'
   | 'precificacao'
   | 'comparacao-aliquotas'
   | 'calculos'
