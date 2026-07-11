@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, Copy, ListOrdered, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { Building2, Copy, ListOrdered, Plus, Trash2, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { ExtratoRegraConta, ExtratoRegraContaNature } from '../logic/extratoRegrasContasStorage';
 import {
@@ -470,6 +470,12 @@ export default memo(function ExtratoRegrasContasModal({
     const bancoAtivo = sanitizeCodigoReduzido(selectedBanco) || matchBancoCode(selectedBanco);
     if (!bancoAtivo) {
       setAddError('Selecione a conta banco (código reduzido) antes.');
+      return;
+    }
+    if (countAiInteligenciaDocs(company) === 0) {
+      setAddError(
+        'Envie documentos na Inteligência IA (coligadas, contratos/sócios, despesas, receitas, etc.) antes de gerar regras.',
+      );
       return;
     }
     if (planoOptions.length === 0) {
@@ -994,20 +1000,6 @@ export default memo(function ExtratoRegrasContasModal({
                     Nova regra · contrapartida (código reduzido) ·{' '}
                     {bancoLabel(selectedBanco) || 'sem banco'}
                   </p>
-                  <button
-                    type="button"
-                    disabled={corrigindoIa || !selectedBanco}
-                    onClick={() => void handleGerarRegrasAutomaticas()}
-                    className="technical-button-primary text-[8px] py-1 px-2.5 inline-flex items-center gap-1 disabled:opacity-40 shrink-0"
-                    title="Analisa extrato e contexto contábil e cria regras de conciliação"
-                  >
-                    {corrigindoIa ? (
-                      <Sparkles size={11} className="shrink-0 animate-pulse" aria-hidden="true" />
-                    ) : (
-                      <Sparkles size={11} className="shrink-0" aria-hidden="true" />
-                    )}
-                    Gerar regras com IA
-                  </button>
                 </div>
                 {uncoveredRows.length > 0 ? (
                   <p className="text-[8px] text-amber-800">

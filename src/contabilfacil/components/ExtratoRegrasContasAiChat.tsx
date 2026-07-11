@@ -126,20 +126,18 @@ export default memo(function ExtratoRegrasContasAiChat({
 
       <div className="p-3 flex flex-col gap-3 min-h-0">
         <p className="text-[10px] text-brand-text/70 leading-snug">
-          A IA trabalha em <strong>etapas sequenciais</strong> com <strong>máxima precisão</strong>:
-          (1) coligadas, sócios e honorários — um padrão por vez, cruzando extrato com balancete e
-          documentos; (2) demais contas do plano — também um padrão por vez. Use o botão abaixo
-          quando estiver pronto. Nada roda sozinho ao importar o extrato.
+          A IA cria regras <strong>somente</strong> com base nos documentos enviados na Inteligência IA
+          (coligadas, sócios, funcionários, honorários, despesas, receitas). Use o botão abaixo quando
+          os arquivos estiverem nas pastas corretas.
         </p>
 
         {docsCount === 0 ? (
           <p className="text-[9px] text-rose-800 font-bold leading-snug">
-            Obrigatório: envie documentos na Inteligência IA (coligadas, contratos/sócios,
-            coligadas, sócios, funcionários, honorários, despesas ou receitas) — ou configure os grupos de contas por pasta.
+            Obrigatório: envie documentos na Inteligência IA antes de gerar regras.
           </p>
         ) : (
           <p className="text-[9px] text-green-800 font-bold uppercase">
-            {docsCount} documento(s) — use &quot;Gerar regras com IA&quot; para criar regras
+            {docsCount} documento(s) — pronto para gerar regras com IA
           </p>
         )}
 

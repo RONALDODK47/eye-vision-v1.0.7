@@ -4,14 +4,15 @@
  */
 import {
   isNomeColigadaInvalido,
+  loadAiInteligencia,
   matchColigadaNoHistorico,
   matchSocioNoHistorico,
   resolveContaColigadaParaNatureza,
   syncColigadasFromInteligenciaDocs,
   syncSociosFromInteligenciaDocs,
   type AiColigada,
+  type AiInteligenciaPasta,
 } from './aiInteligenciaStorage';
-import { readManagerData } from './companyWorkspace';
 import type { ExtratoLinhaParaRegra, PlanoOptionLike } from './extratoRegrasCobertura';
 import {
   extractPadraoOperacionalAgrupado,
@@ -21,13 +22,8 @@ import {
 import type { ExtratoRegraConta } from './extratoRegrasContasStorage';
 import { normalizeExtratoMatchText } from './extratoRegrasContasStorage';
 import { extractRegraEntityDescricao } from './extratoRegrasEntity';
-import {
-  resolveCodigoReduzidoDoPlano,
-  sanitizeCodigoReduzido,
-} from './planoContasMapper';
 import { buildInteligenciaContextoParaRegrasIaAsync, type RegrasContasInteligenciaContext } from './regrasContasAiContext';
-import { listAiColigadasParaIa, syncSociosFromInteligenciaDocs } from './aiInteligenciaStorage';
-import { aplicarRestricaoGrupoPastaInteligencia } from './aiInteligenciaPastaGrupos';
+import { aplicarRestricaoGrupoPastaInteligencia, resolveContrapartidaNoGrupoPastaInteligencia } from './aiInteligenciaPastaGrupos';
 
 export type RegrasLocaisInteligenciaResult = {
   regras: ExtratoRegraConta[];
@@ -37,12 +33,36 @@ export type RegrasLocaisInteligenciaResult = {
 const ETAPA1_HISTORICO_RE =
   /HONOR|CONTAD|ESCRITORIO|ASSESSORIA\s+CONT|PROLABORE|PRO\s*LABORE|RETIRADA\s+SOCIO|DIVIDENDO|DISTRIBUICAO\s+LUCRO|\bSOCIO\b|PARTES?\s+RELACIONAD|COLIGAD|MUTUO|M[UÚ]TUO/i;
 
+const ETAPA1_FUNCIONARIOS_RE =
+  /FOLHA|SALARIO|FERIAS|RESCISAO|ORDENADO|13\s*SALARIO|VALE\s+TRANSPORTE/i;
+
+const ETAPA1_DESPESAS_RE =
+  /TARIFA|IOF|JUROS|MATERIAL|HIGIENE|LIMPEZA|ESGOTO|ALUGUEL|ENERG|ELETRIC|DESPESA|COMPRA|SUPRIM|MANUTEN|TELEFON|INTERNET|PAPELARIA|SANEAGO|AGUA/i;
+
+const ETAPA1_RECEITAS_RE =
+  /RENDIMENTO|RECEITA|JUROS\s+CAP|LIQ\s+COBRAN|CREDITO\s+PIX|CRED\s+PIX/i;
+
+/** Pastas da Inteligência IA que têm pelo menos um documento enviado. */
+export function inteligenciaPastasComDocumentos(company: string): Set<AiInteligenciaPasta> {
+  const out = new Set<AiInteligenciaPasta>();
+  for (const d of loadAiInteligencia(company).docs) {
+    out.add(d.pasta);
+  }
+  return out;
+}
+
 /** Nomes/aliases das pastas coligadas, contratos e outros — para cruzar com o extrato. */
 export function extractNomesInteligenciaEtapa1(
   coligadas: AiColigada[],
   ctx?: Pick<
     RegrasContasInteligenciaContext,
-    'inteligenciaColigadas' | 'inteligenciaContratos' | 'inteligenciaHonorarios' | 'inteligenciaFinanceiras'
+    | 'inteligenciaColigadas'
+    | 'inteligenciaContratos'
+    | 'inteligenciaHonorarios'
+    | 'inteligenciaFuncionarios'
+    | 'inteligenciaDespesas'
+    | 'inteligenciaReceitas'
+    | 'inteligenciaFinanceiras'
   >,
 ): string[] {
   const nomes = new Set<string>();
@@ -58,6 +78,9 @@ export function extractNomesInteligenciaEtapa1(
     ...(ctx?.inteligenciaColigadas ?? []),
     ...(ctx?.inteligenciaContratos ?? []),
     ...(ctx?.inteligenciaHonorarios ?? []),
+    ...(ctx?.inteligenciaFuncionarios ?? []),
+    ...(ctx?.inteligenciaDespesas ?? []),
+    ...(ctx?.inteligenciaReceitas ?? []),
     ...(ctx?.inteligenciaFinanceiras ?? []),
   ].join('\n');
   for (const raw of blocos.split(/\s+/)) {
@@ -70,21 +93,53 @@ export function extractNomesInteligenciaEtapa1(
   return [...nomes];
 }
 
-/** Etapa 1: só lançamentos que podem ser coligada, sócio, honorários ou outros dos documentos. */
+/** Só lançamentos relacionados a pastas que têm documento enviado na Inteligência IA. */
 export function filterExtratoEtapa1Inteligencia(
   rows: ExtratoLinhaParaRegra[],
   coligadas: AiColigada[],
   ctx?: Pick<
     RegrasContasInteligenciaContext,
-    'inteligenciaColigadas' | 'inteligenciaContratos' | 'inteligenciaHonorarios' | 'inteligenciaFinanceiras'
+    | 'inteligenciaColigadas'
+    | 'inteligenciaContratos'
+    | 'inteligenciaHonorarios'
+    | 'inteligenciaFuncionarios'
+    | 'inteligenciaDespesas'
+    | 'inteligenciaReceitas'
+    | 'inteligenciaFinanceiras'
   >,
+  socios: ReturnType<typeof syncSociosFromInteligenciaDocs> = [],
+  pastasComDocs?: Set<AiInteligenciaPasta>,
 ): ExtratoLinhaParaRegra[] {
   const nomesDocs = extractNomesInteligenciaEtapa1(coligadas, ctx);
+  const pastas = pastasComDocs ?? new Set<AiInteligenciaPasta>();
   return rows.filter((row) => {
     const hist = normalizeExtratoMatchText(row.description);
     if (!hist) return false;
-    if (matchColigadaNoHistorico(hist, coligadas)) return true;
-    if (ETAPA1_HISTORICO_RE.test(hist)) return true;
+    const nature = row.nature === 'C' ? ('C' as const) : ('D' as const);
+
+    if (pastas.has('coligadas') && matchColigadaNoHistorico(hist, coligadas)) return true;
+    if (
+      pastas.has('contratos') &&
+      (matchSocioNoHistorico(hist, socios) ||
+        /PROLABORE|PRO\s*LABORE|RETIRADA\s+SOCIO|DIVIDENDO|DISTRIBUICAO\s+LUCRO|\bSOCIO\b/.test(hist))
+    ) {
+      return true;
+    }
+    if (pastas.has('funcionarios') && ETAPA1_FUNCIONARIOS_RE.test(hist)) return true;
+    if (pastas.has('honorarios') && /HONOR|CONTAD|ESCRITORIO|ASSESSORIA\s+CONT/.test(hist)) {
+      return true;
+    }
+    if (pastas.has('despesas') && nature === 'D' && ETAPA1_DESPESAS_RE.test(hist)) return true;
+    if (pastas.has('receitas') && nature === 'C' && ETAPA1_RECEITAS_RE.test(hist)) return true;
+
+    if (ETAPA1_HISTORICO_RE.test(hist)) {
+      if (/HONOR|CONTAD/.test(hist) && pastas.has('honorarios')) return true;
+      if (/PROLABORE|RETIRADA\s+SOCIO|DIVIDENDO|\bSOCIO\b/.test(hist) && pastas.has('contratos')) {
+        return true;
+      }
+      if (matchColigadaNoHistorico(hist, coligadas) && pastas.has('coligadas')) return true;
+    }
+
     const histCompact = hist.replace(/\s+/g, '');
     for (const nome of nomesDocs) {
       if (nome.length >= 4 && hist.includes(nome)) return true;
@@ -109,42 +164,21 @@ export function buildRegrasLocaisFromInteligenciaDocs(input: {
 
   const coligadas = syncColigadasFromInteligenciaDocs(company);
   const socios = syncSociosFromInteligenciaDocs(company);
+  const pastasComDocs = inteligenciaPastasComDocumentos(company);
   const out: ExtratoRegraConta[] = [];
   const seen = new Set<string>();
   const parts: string[] = [];
   const coligadasNoExtrato = new Set<string>();
 
-  for (const row of extratoSample) {
-    const nature = row.nature === 'C' ? ('C' as const) : ('D' as const);
-    const coligHit = matchColigadaNoHistorico(row.description, coligadas);
-    if (!coligHit) continue;
-    coligadasNoExtrato.add(coligHit.id);
-    const desc = resolveDescricaoRegraColigada(coligHit, extratoSample, nature, regrasHistoricas);
-    const contra = resolveContaColigadaParaNatureza(coligHit, nature, plano);
-    if (!desc || !contra) continue;
-    const key = `${nature}|${normalizeExtratoMatchText(desc)}|${contra}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      id: crypto.randomUUID(),
-      nome: desc.slice(0, 40),
-      descricao: desc,
-      nature,
-      contaBanco: banco,
-      contaContrapartida: contra,
-    });
-  }
-  if (out.length > 0) {
-    parts.push(`${out.length} regra(s) de coligada(s) com histórico do extrato`);
-  }
-
-  for (const colig of coligadas) {
-    if (coligadasNoExtrato.has(colig.id)) continue;
-    for (const nature of ['D', 'C'] as const) {
-      const contra = resolveContaColigadaParaNatureza(colig, nature, plano);
-      if (!contra) continue;
-      const desc = resolveDescricaoRegraColigada(colig, extratoSample, nature, regrasHistoricas);
-      if (isNomeColigadaInvalido(desc)) continue;
+  if (pastasComDocs.has('coligadas')) {
+    for (const row of extratoSample) {
+      const nature = row.nature === 'C' ? ('C' as const) : ('D' as const);
+      const coligHit = matchColigadaNoHistorico(row.description, coligadas);
+      if (!coligHit) continue;
+      coligadasNoExtrato.add(coligHit.id);
+      const desc = resolveDescricaoRegraColigada(coligHit, extratoSample, nature, regrasHistoricas);
+      const contra = resolveContaColigadaParaNatureza(coligHit, nature, plano);
+      if (!desc || !contra) continue;
       const key = `${nature}|${normalizeExtratoMatchText(desc)}|${contra}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -157,27 +191,48 @@ export function buildRegrasLocaisFromInteligenciaDocs(input: {
         contaContrapartida: contra,
       });
     }
-  }
-  if (coligadas.some((c) => !coligadasNoExtrato.has(c.id))) {
-    parts.push('coligada(s) sem lançamento — descrição pelo histórico salvo ou nome nos documentos');
+
+    for (const colig of coligadas) {
+      if (coligadasNoExtrato.has(colig.id)) continue;
+      for (const nature of ['D', 'C'] as const) {
+        const contra = resolveContaColigadaParaNatureza(colig, nature, plano);
+        if (!contra) continue;
+        const desc = resolveDescricaoRegraColigada(colig, extratoSample, nature, regrasHistoricas);
+        if (isNomeColigadaInvalido(desc)) continue;
+        const key = `${nature}|${normalizeExtratoMatchText(desc)}|${contra}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          id: crypto.randomUUID(),
+          nome: desc.slice(0, 40),
+          descricao: desc,
+          nature,
+          contaBanco: banco,
+          contaContrapartida: contra,
+        });
+      }
+    }
+    if (out.length > 0) {
+      parts.push(`${out.length} regra(s) de coligada(s) — documentos enviados`);
+    }
   }
 
-  const honorariosCfg = readManagerData<{
-    contaDebito?: string;
-    contaCredito?: string;
-  }>(company, 'honorariosContasAutomacao')[0];
-  const contraHonor =
-    honorariosCfg?.contaDebito &&
-    (resolveCodigoReduzidoDoPlano(honorariosCfg.contaDebito, plano) ||
-      sanitizeCodigoReduzido(honorariosCfg.contaDebito));
-
-  if (contraHonor) {
+  if (pastasComDocs.has('honorarios')) {
     for (const row of extratoSample) {
       if (row.nature !== 'D') continue;
       const hist = normalizeExtratoMatchText(row.description);
       if (!/HONOR|CONTAD|ESCRITORIO|ASSESSORIA\s+CONT/.test(hist)) continue;
       const desc = extractPadraoOperacionalAgrupado(row.description, 'D');
-      const key = `D|${normalizeExtratoMatchText(desc)}|${contraHonor}`;
+      const contra = resolveContrapartidaNoGrupoPastaInteligencia({
+        company,
+        description: row.description,
+        nature: 'D',
+        plano,
+        coligadas,
+        socios,
+      });
+      if (!contra) continue;
+      const key = `D|${normalizeExtratoMatchText(desc)}|${contra}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
@@ -186,58 +241,34 @@ export function buildRegrasLocaisFromInteligenciaDocs(input: {
         descricao: desc.includes('HONOR') ? 'HONORARIOS PAGAMENTO' : desc,
         nature: 'D',
         contaBanco: banco,
-        contaContrapartida: contraHonor,
+        contaContrapartida: contra,
       });
     }
     if (out.some((r) => /HONOR/.test(r.descricao))) {
-      parts.push('honorários conforme módulo/docs');
+      parts.push('honorários — documentos enviados');
     }
   }
 
-  for (const row of extratoSample) {
-    const nature = row.nature === 'C' ? ('C' as const) : ('D' as const);
-    const hist = normalizeExtratoMatchText(row.description);
-    if (!/PROLABORE|RETIRADA\s+SOCIO|DISTRIBUICAO\s+LUCRO|DIVIDENDO/.test(hist)) continue;
+  if (pastasComDocs.has('contratos')) {
+    for (const row of extratoSample) {
+      const nature = row.nature === 'C' ? ('C' as const) : ('D' as const);
+      const hist = normalizeExtratoMatchText(row.description);
+      if (!/PROLABORE|RETIRADA\s+SOCIO|DISTRIBUICAO\s+LUCRO|DIVIDENDO/.test(hist)) continue;
 
-    const socioHit = matchSocioNoHistorico(row.description, socios);
-    const desc = socioHit
-      ? resolveDescricaoRegraSocio(socioHit, extratoSample, nature, regrasHistoricas)
-      : extractRegraEntityDescricao(row.description, nature, coligadas);
-    if (!desc) continue;
-    const contra =
-      resolveCodigoReduzidoDoPlano(
-        readManagerData<{ contaDebito?: string }>(company, 'honorariosContasAutomacao')[0]
-          ?.contaDebito || '',
+      const socioHit = matchSocioNoHistorico(row.description, socios);
+      const desc = socioHit
+        ? resolveDescricaoRegraSocio(socioHit, extratoSample, nature, regrasHistoricas)
+        : extractRegraEntityDescricao(row.description, nature, coligadas);
+      if (!desc) continue;
+      const contra = resolveContrapartidaNoGrupoPastaInteligencia({
+        company,
+        description: row.description,
+        nature,
         plano,
-      ) || '';
-    if (!contra) continue;
-    const key = `${nature}|${normalizeExtratoMatchText(desc)}|${contra}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      id: crypto.randomUUID(),
-      nome: desc.slice(0, 40),
-      descricao: desc,
-      nature,
-      contaBanco: banco,
-      contaContrapartida: contra,
-    });
-  }
-  if (out.some((r) => /PROLABORE|RETIRADA\s+SOCIO|DIVIDENDO/.test(r.descricao))) {
-    parts.push('sócios conforme contratos/docs');
-  }
-
-  // Sócios cadastrados sem lançamento no extrato — regra preventiva com nome do documento
-  for (const socio of socios) {
-    for (const nature of ['D', 'C'] as const) {
-      const contra =
-        resolveCodigoReduzidoDoPlano(
-          readManagerData<{ contaDebito?: string }>(company, 'honorariosContasAutomacao')[0]
-            ?.contaDebito || '',
-          plano,
-        ) || '';
+        coligadas,
+        socios,
+      });
       if (!contra) continue;
-      const desc = resolveDescricaoRegraSocio(socio, extratoSample, nature, regrasHistoricas);
       const key = `${nature}|${normalizeExtratoMatchText(desc)}|${contra}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -249,6 +280,35 @@ export function buildRegrasLocaisFromInteligenciaDocs(input: {
         contaBanco: banco,
         contaContrapartida: contra,
       });
+    }
+
+    for (const socio of socios) {
+      for (const nature of ['D', 'C'] as const) {
+        const desc = resolveDescricaoRegraSocio(socio, extratoSample, nature, regrasHistoricas);
+        const contra = resolveContrapartidaNoGrupoPastaInteligencia({
+          company,
+          description: desc,
+          nature,
+          plano,
+          coligadas,
+          socios,
+        });
+        if (!contra) continue;
+        const key = `${nature}|${normalizeExtratoMatchText(desc)}|${contra}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          id: crypto.randomUUID(),
+          nome: desc.slice(0, 40),
+          descricao: desc,
+          nature,
+          contaBanco: banco,
+          contaContrapartida: contra,
+        });
+      }
+    }
+    if (out.some((r) => /PROLABORE|RETIRADA\s+SOCIO|DIVIDENDO/.test(r.descricao))) {
+      parts.push('sócios — documentos enviados');
     }
   }
 
@@ -281,35 +341,34 @@ export async function assertInteligenciaDocsParaRegras(
   company: string,
 ): Promise<{ ok: boolean; docsComTexto: number; mensagem: string; temRazao: boolean }> {
   const ctx = await buildInteligenciaContextoParaRegrasIaAsync(company);
-  const coligadas = listAiColigadasParaIa(company);
   const temRazao = Boolean(ctx.balanceteUsoContas?.trim());
-  const temColigadas = coligadas.length > 0;
   const temDocs = ctx.docsComTexto > 0;
+  const totalDocs = loadAiInteligencia(company).docs.length;
 
-  const temGrupos = ctx.pastasComGrupos > 0;
-
-  if (temDocs || temRazao || temColigadas || temGrupos) {
-    const partes: string[] = [];
-    if (temDocs) partes.push(`${ctx.docsComTexto} doc(s) Inteligência IA`);
-    if (temGrupos) partes.push(`${ctx.pastasComGrupos} pasta(s) com grupos de contas`);
-    if (temRazao) partes.push('mapa do razão/balancete');
-    if (temColigadas) partes.push(`${coligadas.length} coligada(s)`);
+  if (temDocs) {
     return {
       ok: true,
       docsComTexto: ctx.docsComTexto,
       temRazao,
-      mensagem: partes.join(' · '),
+      mensagem: `${ctx.docsComTexto} documento(s) na Inteligência IA`,
     };
   }
 
-  const razaoCount = readManagerData(company, 'razao').length;
+  if (totalDocs > 0) {
+    return {
+      ok: false,
+      docsComTexto: 0,
+      temRazao,
+      mensagem:
+        `${totalDocs} arquivo(s) enviado(s), mas a IA ainda não extraiu o texto. Aguarde a extração ou reenvie o documento.`,
+    };
+  }
+
   return {
     ok: false,
     docsComTexto: 0,
-    temRazao: false,
+    temRazao,
     mensagem:
-      razaoCount > 0
-        ? 'Importe o plano com código reduzido e abra o balancete — ou envie docs na Inteligência IA.'
-        : 'Configure grupos de contas na Inteligência IA ou envie documentos (coligadas, sócios, funcionários, honorários, despesas e receitas).',
+      'Envie documentos na Inteligência IA (coligadas, contratos/sócios, funcionários, honorários, despesas ou receitas) antes de gerar regras.',
   };
 }

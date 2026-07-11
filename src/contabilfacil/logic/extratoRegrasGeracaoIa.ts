@@ -1,5 +1,5 @@
 /**
- * Gera regras de contas (IA + cobertura local 100%) para conciliar todos os lançamentos.
+ * Gera regras de contas (IA) somente a partir dos documentos da Inteligência IA.
  */
 import { suggestRegrasContasWithAi } from '../../lib/aiRegrasContasClient';
 import {
@@ -46,11 +46,13 @@ import {
   type ExtratoRegraConta,
 } from './extratoRegrasContasStorage';
 import { corrigeRegrasForaGrupoPastaInteligencia, buildFallbackRegrasDentroGrupoPasta } from './aiInteligenciaPastaGrupos';
+import type { AiInteligenciaPasta } from './aiInteligenciaStorage';
 import { buildContaCandidatosTextoParaIa, contaTemSentidoLogicoParaHistorico } from './planoContasMatch';
 import {
   assertInteligenciaDocsParaRegras,
   buildRegrasLocaisFromInteligenciaDocs,
   filterExtratoEtapa1Inteligencia,
+  inteligenciaPastasComDocumentos,
 } from './extratoRegrasInteligenciaDocs';
 import {
   buildAnexosTextoEtapa1ParaIa,
@@ -65,9 +67,7 @@ import {
 import { runInChunks, yieldToMain } from '../lib/deferIdle';
 import {
   appendRegrasIaProcessMemory,
-  buildMemoriaContextoParaIa,
   clearRegrasIaProcessMemory,
-  loadRegrasIaProcessMemory,
 } from './extratoRegrasIaProcessMemory';
 
 /** Um padrão por chamada à IA — máxima precisão (sem lote). */
@@ -130,6 +130,15 @@ function splitPadroesEtapa1PorCategoria(
   return out;
 }
 
+const SUB_ETAPA_PASTA: Record<SubEtapa1Id, AiInteligenciaPasta> = {
+  coligadas: 'coligadas',
+  socios: 'contratos',
+  funcionarios: 'funcionarios',
+  honorarios: 'honorarios',
+  despesas: 'despesas',
+  receitas: 'receitas',
+};
+
 function buildAnexosSubEtapa1(
   sub: SubEtapa1Id,
   ctx: RegrasContasInteligenciaContext,
@@ -156,18 +165,6 @@ function buildAnexosSubEtapa1(
     scoped.push(...ctx.inteligenciaReceitas);
   }
   return scoped;
-}
-
-function classificarTipoPadraoEtapa2(desc: string, nature: string): string {
-  const h = normalizeExtratoMatchText(desc);
-  if (/TARIFA|CESTA|PACOTE|MANUTENCAO/.test(h)) return 'Tarifa bancária';
-  if (/PIX|TED|DOC\b/.test(h) && nature === 'D') return 'Pagamento fornecedor';
-  if (/PIX|TED|DOC\b/.test(h) && nature === 'C') return 'Recebimento cliente';
-  if (/IMPOST|TRIBUTO|IRPJ|PIS|COFINS|FGTS|DARF/.test(h)) return 'Imposto/tributo';
-  if (/RENDIMENTO|APLICACAO|JUROS\s+CAPITALIZ/.test(h)) return 'Rendimento/aplicação';
-  if (/EMPREST|FINANCIAMENTO|MUTUO/.test(h)) return 'Empréstimo/financiamento';
-  if (/FOLHA|SALARIO|FERIAS|PROLABORE/.test(h)) return 'Folha/sócio';
-  return 'Demais contas';
 }
 
 export type GerarRegrasExtratoResult = {
@@ -312,23 +309,25 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
   await yieldToMain();
   const docs = inteligenciaCtx.anexosTexto;
   const docsStatus = await assertInteligenciaDocsParaRegras(company);
-  const modulosBase = buildModulosContextoParaRegrasIa(company);
-
-  const podeUsarIaRemota =
-    useAi &&
-    (docsStatus.ok ||
-      Boolean(inteligenciaCtx.balanceteUsoContas?.trim()) ||
-      coligadas.length > 0 ||
-      inteligenciaCtx.pastasComGrupos > 0);
-
-  if (useAi && !docsStatus.ok) {
-    progress(
-      `Contexto limitado — ${docsStatus.mensagem} Gerando regras locais + balancete do razão quando disponível.`,
-    );
+  if (!docsStatus.ok) {
+    return {
+      regras: params.regras,
+      totalAdded: 0,
+      totalUpdated: 0,
+      stillOpen: extratoSample.length,
+      resumo: '',
+      error: docsStatus.mensagem,
+    };
   }
 
-  if (useAi && !podeUsarIaRemota) {
-    progress('Sem contexto suficiente para IA — apenas regras locais e cobertura automática.');
+  const pastasComDocs = inteligenciaPastasComDocumentos(company);
+  const sociosLista = listAiSociosParaIa(company);
+  const modulosBase = buildModulosContextoParaRegrasIa(company);
+
+  const podeUsarIaRemota = useAi && docsStatus.docsComTexto > 0;
+
+  if (useAi && docsStatus.ok) {
+    progress(`Contexto: ${docsStatus.mensagem} — regras somente a partir dos documentos enviados.`);
   }
 
   clearRegrasIaProcessMemory(company, bancoAtivo);
@@ -596,7 +595,13 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       };
 
       // ——— ETAPA 1: coligadas → sócios → honorários → financeiras ———
-      const extratoEtapa1 = filterExtratoEtapa1Inteligencia(extratoSample, coligadas, inteligenciaCtx);
+      const extratoEtapa1 = filterExtratoEtapa1Inteligencia(
+        extratoSample,
+        coligadas,
+        inteligenciaCtx,
+        sociosLista,
+        pastasComDocs,
+      );
       const padroesEtapa1 = agrupaPadroesExtratoParaIa(extratoEtapa1, coligadas);
       const porCategoria = splitPadroesEtapa1PorCategoria(padroesEtapa1, coligadas);
       const anexosEtapa1Base = buildAnexosTextoEtapa1ParaIa(inteligenciaCtx);
@@ -612,6 +617,7 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       ];
 
       for (const sub of subEtapas1) {
+        if (!pastasComDocs.has(SUB_ETAPA_PASTA[sub])) continue;
         const padroesSub = porCategoria[sub];
         if (padroesSub.length === 0) continue;
 
@@ -680,119 +686,12 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       }
 
       if (etapa1Total > 0) {
-        progress(`Etapa 1 concluída: ${etapa1Total} regra(s) de coligadas/sócios/outros.`);
-      }
-      await yieldToMain();
-
-      // ——— ETAPA 2: demais contas (1 padrão por chamada) ———
-      const uncoveredAll = findUncoveredExtratoRows(
-        extratoSample,
-        filterExtratoRegrasPorBanco(current, bancoAtivo),
-      );
-      const padroesSemRegra = agrupaPadroesExtratoParaIa(uncoveredAll, coligadas);
-      const lotesEtapa2 = chunkUncoveredForAiBatches(padroesSemRegra, PADROES_POR_CHAMADA_IA);
-
-      if (lotesEtapa2.length > 0) {
-        progress(
-          `Etapa 2 — demais contas: ${padroesSemRegra.length} padrão(ões), ` +
-            `${lotesEtapa2.length} análise(s) individual(is)…`,
-        );
-
-        let etapa2Total = 0;
-        for (let i = 0; i < lotesEtapa2.length; i++) {
-          const lote = lotesEtapa2[i]!;
-          const padrao = lote[0]!;
-          const tipo = classificarTipoPadraoEtapa2(padrao.description, padrao.nature);
-          const label = padrao.entidade || padrao.description.slice(0, 48);
-          progress(`Etapa 2 (${i + 1}/${lotesEtapa2.length}) — ${tipo}: ${label}…`);
-
-          const payload = padroesParaPayloadIa(lote);
-          const candidatos = buildContaCandidatosTextoParaIa(
-            [{ description: padrao.entidade || padrao.description, nature: padrao.nature }],
-            planoOptions,
-          );
-
-          const modulosCtx = [
-            modulosBase,
-            '=== ETAPA 2 — DEMAIS CONTAS (PRECISÃO MÁXIMA, UM PADRÃO POR VEZ) ===',
-            `Tipo deste padrão: ${tipo}.`,
-            candidatos,
-            buildMemoriaContextoParaIa(loadRegrasIaProcessMemory(company, bancoAtivo)),
-          ]
-            .filter(Boolean)
-            .join('\n\n');
-
-          const result = await suggestRegrasContasWithAi({
-            ...iaBase,
-            mode: 'corrigir_cobertura',
-            message: [
-              `ETAPA 2 — padrão ${i + 1} de ${lotesEtapa2.length} (${tipo}):`,
-              `Analise SOMENTE: "${padrao.description.slice(0, 120)}" (${padrao.nature}).`,
-              'Cruze com balancete e plano. Crie NO MÁXIMO 1 regra.',
-              'Coligadas/sócios já foram tratados na etapa 1.',
-            ].join(' '),
-            extratoSample: payload,
-            uncoveredExtrato: payload,
-            anexosTexto: docs,
-            modulosContexto: modulosCtx,
-            regrasExistentes: regrasExistentesPayload(),
-          });
-
-          if (result.resumo) lastResumo = [lastResumo, result.resumo].filter(Boolean).join(' ');
-          if (result.regras.length > 0) {
-            const historicoIa = lote.map((u) => u.description);
-            const sanitized = sanitizeEValidarLote(result.regras, historicoIa);
-            if (sanitized.length > 0) {
-              applySugestoes(sanitized);
-              etapa2Total += sanitized.length;
-              appendRegrasIaProcessMemory(company, bancoAtivo, {
-                fase: 'ia_etapa2_demais_contas_plano',
-                regrasCriadas: sanitized.length,
-                resumo: result.resumo,
-                regras: sanitized,
-              });
-            }
-          } else if (!result.ok && result.detail && i === 0) {
-            progress(`Etapa 2: ${result.detail}`);
-          }
-          await yieldToMain();
-        }
-
-        if (etapa2Total > 0) {
-          progress(`Etapa 2 concluída: ${etapa2Total} regra(s) das demais contas.`);
-        }
+        progress(`Etapa 1 concluída: ${etapa1Total} regra(s) a partir dos documentos enviados.`);
       }
       await yieldToMain();
     }
 
-    // Cobertura pós-IA: só dentro do grupo configurado (sem buscar no plano inteiro).
-    {
-      await yieldToMain();
-      const local = aplicarCoberturaLocalRegrasExtrato({
-        company,
-        regras: current,
-        bancoAtivo,
-        planoOptions,
-        extratoSample,
-        anexosTexto: docs,
-      });
-      current = local.regras;
-      fallbackAdded = local.added;
-      totalAdded += local.added;
-      if (local.added > 0) {
-        progress(`Cobertura grupo: +${local.added} regra(s) dentro dos grupos configurados.`);
-      }
-      appendRegrasIaProcessMemory(company, bancoAtivo, {
-        fase: 'cobertura_grupo_pasta',
-        regrasCriadas: local.added,
-        resumo: `Cobertura grupo +${local.added}`,
-        regras: filterExtratoRegrasPorBanco(current, bancoAtivo).slice(-80).map((r) => ({
-          descricao: r.descricao,
-          nature: r.nature,
-          contaContrapartida: r.contaContrapartida,
-        })),
-      });
-    }
+    fallbackAdded = 0;
     await yieldToMain();
 
     {
@@ -830,7 +729,7 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
         : 'Regras já cobrem o extrato ou plano incompleto.',
       stillOpen === 0
         ? 'Cobertura 100% — todos os lançamentos têm regra para conciliação.'
-        : `Faltam ${stillOpen} padrão(ões) sem regra — a IA não classificou e não há match no grupo configurado.`,
+        : `Faltam ${stillOpen} padrão(ões) — envie documento na pasta correspondente da Inteligência IA e gere novamente.`,
     ].filter(Boolean);
 
     return {
