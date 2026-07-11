@@ -24,10 +24,27 @@ export function resolveServerStorageBackend() {
   return 'docker';
 }
 
+function resolveSupabaseProjectRef(url) {
+  const fromEnv = String(process.env.SUPABASE_PROJECT_REF || process.env.SUPABASE_REF || '').trim();
+  if (fromEnv) return fromEnv;
+  const hostMatch = String(url || '').match(/postgres\.([a-z0-9]+):/i);
+  if (hostMatch?.[1]) return hostMatch[1];
+  const dashboardMatch = String(process.env.SUPABASE_URL || '').match(/https:\/\/([a-z0-9]+)\.supabase\.co/i);
+  if (dashboardMatch?.[1]) return dashboardMatch[1];
+  return '';
+}
+
 export function getDatabaseUrl() {
   let url = String(process.env.DATABASE_URL || '').trim();
   // Render/Supabase: remove colchetes do placeholder [SENHA] se colados por engano.
   url = url.replace(/:(\[([^[\]]+)\])@/, ':$2@');
+
+  // Pooler Supabase exige usuário postgres.[ref] — corrige //postgres: comum no painel.
+  if (/pooler\.supabase\.com/i.test(url) && /\/\/postgres:(?!\.)/i.test(url)) {
+    const ref = resolveSupabaseProjectRef(url) || 'flyeahipaobtoixscfzq';
+    url = url.replace(/\/\/postgres:/i, `//postgres.${ref}:`);
+  }
+
   return url;
 }
 

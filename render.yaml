@@ -19,6 +19,8 @@ services:
         value: supabase
       - key: DATABASE_URL
         sync: false
+      - key: SUPABASE_PROJECT_REF
+        value: flyeahipaobtoixscfzq
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
