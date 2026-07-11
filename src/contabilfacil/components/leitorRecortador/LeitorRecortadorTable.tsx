@@ -6,7 +6,7 @@
 import React from 'react';
 import type { ExtractedRow } from '../../../lib/leitorRecortador/types';
 import { Trash2, TrendingDown, TrendingUp, HelpCircle, FileSpreadsheet, Plus, AlertCircle, Filter, X, Check, EyeOff, Wallet, DollarSign, Image, PencilLine } from 'lucide-react';
-import { analyzeValueString } from '../../../lib/leitorRecortador/cropper';
+import { analyzeValueString, loadExtractedRowPrunePrefs, pruneExtractedRows, saveExtractedRowPrunePrefs } from '../../../lib/leitorRecortador/cropper';
 import { FreeNumericInput } from '../FreeNumericInput';
 import { parseLocaleNumber } from '../../../lib/localeNumber';
 
@@ -18,6 +18,7 @@ interface TableViewerProps {
   onClearAll: () => void;
   exclusionRules: string[];
   setExclusionRules: React.Dispatch<React.SetStateAction<string[]>>;
+  pruneStorageKey?: string;
 }
 
 export function LeitorRecortadorTable({
@@ -28,6 +29,7 @@ export function LeitorRecortadorTable({
   onClearAll,
   exclusionRules,
   setExclusionRules,
+  pruneStorageKey = '',
 }: TableViewerProps) {
   const [invertCrops, setInvertCrops] = React.useState(false);
   const [hoveredRowId, setHoveredRowId] = React.useState<string | null>(null);
@@ -118,20 +120,18 @@ export function LeitorRecortadorTable({
   };
 
   const handleDeleteRowsWithoutValue = () => {
-    setRows((prev) =>
-      prev.filter((row) => {
-        const v = (row.valueText || '').trim();
-        return v.length > 0;
-      }),
-    );
+    saveExtractedRowPrunePrefs(pruneStorageKey, { removeNoNumericValue: true });
+    setRows((prev) => pruneExtractedRows(prev, { removeNoNumericValue: true }));
   };
 
   const handleDeleteRowsWithoutHistory = () => {
-    setRows((prev) => prev.filter((row) => (row.historyText || '').trim().length > 0));
+    saveExtractedRowPrunePrefs(pruneStorageKey, { removeNoHistory: true });
+    setRows((prev) => pruneExtractedRows(prev, { removeNoHistory: true }));
   };
 
   const handleDeleteRowsWithoutDate = () => {
-    setRows((prev) => prev.filter((row) => (row.dateText || '').trim().length > 0));
+    saveExtractedRowPrunePrefs(pruneStorageKey, { removeNoDate: true });
+    setRows((prev) => pruneExtractedRows(prev, { removeNoDate: true }));
   };
 
   const handleAddRow = () => {
@@ -188,40 +188,6 @@ export function LeitorRecortadorTable({
             >
               <Plus className="w-3.5 h-3.5" />
               Inserir Linha
-            </button>
-            <button
-              type="button"
-              onClick={handleDeleteRowsWithoutValue}
-              className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
-              title="Remove linhas com coluna Valor vazia"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Excluir sem valor
-            </button>
-            <button
-              type="button"
-              onClick={handleDeleteRowsWithoutHistory}
-              className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
-              title="Remove linhas com coluna Histórico vazia"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Excluir sem histórico
-            </button>
-            <button
-              type="button"
-              onClick={handleDeleteRowsWithoutDate}
-              className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
-              title="Remove linhas com coluna Data vazia"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Excluir sem data
-            </button>
-            <button
-              onClick={onClearAll}
-              className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Limpar Tudo
             </button>
             <button
               id="export-csv-btn"
@@ -343,6 +309,50 @@ export function LeitorRecortadorTable({
           </div>
         );
       })()}
+
+      {/* Botões de exclusão em lote — acima dos filtros por texto */}
+      {rows.length > 0 && (
+        <div className="px-6 py-4 bg-white border-b border-brand-border flex flex-wrap items-center gap-2 animate-fade-in">
+          <span className="text-[10px] font-bold text-brand-text/60 uppercase tracking-wider mr-1">
+            Limpar linhas:
+          </span>
+          <button
+            type="button"
+            onClick={handleDeleteRowsWithoutValue}
+            className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+            title="Remove linhas sem número na coluna Valor (ex.: Agência, VALORES)"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Excluir sem valor
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteRowsWithoutHistory}
+            className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+            title="Remove linhas com coluna Histórico vazia"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Excluir sem histórico
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteRowsWithoutDate}
+            className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+            title="Remove linhas com coluna Data vazia"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Excluir sem data
+          </button>
+          <button
+            type="button"
+            onClick={onClearAll}
+            className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Limpar Tudo
+          </button>
+        </div>
+      )}
 
       {/* Exclusion Rules Management Card */}
       {rows.length > 0 && (

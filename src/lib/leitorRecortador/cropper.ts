@@ -94,6 +94,79 @@ function extratoRowTemLancamento(row: Pick<ExtractedRow, 'historyText' | 'valueT
   return hasValue || hasHist;
 }
 
+export type ExtractedRowPrunePrefs = {
+  removeNoNumericValue?: boolean;
+  removeNoHistory?: boolean;
+  removeNoDate?: boolean;
+};
+
+const PRUNE_STORAGE_PREFIX = 'extrato-row-prune:';
+
+/** Valor monetário real — precisa ter dígito e parse válido (exclui «Agência», «VALORES»). */
+export function rowHasNumericValue(
+  row: Pick<ExtractedRow, 'valueText' | 'parsedValue'>,
+): boolean {
+  const v = (row.valueText || '').trim();
+  if (!v || !/\d/.test(v)) return false;
+  if (row.parsedValue != null && !Number.isNaN(row.parsedValue)) return true;
+  const { parsedValue } = analyzeValueString(v);
+  return parsedValue != null && !Number.isNaN(parsedValue);
+}
+
+export function rowHasMeaningfulHistory(row: Pick<ExtractedRow, 'historyText'>): boolean {
+  return (row.historyText || '').trim().length > 0;
+}
+
+export function rowHasMeaningfulDate(row: Pick<ExtractedRow, 'dateText'>): boolean {
+  const d = (row.dateText || '').trim();
+  return d.length > 0 && /\d/.test(d);
+}
+
+export function pruneExtractedRows(
+  rows: ExtractedRow[],
+  prefs: ExtractedRowPrunePrefs,
+): ExtractedRow[] {
+  return rows.filter((row) => {
+    if (prefs.removeNoNumericValue && !rowHasNumericValue(row)) return false;
+    if (prefs.removeNoHistory && !rowHasMeaningfulHistory(row)) return false;
+    if (prefs.removeNoDate && !rowHasMeaningfulDate(row)) return false;
+    return true;
+  });
+}
+
+export function loadExtractedRowPrunePrefs(storageKey: string): ExtractedRowPrunePrefs {
+  if (!storageKey) return {};
+  try {
+    const raw = sessionStorage.getItem(PRUNE_STORAGE_PREFIX + storageKey);
+    return raw ? (JSON.parse(raw) as ExtractedRowPrunePrefs) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function clearExtractedRowPrunePrefs(storageKey: string): void {
+  if (!storageKey) return;
+  try {
+    sessionStorage.removeItem(PRUNE_STORAGE_PREFIX + storageKey);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function saveExtractedRowPrunePrefs(
+  storageKey: string,
+  patch: ExtractedRowPrunePrefs,
+): ExtractedRowPrunePrefs {
+  if (!storageKey) return patch;
+  const merged = { ...loadExtractedRowPrunePrefs(storageKey), ...patch };
+  try {
+    sessionStorage.setItem(PRUNE_STORAGE_PREFIX + storageKey, JSON.stringify(merged));
+  } catch {
+    /* ignore quota */
+  }
+  return merged;
+}
+
 function resolveExtratoStatementYear(rows: ExtractedRow[], statementYear?: string): string {
   if (statementYear?.trim()) return statementYear.trim();
   const blob = rows.map((r) => r.dateText).join(' ');

@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import type { OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
 import type { GenericOcrRow } from '../../lib/parcelamentoColunasExtract';
-import { detectRowsFromText, extractDataFromCanvas, filterRowsInCropBand, propagateExtractedRowDates } from '../../lib/leitorRecortador/cropper';
+import { detectRowsFromText, clearExtractedRowPrunePrefs, extractDataFromCanvas, filterRowsInCropBand, loadExtractedRowPrunePrefs, pruneExtractedRows, propagateExtractedRowDates } from '../../lib/leitorRecortador/cropper';
 import { exportToCSV } from '../../lib/leitorRecortador/exporter';
 import {
   buildFaixaPorPagina,
@@ -119,6 +119,14 @@ export function ExtratoLeitorRecortadorModal({
   const [savedLayouts, setSavedLayouts] = useState<ExtratoOcrLayoutSaved[]>([]);
   const [sideTab, setSideTab] = useState<'config' | 'layouts'>('config');
   const isNubankLayoutRef = useRef(false);
+  const loadedFileKeyRef = useRef('');
+  const pruneStorageKey = `${companyName.trim()}::${file.name}`;
+
+  const applyPersistedPrune = useCallback(
+    (extracted: ExtractedRow[]) =>
+      pruneExtractedRows(extracted, loadExtractedRowPrunePrefs(pruneStorageKey)),
+    [pruneStorageKey],
+  );
 
   const applyAutoLayoutForPage = useCallback(
     (
@@ -288,8 +296,11 @@ export function ExtratoLeitorRecortadorModal({
   }, []);
 
   useEffect(() => {
+    const key = `${file.name}|${file.size}|${file.lastModified}`;
+    if (loadedFileKeyRef.current === key) return;
+    loadedFileKeyRef.current = key;
     void handleFileLoaded(file);
-  }, [file, handleFileLoaded]);
+  }, [file.name, file.size, file.lastModified, handleFileLoaded]);
 
   const handlePageChange = async (newPageNumber: number) => {
     const page = pdfPages.find((p) => p.pageNumber === newPageNumber);
@@ -356,18 +367,20 @@ export function ExtratoLeitorRecortadorModal({
           )
         : null;
       const filteredForExtract = nubankRows ?? filteredRows;
-      const extracted = propagateExtractedRowDates(
-        isNubankLayoutRef.current && nubankRows
-          ? extractNubankDataFromCanvas(
-              activeCanvas,
-              textItems,
-              columns,
-              nubankRows,
-              stmtYear,
-              currentPage,
-            )
-          : extractDataFromCanvas(activeCanvas, textItems, columns, filteredForExtract, true),
-        stmtYear,
+      const extracted = applyPersistedPrune(
+        propagateExtractedRowDates(
+          isNubankLayoutRef.current && nubankRows
+            ? extractNubankDataFromCanvas(
+                activeCanvas,
+                textItems,
+                columns,
+                nubankRows,
+                stmtYear,
+                currentPage,
+              )
+            : extractDataFromCanvas(activeCanvas, textItems, columns, filteredForExtract, true),
+          stmtYear,
+        ),
       );
       setRows(extracted);
       setActiveTab('results');
@@ -446,7 +459,7 @@ export function ExtratoLeitorRecortadorModal({
         file.name,
         pdfPages.flatMap((p) => p.textItems),
       );
-      setRows(propagateExtractedRowDates(allExtractedRows, stmtYear));
+      setRows(applyPersistedPrune(propagateExtractedRowDates(allExtractedRows, stmtYear)));
       setActiveTab('results');
       setSuccessMessage(
         `Extração em lote concluída! ${allExtractedRows.length} transações extraídas com sucesso das páginas ${cropStartPage} a ${cropEndPage}.`,
@@ -476,6 +489,7 @@ export function ExtratoLeitorRecortadorModal({
 
   const handleClearAll = () => {
     setRows([]);
+    clearExtractedRowPrunePrefs(pruneStorageKey);
     setSuccessMessage('Tabela limpa com sucesso.');
   };
 
@@ -1151,6 +1165,7 @@ export function ExtratoLeitorRecortadorModal({
               onClearAll={handleClearAll}
               exclusionRules={exclusionRules}
               setExclusionRules={setExclusionRules}
+              pruneStorageKey={pruneStorageKey}
             />
           </div>
         )}
