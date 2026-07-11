@@ -16,7 +16,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      VITE_BASE_PATH: /eye-vision-v1.0.7/v1.0.30/
+      VITE_BASE_PATH: /eye-vision-v1.0.7/v1.0.31/
       VITE_STORAGE_BACKEND: supabase
       VITE_AGENT_API_URL: https://contabil-erp-nova-versao-v1-0-8.onrender.com/api/agent
       VITE_FISCAL_API_URL: https://contabil-erp-nova-versao-v1-0-8.onrender.com/api/fiscal-nfe

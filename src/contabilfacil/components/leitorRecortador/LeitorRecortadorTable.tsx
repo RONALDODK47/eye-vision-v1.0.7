@@ -117,6 +117,23 @@ export function LeitorRecortadorTable({
     setRows((prev) => prev.filter((row) => row.id !== rowId));
   };
 
+  const handleDeleteRowsWithoutValue = () => {
+    setRows((prev) =>
+      prev.filter((row) => {
+        const v = (row.valueText || '').trim();
+        return v.length > 0;
+      }),
+    );
+  };
+
+  const handleDeleteRowsWithoutHistory = () => {
+    setRows((prev) => prev.filter((row) => (row.historyText || '').trim().length > 0));
+  };
+
+  const handleDeleteRowsWithoutDate = () => {
+    setRows((prev) => prev.filter((row) => (row.dateText || '').trim().length > 0));
+  };
+
   const handleAddRow = () => {
     const newRow: ExtractedRow = {
       id: `manual-row-${Date.now()}`,
@@ -171,6 +188,33 @@ export function LeitorRecortadorTable({
             >
               <Plus className="w-3.5 h-3.5" />
               Inserir Linha
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteRowsWithoutValue}
+              className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+              title="Remove linhas com coluna Valor vazia"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Excluir sem valor
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteRowsWithoutHistory}
+              className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+              title="Remove linhas com coluna Histórico vazia"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Excluir sem histórico
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteRowsWithoutDate}
+              className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+              title="Remove linhas com coluna Data vazia"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Excluir sem data
             </button>
             <button
               onClick={onClearAll}

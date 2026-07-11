@@ -207,6 +207,9 @@ export type NubankRowConfig = {
   y: number;
   height: number;
   anchorDate: string;
+  /** Posição Y da data no PDF (linha «Total de entradas», não na linha do Pix). */
+  anchorDateY?: number;
+  anchorDateH?: number;
 };
 
 function rowBlob(items: PDFTextItem[]): string {
@@ -294,6 +297,22 @@ function isTransactionStartRow(items: PDFTextItem[], geo: NubankGeometry, blob: 
   return RE_NUBANK_TX_HINT.test(blob);
 }
 
+function medianTokenHeight(items: PosicionadoLike[]): number {
+  const heights = items.map((i) => i.h).filter((h) => h > 0).sort((a, b) => a - b);
+  return heights[Math.floor(heights.length / 2)] || 12;
+}
+
+function captureDateAnchor(
+  items: PDFTextItem[],
+  geo: NubankGeometry,
+): { text: string; y: number; h: number } | null {
+  const tok = items.find(
+    (it) => inZoneDate(it, geo) && RE_NUBANK_DATE.test(it.text.trim()),
+  );
+  if (!tok) return null;
+  return { text: tok.text.trim(), y: tok.y, h: tok.height };
+}
+
 function findLastDayDateInPage(items: PosicionadoLike[], geo: NubankGeometry): string {
   const minY = geo.movimentacoesY ?? geo.faixaStart;
   const dates = items
@@ -339,6 +358,8 @@ export function detectNubankTransactionRows(
 
   const rawRows = detectRowsFromText(textItems, 8);
   let currentDate = carryDate.trim() || findLastDayDateInPage(pos, geo);
+  let currentDateY = 0;
+  let currentDateH = medianTokenHeight(pos);
   const out: NubankRowConfig[] = [];
   let pending: NubankRowConfig | null = null;
 
@@ -353,8 +374,12 @@ export function detectNubankTransactionRows(
     const rowCenterY = row.y + row.height / 2;
     const blob = rowBlob(row.items);
 
-    const anchor = findDateInRow(row.items, geo);
-    if (anchor) currentDate = anchor;
+    const anchorHit = captureDateAnchor(row.items, geo);
+    if (anchorHit) {
+      currentDate = anchorHit.text;
+      currentDateY = anchorHit.y;
+      currentDateH = anchorHit.h;
+    }
 
     if (shouldSkipNubankRow(blob, row.items, geo, rowCenterY)) {
       flush();
@@ -367,6 +392,8 @@ export function detectNubankTransactionRows(
         y: row.y,
         height: row.height,
         anchorDate: currentDate,
+        anchorDateY: currentDateY,
+        anchorDateH: currentDateH,
       };
       continue;
     }
@@ -384,7 +411,66 @@ export function detectNubankTransactionRows(
   return out.map((r) => ({
     ...r,
     anchorDate: r.anchorDate || currentDate,
+    anchorDateY: r.anchorDateY ?? currentDateY,
+    anchorDateH: r.anchorDateH ?? currentDateH,
   }));
+}
+
+function renderTextCrop(text: string, width: number, height: number): string {
+  try {
+    const c = document.createElement('canvas');
+    c.width = Math.max(96, Math.round(width));
+    c.height = Math.max(22, Math.round(height));
+    const ctx = c.getContext('2d');
+    if (!ctx) return '';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#141414';
+    ctx.font = '600 11px ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 4, c.height / 2);
+    return c.toDataURL('image/png');
+  } catch {
+    return '';
+  }
+}
+
+function resolveNubankDateCrop(
+  canvas: HTMLCanvasElement,
+  textItems: PDFTextItem[],
+  geo: NubankGeometry,
+  cfg: NubankRowConfig,
+  dPx: { x: number; w: number },
+  pad: number,
+): string {
+  let dateY = cfg.anchorDateY ?? 0;
+  let dateH = cfg.anchorDateH ?? medianTokenHeight(pdfTextItemsToPosicionado(textItems));
+
+  if (dateY <= 0 && cfg.anchorDate) {
+    const normalized = cfg.anchorDate.trim().toUpperCase();
+    const tok = textItems
+      .filter(
+        (it) =>
+          inZoneDate(it, geo) &&
+          it.text.trim().toUpperCase() === normalized &&
+          it.y <= cfg.y + 40,
+      )
+      .sort((a, b) => cfg.y - a.y - (cfg.y - b.y))[0];
+    if (tok) {
+      dateY = tok.y;
+      dateH = tok.height;
+    }
+  }
+
+  if (dateY > 0) {
+    return cropSection(canvas, dPx.x, dateY - pad, dPx.w, dateH + pad * 2);
+  }
+
+  if (cfg.anchorDate.trim()) {
+    return renderTextCrop(cfg.anchorDate, dPx.w, dateH + pad * 2);
+  }
+
+  return '';
 }
 
 function cropSection(
@@ -476,13 +562,14 @@ export function extractNubankDataFromCanvas(
     const dPx = toPx(dateCol);
     const hPx = toPx(histCol);
     const vPx = toPx(valCol);
+    const dateCropUrl = resolveNubankDateCrop(canvas, textItems, geo, cfg, dPx, pad);
 
     return {
       id: `nubank-row-${index}-${Date.now()}`,
       dateText,
       historyText,
       valueText,
-      dateCropUrl: cropSection(canvas, dPx.x, y0, dPx.w, y1 - y0),
+      dateCropUrl,
       historyCropUrl: cropSection(canvas, hPx.x, y0, hPx.w, y1 - y0),
       valueCropUrl: cropSection(canvas, vPx.x, y0, vPx.w, y1 - y0),
       isNegative,
