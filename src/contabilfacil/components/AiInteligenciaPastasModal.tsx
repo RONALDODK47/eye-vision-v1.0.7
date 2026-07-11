@@ -506,10 +506,6 @@ export default memo(function AiInteligenciaPastasModal({
         docs={tabelaPasta ? docsByPasta[tabelaPasta] : []}
         pastaConfig={tabelaPasta ? pastaConfigs[tabelaPasta] : undefined}
         onClose={() => setTabelaPasta(null)}
-        onStoreRefresh={(next) => {
-          refresh(next);
-          void persistAiInteligenciaToBackend(company, next);
-        }}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Table2, X } from 'lucide-react';
 import {
   PASTA_LABELS,
@@ -6,7 +6,6 @@ import {
   type AiInteligenciaDoc,
   type AiInteligenciaPasta,
   type AiInteligenciaPastaConfig,
-  type AiInteligenciaStore,
 } from '../logic/aiInteligenciaStorage';
 import {
   buildPastaGrupoTableRows,
@@ -16,7 +15,6 @@ import {
   type PastaTableRow,
 } from '../logic/aiInteligenciaPastaTable';
 import { buildPastasGruposContasParaIa } from '../logic/aiInteligenciaPastaGrupos';
-import { extrairDadosPastaInteligenciaIa } from '../logic/aiInteligenciaPastaExtract';
 
 export type AiInteligenciaPastaTabelaModalProps = {
   open: boolean;
@@ -25,7 +23,6 @@ export type AiInteligenciaPastaTabelaModalProps = {
   docs: AiInteligenciaDoc[];
   pastaConfig?: AiInteligenciaPastaConfig;
   onClose: () => void;
-  onStoreRefresh?: (store: AiInteligenciaStore) => void;
 };
 
 export default memo(function AiInteligenciaPastaTabelaModal({
@@ -35,49 +32,35 @@ export default memo(function AiInteligenciaPastaTabelaModal({
   docs,
   pastaConfig,
   onClose,
-  onStoreRefresh,
 }: AiInteligenciaPastaTabelaModalProps) {
   const [loading, setLoading] = useState(false);
-  const [statusMsg, setStatusMsg] = useState('');
   const [hydratedDocs, setHydratedDocs] = useState<AiInteligenciaDoc[]>(docs);
+  const loadedKeyRef = useRef('');
 
-  const reloadDocs = useCallback(async () => {
-    if (!pasta) return;
-    setLoading(true);
-    const store = await loadAiInteligenciaAsync(company);
-    const byId = new Map(store.docs.map((d) => [d.id, d]));
-    setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
-    setLoading(false);
-    return store;
-  }, [company, docs, pasta]);
+  const docsKey = useMemo(() => docs.map((d) => d.id).sort().join('|'), [docs]);
 
   useEffect(() => {
-    if (!open || !pasta) return;
-    setHydratedDocs(docs);
-    setStatusMsg('');
+    if (!open || !pasta) {
+      loadedKeyRef.current = '';
+      return;
+    }
+    const sessionKey = `${pasta}::${docsKey}`;
+    if (loadedKeyRef.current === sessionKey) return;
+    loadedKeyRef.current = sessionKey;
+
     let cancelled = false;
-    void (async () => {
-      await reloadDocs();
+    setLoading(true);
+    void loadAiInteligenciaAsync(company).then((store) => {
       if (cancelled) return;
-      try {
-        const result = await extrairDadosPastaInteligenciaIa(company, pasta);
-        if (cancelled) return;
-        onStoreRefresh?.(result.store);
-        const byId = new Map(result.store.docs.map((d) => [d.id, d]));
-        setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
-        if (result.message && result.message !== 'Nada a extrair.') {
-          setStatusMsg(result.message);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setStatusMsg(err instanceof Error ? err.message : 'Falha na extração automática');
-        }
-      }
-    })();
+      const byId = new Map(store.docs.map((d) => [d.id, d]));
+      setHydratedDocs(docs.map((d) => byId.get(d.id) ?? d));
+      setLoading(false);
+    });
+
     return () => {
       cancelled = true;
     };
-  }, [open, pasta, docs, company, reloadDocs, onStoreRefresh]);
+  }, [open, pasta, company, docsKey, docs]);
 
   const columns = useMemo(
     () => (pasta ? getPastaTableColumns(pasta) : []),
@@ -135,14 +118,11 @@ export default memo(function AiInteligenciaPastaTabelaModal({
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto p-3 space-y-4">
-          {statusMsg ? (
-            <p className="text-[9px] font-bold uppercase text-green-800">{statusMsg}</p>
-          ) : null}
           {loading ? (
-            <p className="text-[10px] font-bold uppercase text-brand-text/60">Carregando textos…</p>
+            <p className="text-[10px] font-bold uppercase text-brand-text/60">Carregando…</p>
           ) : !temConteudo ? (
             <p className="text-[10px] text-brand-text/60 leading-relaxed">
-              Configure os grupos de contas (entrada/saída) ou envie documentos — a extração é automática.
+              Nenhum dado extraído ainda — envie o documento na pasta e aguarde a IA processar.
             </p>
           ) : (
             <>
