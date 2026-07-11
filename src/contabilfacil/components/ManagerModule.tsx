@@ -60,6 +60,7 @@ import {
   normalizeCompanyName,
   companyStorageSlug,
   isSameCompanyScope,
+  requireCompanyScope,
 } from '../logic/companyWorkspace';
 import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import PlanoContasVirtualTable from './PlanoContasVirtualTable';
@@ -697,7 +698,14 @@ export default function ManagerModule({
   // Plano primeiro (UI responsiva); extrato/razão/folha após pintura.
   useEffect(() => {
     const companyScope = selectedCompany;
-    if (!companyScope) return;
+    if (!companyScope) {
+      setPlanoContas([]);
+      return;
+    }
+
+    setPlanoContas([]);
+    setExtratoLancamentos([]);
+    setRazaoRows([]);
 
     let cancelled = false;
     const canApply = () => !cancelled && isSameCompanyScope(companyScope, selectedCompany);
@@ -788,8 +796,9 @@ export default function ManagerModule({
   }, [activeSubTab]);
 
   const savePlano = (list: AccountPlan[]) => {
+    const company = requireCompanyScope(selectedCompany);
     setPlanoContas(list);
-    writeManagerDataNow(selectedCompany, 'plano', list);
+    writeManagerDataNow(company, 'plano', list);
     void flushPersistenceAfterCriticalWrite();
   };
 

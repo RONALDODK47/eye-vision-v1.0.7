@@ -114,7 +114,7 @@ function countManagerDataForCompany(name: string): number {
   for (const suffix of MANAGER_DATA_SUFFIXES) {
     if (readManagerData(name, suffix).length > 0) score += 1;
   }
-  const pastasKey = `contabilfacil_${companyStorageSlug(name)}_extrato_pastas_v1`;
+  const pastasKey = `contabilfacil_${canonicalCompanyStorageSlug(name)}_extrato_pastas_v1`;
   const pastasRaw = safeLocalStorageGetItem(pastasKey);
   if (pastasRaw && pastasRaw.length > 2 && pastasRaw !== '[]') score += 2;
   return score;
@@ -178,7 +178,7 @@ export function dedupeCompaniesBySlug(list: CompanyRecord[]): CompanyRecord[] {
 /** Empresas ativas não podem permanecer na lista de excluídas (evita sumir extrato/plano). */
 export function reconcileDeletedCompaniesWithRegistry(registry?: CompanyRecord[]): void {
   const companies = registry ?? loadCompaniesRegistry();
-  const activeSlugs = new Set(companies.map((c) => companyStorageSlug(c.name)));
+  const activeSlugs = new Set(companies.map((c) => canonicalCompanyStorageSlug(c.name)));
   const activeNames = new Set(companies.map((c) => normalizeCompanyName(c.name)));
   const kept = loadDeletedCompanies().filter(
     (item) => !activeSlugs.has(item.slug) && !activeNames.has(item.name),
@@ -385,7 +385,9 @@ export function discoverCompanyNamesFromStorage(): string[] {
 
   for (const slug of listManagerCacheSlugs()) {
     if (slug === 'TECHNOVA_INDUSTRIA_LTDA' || isCompanyDeleted(slug)) continue;
-    const fromExisting = loadCompaniesRegistry().find((c) => companyStorageSlug(c.name) === slug);
+    const fromExisting = loadCompaniesRegistry().find(
+      (c) => canonicalCompanyStorageSlug(c.name) === canonicalCompanyStorageSlug(slug),
+    );
     const label = fromExisting?.name || slug.replace(/_/g, ' ');
     const norm = normalizeCompanyName(label);
     if (!isCompanyDeleted(norm)) names.add(norm);
@@ -457,6 +459,7 @@ export function repairCompanyWorkspaceState(): CompanyRecord[] {
     const selected = resolveSelectedCompany(merged);
     if (selected) saveSelectedCompanyName(selected);
   }
+  repairIsolatedManagerStoragePerCompany();
   return merged;
 }
 
@@ -494,6 +497,22 @@ export function belongsToCompany(
 
 export function isSameCompanyScope(a: string, b: string): boolean {
   return normalizeCompanyName(a) === normalizeCompanyName(b);
+}
+
+/** Mesma empresa no armazenamento (slug canônico). */
+export function isSameCompanyStorageScope(a: string, b: string): boolean {
+  const slugA = canonicalCompanyStorageSlug(a);
+  const slugB = canonicalCompanyStorageSlug(b);
+  return Boolean(slugA && slugB && slugA === slugB);
+}
+
+export function findCompanyRecordByStorageSlug(
+  slug: string,
+  registry: CompanyRecord[] = loadCompaniesRegistry(),
+): CompanyRecord | undefined {
+  const canonical = canonicalCompanyStorageSlug(slug);
+  if (!canonical) return undefined;
+  return registry.find((c) => canonicalCompanyStorageSlug(c.name) === canonical);
 }
 
 export function belongsToSindicato(
@@ -634,23 +653,148 @@ export function hasAnyManagerMemoryData(): boolean {
 
 const MANAGER_WRITE_DEBOUNCE_MS = 450;
 
+function readManagerRowsFromStorageKey<T>(key: string, suffix: keyof typeof LEGACY_MANAGER_KEYS): T[] {
+  try {
+    const raw = safeLocalStorageGetItem(key);
+    if (!raw?.trim()) return [];
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed) ? (parsed as T[]) : [];
+    return repairManagerRows(suffix, list);
+  } catch {
+    return [];
+  }
+}
+
+function managerPlanoFingerprint(list: unknown[]): string {
+  if (!Array.isArray(list) || list.length === 0) return '';
+  try {
+    return JSON.stringify(list);
+  } catch {
+    return String(list.length);
+  }
+}
+
+function companyHasOperationalDataBesidesPlano(companyName: string): boolean {
+  for (const suffix of MANAGER_DATA_SUFFIXES) {
+    if (suffix === 'plano') continue;
+    const rows = readManagerRowsFromStorageKey<unknown>(
+      companyManagerStorageKey(companyName, suffix),
+      suffix,
+    );
+    if (rows.length > 0) return true;
+  }
+  const slug = canonicalCompanyStorageSlug(companyName);
+  const pastasKey = `contabilfacil_${slug}_extrato_pastas_v1`;
+  const pastasRaw = safeLocalStorageGetItem(pastasKey);
+  if (pastasRaw && pastasRaw.length > 2 && pastasRaw !== '[]') return true;
+  return false;
+}
+
+/** Consolida chaves alias → canônica e remove plano duplicado entre empresas distintas. */
+export function repairIsolatedManagerStoragePerCompany(): void {
+  const registry = loadCompaniesRegistry();
+  const validCanonicalSlugs = new Set(
+    registry.map((c) => canonicalCompanyStorageSlug(c.name)).filter(Boolean),
+  );
+
+  const re =
+    /^contabilfacil_(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/;
+  const keys = new Set<string>(listManagerMemoryCacheKeys());
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('contabilfacil_')) keys.add(key);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  for (const key of keys) {
+    const match = key.match(re);
+    if (!match?.[1]) continue;
+    const rawSlug = match[1];
+    const suffix = match[2] as keyof typeof LEGACY_MANAGER_KEYS;
+    const canonical = canonicalCompanyStorageSlug(rawSlug);
+    if (!validCanonicalSlugs.has(canonical)) {
+      safeLocalStorageRemoveItem(key);
+      managerMemoryCache.delete(key);
+      continue;
+    }
+    if (rawSlug === canonical) continue;
+    const canonicalKey = `contabilfacil_${canonical}_${suffix}`;
+    const aliasRows = readManagerRowsFromStorageKey<unknown>(key, suffix);
+    if (aliasRows.length === 0) {
+      safeLocalStorageRemoveItem(key);
+      managerMemoryCache.delete(key);
+      continue;
+    }
+    const canonicalRows = readManagerRowsFromStorageKey<unknown>(canonicalKey, suffix);
+    if (canonicalRows.length === 0) {
+      persistManagerKey(canonicalKey, JSON.stringify(aliasRows), false);
+      setManagerMemoryCacheEntry(canonicalKey, aliasRows);
+    }
+    safeLocalStorageRemoveItem(key);
+    managerMemoryCache.delete(key);
+  }
+
+  const planoOwners = new Map<string, { slug: string; name: string; score: number }>();
+  for (const company of registry) {
+    const slug = canonicalCompanyStorageSlug(company.name);
+    if (!slug) continue;
+    const plano = readManagerRowsFromStorageKey<unknown>(companyManagerStorageKey(company.name, 'plano'), 'plano');
+    const fingerprint = managerPlanoFingerprint(plano);
+    if (!fingerprint || plano.length < 5) continue;
+    const score = countManagerDataForCompany(company.name);
+    const prev = planoOwners.get(fingerprint);
+    if (!prev || score > prev.score) {
+      planoOwners.set(fingerprint, { slug, name: company.name, score });
+    }
+  }
+
+  for (const company of registry) {
+    const slug = canonicalCompanyStorageSlug(company.name);
+    if (!slug) continue;
+    const key = companyManagerStorageKey(company.name, 'plano');
+    const plano = readManagerRowsFromStorageKey<unknown>(key, 'plano');
+    const fingerprint = managerPlanoFingerprint(plano);
+    if (!fingerprint || plano.length < 5) continue;
+    const owner = planoOwners.get(fingerprint);
+    if (!owner || owner.slug === slug) continue;
+    if (companyHasOperationalDataBesidesPlano(company.name)) continue;
+    writeManagerDataNow(company.name, 'plano', []);
+    invalidateManagerDataCache(company.name, 'plano');
+  }
+}
+
 export function readManagerData<T>(companyName: string, suffix: keyof typeof LEGACY_MANAGER_KEYS): T[] {
   const norm = normalizeCompanyName(companyName);
   if (!norm || norm === 'SEM EMPRESA') return [];
   const key = companyManagerStorageKey(norm, suffix);
   const cached = managerMemoryCache.get(key);
   if (cached) return cached as T[];
-  try {
-    const raw = safeLocalStorageGetItem(key);
-    if (!raw?.trim()) return [];
-    const parsed = JSON.parse(raw);
-    const list = Array.isArray(parsed) ? (parsed as T[]) : [];
-    const repaired = repairManagerRows(suffix, list);
-    managerMemoryCache.set(key, repaired);
-    return repaired;
-  } catch {
-    return [];
+
+  let list = readManagerRowsFromStorageKey<T>(key, suffix);
+
+  if (list.length === 0) {
+    const rawSlug = companyStorageSlug(norm);
+    const canonical = canonicalCompanyStorageSlug(norm);
+    if (rawSlug && rawSlug !== canonical) {
+      const aliasKey = `contabilfacil_${rawSlug}_${suffix}`;
+      const aliasRows = readManagerRowsFromStorageKey<T>(aliasKey, suffix);
+      if (aliasRows.length > 0) {
+        list = aliasRows;
+        managerMemoryCache.set(key, list);
+        persistManagerKey(key, JSON.stringify(list));
+        safeLocalStorageRemoveItem(aliasKey);
+        managerMemoryCache.delete(aliasKey);
+      }
+    }
   }
+
+  if (list.length > 0) {
+    managerMemoryCache.set(key, list);
+  }
+  return list;
 }
 
 function persistManagerKey(key: string, payload: string, schedule = true): void {
@@ -692,6 +836,22 @@ export function writeManagerDataNow<T>(
   }
   managerMemoryCache.set(key, list);
   persistManagerKey(key, JSON.stringify(list));
+
+  if (suffix === 'plano' && Array.isArray(list) && list.length > 0) {
+    for (const other of loadCompaniesRegistry()) {
+      if (isSameCompanyStorageScope(other.name, company)) continue;
+      if (companyHasOperationalDataBesidesPlano(other.name)) continue;
+      const otherPlano = readManagerRowsFromStorageKey<unknown>(
+        companyManagerStorageKey(other.name, 'plano'),
+        'plano',
+      );
+      if (managerPlanoFingerprint(otherPlano) === managerPlanoFingerprint(list)) {
+        const otherKey = companyManagerStorageKey(other.name, 'plano');
+        safeLocalStorageRemoveItem(otherKey);
+        managerMemoryCache.delete(otherKey);
+      }
+    }
+  }
 }
 
 export function hasPendingManagerWrites(): boolean {
@@ -821,7 +981,7 @@ export function purgeCompanyScopedAuxiliaryData(companyName: string): void {
   const norm = normalizeCompanyName(companyName);
   if (!norm || norm === 'SEM EMPRESA') return;
 
-  const slug = companyStorageSlug(norm);
+  const slug = canonicalCompanyStorageSlug(norm);
   const extraKeys = [
     `contabilfacil_${slug}_extrato_ocr_layouts_v1`,
     `contabilfacil_${slug}_extrato_regras_contas_v2`,
@@ -847,9 +1007,11 @@ export function deleteManagerCompanyInStorage(name: string): boolean {
   const registry = loadCompaniesRegistry();
   if (!registry.some((c) => c.name === norm)) return false;
 
-  const slug = companyStorageSlug(norm);
+  const slug = canonicalCompanyStorageSlug(norm);
   const nextRegistry = dedupeCompaniesBySlug(registry.filter((c) => c.name !== norm));
-  const stillHasSlug = nextRegistry.some((c) => companyStorageSlug(c.name) === slug);
+  const stillHasSlug = nextRegistry.some(
+    (c) => canonicalCompanyStorageSlug(c.name) === slug,
+  );
 
   if (!stillHasSlug) {
     for (const suffix of MANAGER_DATA_SUFFIXES) {

@@ -37,7 +37,9 @@ import {
   saveDeletedCompanies,
   setManagerMemoryCacheEntry,
   canonicalCompanyStorageSlug,
+  findCompanyRecordByStorageSlug,
   isCompanySlugInAllowedSet,
+  isSameCompanyStorageScope,
   COMPANY_STORAGE_SLUG_ALIASES,
   type CompanyRecord,
   type DeletedCompanyRecord,
@@ -234,15 +236,15 @@ export function listLocalManagerSlugs(): string[] {
   for (const key of keys) {
     const rest = key.slice(prefix.length);
     const match = rest.match(/^(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/);
-    if (match?.[1]) slugs.add(match[1]);
+    if (match?.[1]) slugs.add(canonicalCompanyStorageSlug(match[1]));
   }
   for (const slug of listManagerCacheSlugs()) {
-    slugs.add(slug);
+    slugs.add(canonicalCompanyStorageSlug(slug));
   }
   for (const company of loadCompaniesRegistry()) {
-    slugs.add(companyStorageSlug(company.name));
+    slugs.add(canonicalCompanyStorageSlug(company.name));
   }
-  return Array.from(slugs);
+  return Array.from(slugs).filter(Boolean);
 }
 
 const OFFICE_EXPLICIT_STORAGE_KEYS = new Set([
@@ -309,11 +311,15 @@ export function collectLocalOfficePayload(): OfficeCloudPayload {
 }
 
 export function collectLocalManagerPayload(companySlug: string, companyName?: string): ManagerCloudPayload {
-  const slug = companySlug.trim();
+  const slug = canonicalCompanyStorageSlug(companySlug.trim());
   let resolvedName = companyName?.trim() || '';
   if (!resolvedName) {
-    const fromRegistry = loadCompaniesRegistry().find((c) => companyStorageSlug(c.name) === slug);
-    resolvedName = fromRegistry?.name || slug.replace(/_/g, ' ');
+    resolvedName = findCompanyRecordByStorageSlug(slug)?.name || slug.replace(/_/g, ' ');
+  }
+  resolvedName = normalizeCompanyName(resolvedName);
+  if (!resolvedName || !isSameCompanyStorageScope(resolvedName, slug)) {
+    const matched = findCompanyRecordByStorageSlug(slug);
+    if (matched) resolvedName = matched.name;
   }
 
   const data: Partial<Record<(typeof MANAGER_DATA_SUFFIXES)[number], unknown[]>> = {};
@@ -415,7 +421,7 @@ function buildRegistryFromCloud(
 
   for (const row of managerRows) {
     const rawSlug = String(row.company_slug || '').trim();
-    const slug = MANAGER_SLUG_ALIASES[rawSlug] || rawSlug;
+    const slug = canonicalCompanyStorageSlug(MANAGER_SLUG_ALIASES[rawSlug] || rawSlug);
     if (!slug || slug === 'TECHNOVA_INDUSTRIA_LTDA' || !managerRowHasData(row)) continue;
     const name = resolveManagerCompanyName(slug, String(row.company_name || ''));
     if (!name || isDemoTechnovaCompany(name)) continue;
@@ -430,7 +436,7 @@ function mergeCloudManagerRows(rows: ManagerCloudPayload[]): ManagerCloudPayload
 
   for (const row of rows) {
     const rawSlug = String(row.company_slug || '').trim();
-    const slug = MANAGER_SLUG_ALIASES[rawSlug] || rawSlug;
+    const slug = canonicalCompanyStorageSlug(MANAGER_SLUG_ALIASES[rawSlug] || rawSlug);
     if (!slug || slug === 'TECHNOVA_INDUSTRIA_LTDA' || !managerRowHasData(row)) continue;
 
     let cur = bySlug.get(slug);
@@ -468,7 +474,7 @@ function mergeManagerRowsFillMissing(
   const bySlug = new Map(merged.map((m) => [String(m.company_slug || ''), m]));
 
   for (const sup of supplemental) {
-    const slug = String(sup.company_slug || '').trim();
+    const slug = canonicalCompanyStorageSlug(String(sup.company_slug || '').trim());
     if (!slug) continue;
     let cur = bySlug.get(slug);
     if (!cur) {
@@ -494,24 +500,23 @@ function mergeManagerRowsFillMissing(
 }
 
 function resolveManagerCompanyName(slug: string, fallbackName: string): string {
-  const canonicalSlug = MANAGER_SLUG_ALIASES[slug] || slug;
-  const canonical = loadCompaniesRegistry().find(
-    (c) => companyStorageSlug(c.name) === canonicalSlug,
-  );
-  if (canonical) return canonical.name;
+  const canonicalSlug = canonicalCompanyStorageSlug(MANAGER_SLUG_ALIASES[slug] || slug);
+  const matched = findCompanyRecordByStorageSlug(canonicalSlug);
+  if (matched) return matched.name;
   const norm = normalizeCompanyName(fallbackName);
-  if (norm && norm !== 'SEM EMPRESA') return norm;
+  if (norm && norm !== 'SEM EMPRESA' && isSameCompanyStorageScope(norm, canonicalSlug)) return norm;
   return canonicalSlug.replace(/_/g, ' ');
 }
 
 function applyManagerPayload(payload: ManagerCloudPayload): void {
   const rawSlug = String(payload.company_slug || '').trim();
-  const slug = MANAGER_SLUG_ALIASES[rawSlug] || rawSlug;
+  const slug = canonicalCompanyStorageSlug(MANAGER_SLUG_ALIASES[rawSlug] || rawSlug);
   if (!slug || !payload.data || typeof payload.data !== 'object') return;
   if (isCompanyDeleted(slug)) return;
 
   const companyName = resolveManagerCompanyName(slug, String(payload.company_name || ''));
   if (isCompanyDeleted(companyName)) return;
+  if (!isSameCompanyStorageScope(companyName, slug)) return;
 
   for (const suffix of MANAGER_DATA_SUFFIXES) {
     const rows = payload.data[suffix];
@@ -561,7 +566,7 @@ async function purgeOrphanCloudManagers(
   if (!activeOfficeToken || !activeUid) return false;
   const allowedSlugs = new Set(
     loadCompaniesRegistry()
-      .map((c) => companyStorageSlug(c.name))
+      .map((c) => canonicalCompanyStorageSlug(c.name))
       .filter((s) => s && s !== 'TECHNOVA_INDUSTRIA_LTDA'),
   );
   let removed = false;
@@ -717,19 +722,20 @@ export async function flushEyeVisionCloudPush(options?: { force?: boolean }): Pr
 
     const slugs = listLocalManagerSlugs();
     for (const slug of slugs) {
-      const managerPayload = collectLocalManagerPayload(slug);
+      const canonicalSlug = canonicalCompanyStorageSlug(slug);
+      const managerPayload = collectLocalManagerPayload(canonicalSlug);
       if (!managerPayload.data || Object.keys(managerPayload.data).length === 0) continue;
 
       const managerHash = stablePayloadHash(managerPayload);
-      if (managerHash && managerHash === managerHashes[slug]) continue;
+      if (managerHash && managerHash === managerHashes[canonicalSlug]) continue;
 
       await dbClient.entities.EyeVisionWorkspace.setManager(
         activeOfficeToken,
-        slug,
+        canonicalSlug,
         managerPayload,
         activeUid,
       );
-      managerHashes[slug] = managerHash;
+      managerHashes[canonicalSlug] = managerHash;
       pushedAnything = true;
 
       /** Cede a thread entre empresas grandes — evita “página não responde”. */
@@ -910,7 +916,7 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
     const repairedRegistry = loadCompaniesRegistry();
     const repairedAllowedSlugs = new Set(
       repairedRegistry
-        .map((c) => companyStorageSlug(c.name))
+        .map((c) => canonicalCompanyStorageSlug(c.name))
         .filter((s) => s && s !== 'TECHNOVA_INDUSTRIA_LTDA'),
     );
     for (const row of mergeCloudManagerRows(cloudManagers as ManagerCloudPayload[])) {

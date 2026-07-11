@@ -15,7 +15,7 @@ import {
   saveCompaniesRegistry,
   saveSelectedCompanyName,
   syncCompanyRegistry,
-  companyStorageSlug,
+  canonicalCompanyStorageSlug,
   isSameCompanyScope,
   loadSelectedCompanyName,
   type CompanyRecord,
@@ -77,8 +77,10 @@ export function useCompanyWorkspace() {
       const normalized = normalizeCompanyName(name);
       if (!normalized || normalized === 'SEM EMPRESA') return null;
 
-      const slug = companyStorageSlug(normalized);
-      const existingBySlug = companies.find((c) => companyStorageSlug(c.name) === slug);
+      const slug = canonicalCompanyStorageSlug(normalized);
+      const existingBySlug = companies.find(
+        (c) => canonicalCompanyStorageSlug(c.name) === slug,
+      );
       if (existingBySlug) {
         clearCompanyDeletion(existingBySlug.name);
         setSelectedCompany(existingBySlug.name);
