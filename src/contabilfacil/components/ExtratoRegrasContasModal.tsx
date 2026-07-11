@@ -6,7 +6,6 @@ import {
   addExtratoRegraConta,
   filterExtratoRegrasPorBanco,
   loadExtratoRegrasBancoSelecionado,
-  normalizeExtratoMatchText,
   normalizeExtratoRegraTexto,
   normContaBancoCode,
   replicateExtratoRegrasParaBanco,
@@ -21,49 +20,11 @@ import {
 } from '../logic/planoContasMapper';
 import {
   findUncoveredExtratoRows,
-  agrupaPadroesExtratoParaIa,
-  padroesParaPayloadIa,
-  filterUncoveredByUserHint,
-  buildRegrasFromUserChatIntent,
-  updateExistingRegrasFromUserChatIntent,
-  resolveContaFromUserMessage,
-  tokensAssuntoPedidoUsuario,
-  extractPadraoOperacionalAgrupado,
-  isContaNominalEmpresa,
-  isLancamentoFornecedorOuClienteGenerico,
-  isMovimentoAplicacaoFinanceira,
-  pickContaRendimentoOuAplicacao,
-  pickFallbackContaPorNatureza,
   sanitizarHistoricoExtratoParaRegra,
 } from '../logic/extratoRegrasCobertura';
-import { validateAiRegrasLote } from '../logic/extratoRegrasAiPrecision';
-import {
-  mergeSugestoesIntoRegras,
-  canonicalColigadaDescricao,
-  extractRegraEntityDescricao,
-} from '../logic/extratoRegrasEntity';
-import {
-  contaAceitavelParaColigada,
-  countAiInteligenciaDocs,
-  enrichColigadasComContasDoPlano,
-  isContaFornecedorNome,
-  listAiColigadasParaIa,
-  listAiSociosParaIa,
-  matchColigadaNoHistorico,
-  matchColigadaParaRegra,
-  pickContaColigadaNoPlano,
-  resolveContaColigadaParaNatureza,
-  syncColigadasFromInteligenciaDocs,
-} from '../logic/aiInteligenciaStorage';
-import { buildInteligenciaContextoParaRegrasIaAsync, buildModulosContextoParaRegrasIa } from '../logic/regrasContasAiContext';
-import { contaTemSentidoLogicoParaHistorico } from '../logic/planoContasMatch';
-import { suggestRegrasContasWithAi } from '../../lib/aiRegrasContasClient';
-import { gerarRegrasExtratoConciliacaoCompleta } from '../logic/extratoRegrasGeracaoIa';
-import { beginHeavyUiWork, endHeavyUiWork } from '../lib/uiFluidity';
 import { CF_FORM_INPUT_LONG } from '../lib/formFieldClasses';
 import ExtratoContaPicker from './ExtratoContaPicker';
 import ExtratoHistoricoPicker from './ExtratoHistoricoPicker';
-import ExtratoRegrasContasAiPanel from './ExtratoRegrasContasAiChat';
 
 export type PlanoOption = {
   code: string;
@@ -71,7 +32,7 @@ export type PlanoOption = {
   codigoReduzido?: string;
   tipo?: 'S' | 'A';
   nivel?: number;
-  /** Grupo contábil — usado pela IA na regra empréstimo (D→ATIVO / C→PASSIVO). */
+  /** Grupo contábil (ATIVO, PASSIVO, etc.). */
   group?: 'ATIVO' | 'PASSIVO' | 'PATRIMONIO_LIQUIDO' | 'RECEITA' | 'DESPESA' | 'CUSTO';
 };
 
@@ -86,15 +47,13 @@ export type ExtratoRegrasContasModalProps = {
   /** Contas banco do plano (para configurar o lado banco). */
   bancoOptions: PlanoOption[];
   defaultContaBanco?: string;
-  /** Amostra do extrato para a IA sugerir regras. */
+  /** Amostra do extrato para puxar históricos sem regra. */
   extratoSample?: Array<{ description: string; nature: string; value: number }>;
   onClose: () => void;
   onChange: (next: ExtratoRegraConta[]) => void;
   /** Chamado quando a conta banco da conciliação é definida/alterada. */
   onContaBancoChange?: (contaBanco: string) => void;
   onReaplicar?: () => void | Promise<void>;
-  /** Abre o modal de pastas da Inteligência IA. */
-  onOpenInteligencia?: () => void;
 };
 
 const INPUT_REGRA_CLS = cn(
@@ -232,7 +191,6 @@ export default memo(function ExtratoRegrasContasModal({
   onChange,
   onContaBancoChange,
   onReaplicar,
-  onOpenInteligencia,
 }: ExtratoRegrasContasModalProps) {
   const [selectedBanco, setSelectedBanco] = useState(defaultContaBanco);
   const [draftDescricao, setDraftDescricao] = useState('');
@@ -242,21 +200,8 @@ export default memo(function ExtratoRegrasContasModal({
   const [addError, setAddError] = useState('');
   const [replicateTarget, setReplicateTarget] = useState('');
   const [replicateMsg, setReplicateMsg] = useState('');
-  const [corrigindoIa, setCorrigindoIa] = useState(false);
-  const [corrigirMsg, setCorrigirMsg] = useState('');
-  const [docsCount, setDocsCount] = useState(() => countAiInteligenciaDocs(company));
   const [padraoHistoricoPick, setPadraoHistoricoPick] = useState('');
   const regrasListRef = useRef<HTMLDivElement>(null);
-
-  const handleMostrarRegras = useCallback(() => {
-    const el = regrasListRef.current;
-    if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    el.classList.add('ring-2', 'ring-amber-400');
-    window.setTimeout(() => {
-      el.classList.remove('ring-2', 'ring-amber-400');
-    }, 1200);
-  }, []);
 
   const allPlano = useMemo(() => [...bancoOptions, ...planoOptions], [bancoOptions, planoOptions]);
   const planoLookup = useMemo(
@@ -317,8 +262,6 @@ export default memo(function ExtratoRegrasContasModal({
     setAddError('');
     setReplicateTarget('');
     setReplicateMsg('');
-    setCorrigirMsg('');
-    setDocsCount(countAiInteligenciaDocs(company));
     // Migração/consolidação roda no ManagerModule ao carregar — não repetir aqui (evita freeze e sobrescrever exclusões).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset UI ao abrir
   }, [open, company, defaultContaBanco, bancoOptions, matchBancoCode]);
@@ -428,7 +371,7 @@ export default memo(function ExtratoRegrasContasModal({
         : filterExtratoRegrasPorBanco(regras, origem);
     if (sourceRules.length === 0) {
       setReplicateMsg(
-        'Não há regras neste banco para replicar. Cadastre ou use a IA no banco de origem primeiro.',
+        'Não há regras neste banco para replicar. Cadastre regras no banco de origem primeiro.',
       );
       return;
     }
@@ -465,314 +408,6 @@ export default memo(function ExtratoRegrasContasModal({
     replicateTarget,
     selectedBanco,
   ]);
-
-  const handleGerarRegrasAutomaticas = useCallback(async () => {
-    const bancoAtivo = sanitizeCodigoReduzido(selectedBanco) || matchBancoCode(selectedBanco);
-    if (!bancoAtivo) {
-      setAddError('Selecione a conta banco (código reduzido) antes.');
-      return;
-    }
-    if (countAiInteligenciaDocs(company) === 0) {
-      setAddError(
-        'Envie documentos na Inteligência IA (coligadas, contratos/sócios, despesas, receitas, etc.) antes de gerar regras.',
-      );
-      return;
-    }
-    if (planoOptions.length === 0) {
-      setAddError('Importe o plano de contas com código reduzido.');
-      return;
-    }
-    if (extratoSample.length === 0) {
-      setAddError('Importe o extrato antes de gerar regras.');
-      return;
-    }
-
-    setCorrigindoIa(true);
-    setCorrigirMsg('Gerando regras por descrição (coligadas, honorários, impostos, balancete)…');
-    beginHeavyUiWork();
-    try {
-      const result = await gerarRegrasExtratoConciliacaoCompleta({
-        company,
-        regras,
-        bancoAtivo,
-        bancoNome:
-          bancoOptions.find((p) => sanitizeCodigoReduzido(p.codigoReduzido) === bancoAtivo)?.name ||
-          bancoAtivo,
-        planoOptions,
-        allPlano,
-        extratoSample,
-        onProgress: (msg) => setCorrigirMsg(msg),
-      });
-      if (result.error) {
-        setCorrigirMsg(result.error);
-        return;
-      }
-      const saved = saveExtratoRegrasContas(company, result.regras);
-      onChange(saved);
-      setCorrigirMsg(
-        result.resumo ||
-          `${filterExtratoRegrasPorBanco(saved, bancoAtivo).length} regra(s) — ${result.stillOpen} padrão(ões) ainda abertos.`,
-      );
-      if (onReaplicar) await onReaplicar();
-    } catch (err) {
-      setCorrigirMsg(err instanceof Error ? err.message : 'Falha ao gerar regras.');
-    } finally {
-      endHeavyUiWork();
-      setCorrigindoIa(false);
-    }
-  }, [
-    allPlano,
-    bancoOptions,
-    company,
-    extratoSample,
-    matchBancoCode,
-    onChange,
-    onReaplicar,
-    planoOptions,
-    regras,
-    selectedBanco,
-  ]);
-
-  /** Chat livre: pedido do usuário → aplica local + IA em lotes. */
-  const handleChatRegrasComIa = useCallback(
-    async (userMessage: string): Promise<{ ok: boolean; reply: string }> => {
-      const bancoAtivo = sanitizeCodigoReduzido(selectedBanco) || matchBancoCode(selectedBanco);
-      if (!bancoAtivo) {
-        return { ok: false, reply: 'Selecione a conta banco (código reduzido) antes.' };
-      }
-      if (planoOptions.length === 0) {
-        return { ok: false, reply: 'Importe o plano de contas com código reduzido.' };
-      }
-
-      setCorrigindoIa(true);
-      setCorrigirMsg('Chat: analista sênior processando seu pedido (análise única)…');
-      setDocsCount(countAiInteligenciaDocs(company));
-
-      const applySugestoes = (
-        current: ExtratoRegraConta[],
-        sugestoes: Array<{ descricao: string; nature: string; contaContrapartida: string }>,
-      ): { next: ExtratoRegraConta[]; added: number; updated: number } =>
-        mergeSugestoesIntoRegras({
-          current,
-          sugestoes,
-          contaBanco: bancoAtivo,
-          resolveContra: (raw) =>
-            resolveCodigoReduzidoDoPlano(raw, allPlano) || sanitizeCodigoReduzido(raw) || '',
-          coligadas: listAiColigadasParaIa(company),
-        });
-
-      try {
-        const coligadas = enrichColigadasComContasDoPlano(
-          syncColigadasFromInteligenciaDocs(company),
-          allPlano,
-        );
-        const inteligenciaCtx = await buildInteligenciaContextoParaRegrasIaAsync(company, coligadas);
-        const docs = inteligenciaCtx.anexosTexto;
-        const contaPedida = resolveContaFromUserMessage(userMessage, planoOptions);
-        let current = [...regras];
-        let totalAdded = 0;
-        let totalUpdated = 0;
-        const resumos: string[] = [];
-
-        // 0) ALTERAR regras JÁ existentes que casam com o pedido (prioridade do chat)
-        {
-          const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-          const updates = updateExistingRegrasFromUserChatIntent({
-            userMessage,
-            regrasDoBanco: doBanco,
-            plano: planoOptions,
-            contaContrapartida: contaPedida,
-          });
-          const contraAplicar =
-            contaPedida ||
-            sanitizeCodigoReduzido(updates[0]?.contaContrapartida || '');
-          if (updates.length > 0 && contraAplicar) {
-            const applied = applySugestoes(
-              current,
-              updates.map((r) => ({
-                descricao: r.descricao,
-                nature: r.nature,
-                contaContrapartida: contraAplicar,
-              })),
-            );
-            current = applied.next;
-            totalUpdated += applied.updated;
-            setCorrigirMsg(
-              `Alterando ${applied.updated} regra(s) existente(s) → conta ${contraAplicar}…`,
-            );
-          }
-        }
-
-        // 1) Criar regras novas para históricos SEM regra que casam com o pedido
-        {
-          const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-          const uncoveredAll = findUncoveredExtratoRows(extratoSample, doBanco);
-          const localRules = buildRegrasFromUserChatIntent({
-            userMessage,
-            uncovered: uncoveredAll,
-            contaBanco: bancoAtivo,
-            plano: planoOptions,
-            contaContrapartida: contaPedida,
-          });
-          if (localRules.length > 0) {
-            const applied = applySugestoes(
-              current,
-              localRules.map((r) => ({
-                descricao: r.descricao,
-                nature: r.nature,
-                contaContrapartida: r.contaContrapartida,
-              })),
-            );
-            current = applied.next;
-            totalAdded += applied.added;
-            totalUpdated += applied.updated;
-            setCorrigirMsg(
-              `Pedido aplicado localmente: ${applied.updated} alterada(s), ${applied.added} nova(s)` +
-                (contaPedida ? ` → conta ${contaPedida}` : '') +
-                '. Refinando com IA…',
-            );
-          }
-        }
-
-        // 2) IA — análise única (sem lotes)
-        {
-          const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
-          const uncoveredAll = findUncoveredExtratoRows(extratoSample, doBanco);
-          const focusedUncovered = filterUncoveredByUserHint(uncoveredAll, userMessage);
-          const regrasFoco = doBanco.filter((r) => {
-            const tokens = tokensAssuntoPedidoUsuario(userMessage);
-            if (tokens.length === 0) return false;
-            const hist = normalizeExtratoMatchText(r.descricao);
-            const nome = normalizeExtratoMatchText(r.nome);
-            const hits = tokens.filter((t) => hist.includes(t) || nome.includes(t)).length;
-            return (
-              hits >= Math.min(2, tokens.length) ||
-              (tokens.length === 1 && hits === 1) ||
-              tokens.some((t) => t.length >= 6 && (hist.includes(t) || nome.includes(t)))
-            );
-          });
-
-          const sampleRows = [
-            ...focusedUncovered,
-            ...regrasFoco.map((r) => ({
-              description: r.descricao,
-              nature: r.nature,
-              value: 0,
-            })),
-          ];
-          const padroesChat = agrupaPadroesExtratoParaIa(
-            sampleRows.length > 0 ? sampleRows : focusedUncovered,
-            coligadas,
-          );
-          const padroesExtrato = agrupaPadroesExtratoParaIa(extratoSample, coligadas);
-          const modulosCtx = buildModulosContextoParaRegrasIa(company);
-
-          setCorrigirMsg(`Chat: analisando pedido (${padroesChat.length} padrão(ões) relacionados)…`);
-
-          const result = await suggestRegrasContasWithAi({
-            company,
-            contaBanco: bancoAtivo,
-            bancoNome:
-              bancoOptions.find((b) => sanitizeCodigoReduzido(b.codigoReduzido) === bancoAtivo)
-                ?.name || bancoAtivo,
-            mode: 'chat_pedido',
-            message: [
-              'ANALISTA CONTÁBIL SÊNIOR — PEDIDO DO USUÁRIO (prioridade absoluta, análise única):',
-              userMessage,
-              contaPedida
-                ? `Conta destino OBRIGATÓRIA: código reduzido ${contaPedida}.`
-                : 'Resolva a conta destino pelo NOME no plano.',
-              'Corrija ou crie regras conforme o pedido. PRECISÃO primeiro.',
-              `Banco: ${bancoAtivo}.`,
-            ].join(' '),
-            plano: planoOptions,
-            extratoSample: padroesParaPayloadIa(padroesExtrato),
-            uncoveredExtrato: padroesParaPayloadIa(padroesChat),
-            anexosTexto: docs,
-            balanceteUsoContas: inteligenciaCtx.balanceteUsoContas,
-            pastasGruposContas: inteligenciaCtx.pastasGruposContas,
-            inteligenciaColigadas: inteligenciaCtx.inteligenciaColigadas,
-            inteligenciaContratos: inteligenciaCtx.inteligenciaContratos,
-            inteligenciaHonorarios: inteligenciaCtx.inteligenciaHonorarios,
-            inteligenciaFinanceiras: inteligenciaCtx.inteligenciaFinanceiras,
-            modulosContexto: modulosCtx,
-            coligadas: coligadas.map((c) => ({
-              nome: c.nome,
-              aliases: c.aliases,
-              contaReduzida: c.contaReduzida,
-            })),
-            regrasExistentes: (regrasFoco.length > 0 ? regrasFoco : doBanco).map((r) => ({
-              descricao: r.descricao,
-              nature: r.nature,
-              contaContrapartida: r.contaContrapartida,
-            })),
-          });
-
-          if (result.resumo) resumos.push(result.resumo);
-          if (result.regras.length > 0) {
-            const forced = result.regras.map((r) =>
-              contaPedida ? { ...r, contaContrapartida: contaPedida } : r,
-            );
-            const historicoChat = focusedUncovered.map((u) => u.description);
-            const toApply = contaPedida
-              ? forced.filter((r) => {
-                  const red =
-                    resolveCodigoReduzidoDoPlano(r.contaContrapartida, allPlano) ||
-                    sanitizeCodigoReduzido(r.contaContrapartida);
-                  return Boolean(red);
-                })
-              : validateAiRegrasLote(forced, planoOptions, coligadas, docs, historicoChat, [], {
-                  company,
-                  socios: listAiSociosParaIa(company),
-                });
-            const applied = applySugestoes(current, toApply);
-            current = applied.next;
-            totalAdded += applied.added;
-            totalUpdated += applied.updated;
-          }
-        }
-
-        if (totalAdded > 0 || totalUpdated > 0) {
-          current = saveExtratoRegrasContas(company, current);
-          onChange(current);
-          window.setTimeout(() => onReaplicar?.(), 0);
-        }
-
-        const reply = [
-          resumos[0],
-          totalAdded || totalUpdated
-            ? `Feito conforme seu pedido: ${totalUpdated} regra(s) alterada(s), ${totalAdded} nova(s)${
-                contaPedida ? ` → conta ${contaPedida}` : ''
-              }. Contas reaplicadas na conciliação.`
-            : contaPedida
-              ? `Achei a conta ${contaPedida} no plano, mas nenhum histórico/regra casou com o texto do pedido. Cite o nome como aparece no extrato ou na regra.`
-              : 'Não encontrei no plano a conta citada nem históricos/regras que casem. Informe o nome da conta (ex.: fundo fixo) ou o código reduzido, e o nome do lançamento/regra a mudar.',
-        ]
-          .filter(Boolean)
-          .join(' ');
-        setCorrigirMsg(reply);
-        return { ok: totalAdded > 0 || totalUpdated > 0, reply };
-      } catch (err) {
-        const fail = err instanceof Error ? err.message : 'Falha no chat com a IA.';
-        setCorrigirMsg(fail);
-        return { ok: false, reply: fail };
-      } finally {
-        setCorrigindoIa(false);
-      }
-    },
-    [
-      allPlano,
-      bancoOptions,
-      company,
-      extratoSample,
-      matchBancoCode,
-      onChange,
-      onReaplicar,
-      planoOptions,
-      regras,
-      selectedBanco,
-    ],
-  );
 
   const persist = useCallback(
     (next: ExtratoRegraConta[]) => {
@@ -886,8 +521,8 @@ export default memo(function ExtratoRegrasContasModal({
               Regras de Contas
             </h2>
             <p className="text-[9px] text-slate-600 mt-0.5 leading-snug">
-              Só <strong>código reduzido</strong> — classificação hierárquica é{' '}
-              <strong className="text-rose-700">proibida</strong>.
+              Cadastro manual — puxe históricos do extrato ou digite a descrição e a contrapartida
+              (código reduzido).
             </p>
           </div>
           <button
@@ -900,7 +535,7 @@ export default memo(function ExtratoRegrasContasModal({
           </button>
         </div>
 
-        {/* Corpo rolável: banco + regras + IA */}
+        {/* Corpo rolável: banco + regras */}
         <div className="flex-1 min-h-0 overflow-y-scroll overscroll-contain">
           <div className="p-3 border-b border-brand-border bg-white space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -992,9 +627,8 @@ export default memo(function ExtratoRegrasContasModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
-            <div className="flex flex-col min-h-0 border-b lg:border-b-0 lg:border-r border-brand-border">
-              <div className="p-3 border-b border-brand-border/40 space-y-2 shrink-0">
+          <div className="flex flex-col min-h-0">
+            <div className="p-3 border-b border-brand-border/40 space-y-2 shrink-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
                     Nova regra · contrapartida (código reduzido) ·{' '}
@@ -1164,8 +798,8 @@ export default memo(function ExtratoRegrasContasModal({
                 ) : null}
                 {regrasDoBanco.length === 0 ? (
                   <p className="text-[10px] text-brand-text/45 italic text-center py-8">
-                    Nenhuma regra para este banco. Clique em &quot;Gerar regras com IA&quot; ou cadastre
-                    manualmente abaixo.
+                    Nenhuma regra para este banco. Cadastre manualmente abaixo ou puxe um histórico
+                    do extrato.
                   </p>
                 ) : (
                   <ul className="space-y-2">
@@ -1183,24 +817,6 @@ export default memo(function ExtratoRegrasContasModal({
                 )}
               </div>
             </div>
-
-            <div className="flex flex-col p-2 lg:sticky lg:top-0 lg:self-start">
-              <ExtratoRegrasContasAiPanel
-                company={company}
-                contaBanco={selectedBanco}
-                bancoNome={bancoLabel(selectedBanco)}
-                docsCount={docsCount}
-                busy={corrigindoIa}
-                message={corrigirMsg}
-                uncoveredCount={uncoveredRows.length}
-                regrasCount={regrasDoBanco.length}
-                onMostrarRegras={handleMostrarRegras}
-                onGerarRegras={() => void handleGerarRegrasAutomaticas()}
-                onOpenInteligencia={onOpenInteligencia}
-                onChat={handleChatRegrasComIa}
-              />
-            </div>
-          </div>
         </div>
 
         <div className="p-3 border-t border-brand-border flex justify-end gap-2 shrink-0 bg-brand-bg">

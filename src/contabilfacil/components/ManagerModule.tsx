@@ -341,8 +341,6 @@ export default function ManagerModule({
   const [extratoRegrasContas, setExtratoRegrasContas] = useState<ExtratoRegraConta[]>([]);
   const [regrasContasModalOpen, setRegrasContasModalOpen] = useState(false);
   const [inteligenciaModalOpen, setInteligenciaModalOpen] = useState(false);
-  /** Se abriu Inteligência IA a partir do modal de regras, volta para as regras ao fechar. */
-  const reopenRegrasAposInteligenciaRef = useRef(false);
   const [inteligenciaTick, setInteligenciaTick] = useState(0);
   const [extratoPastasModalOpen, setExtratoPastasModalOpen] = useState(false);
   const [extratoPastasTick, setExtratoPastasTick] = useState(0);
@@ -2272,11 +2270,6 @@ export default function ManagerModule({
           onReaplicar={
             extratoLancamentos.length > 0 ? handleReaplicarExtratoContas : undefined
           }
-          onOpenInteligencia={() => {
-            reopenRegrasAposInteligenciaRef.current = true;
-            setRegrasContasModalOpen(false);
-            setInteligenciaModalOpen(true);
-          }}
         />
       ) : null}
 
@@ -2284,13 +2277,7 @@ export default function ManagerModule({
         open={inteligenciaModalOpen}
         company={selectedCompany}
         planoOptions={extratoPlanoNomeOptions}
-        onClose={() => {
-          setInteligenciaModalOpen(false);
-          if (reopenRegrasAposInteligenciaRef.current) {
-            reopenRegrasAposInteligenciaRef.current = false;
-            setRegrasContasModalOpen(true);
-          }
-        }}
+        onClose={() => setInteligenciaModalOpen(false)}
         onChanged={() => setInteligenciaTick((n) => n + 1)}
       />
 
