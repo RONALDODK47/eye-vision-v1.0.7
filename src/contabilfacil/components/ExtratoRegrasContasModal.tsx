@@ -61,6 +61,9 @@ const INPUT_REGRA_CLS = cn(
   'max-w-none w-full h-[26px] text-[10px] uppercase',
 );
 
+/** Evita formulário esticado em monitores largos. */
+const REGRAS_CONTENT_MAX = 'w-full max-w-3xl mx-auto';
+
 type RegraEditableRowProps = {
   regra: ExtratoRegraConta;
   planoOptions: PlanoOption[];
@@ -93,7 +96,7 @@ const ExtratoRegraContaEditableRow = memo(function ExtratoRegraContaEditableRow(
 
   return (
     <li className="border border-brand-border/40 p-2.5 bg-white space-y-2">
-      <div className="grid grid-cols-1 gap-2">
+      <div className="space-y-2 max-w-2xl">
         <div className="min-w-0">
           <label
             htmlFor={`regra-desc-${regra.id}`}
@@ -117,7 +120,9 @@ const ExtratoRegraContaEditableRow = memo(function ExtratoRegraContaEditableRow(
             aria-label={`Descrição da regra ${regra.descricao}`}
           />
         </div>
-        <div className="min-w-0">
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="w-full sm:w-[88px] shrink-0">
           <p className="font-bold uppercase text-brand-text/45 block text-[8px] mb-0.5">Natureza</p>
           <div className="grid grid-cols-2 border border-brand-border h-[26px]">
             <button
@@ -144,7 +149,7 @@ const ExtratoRegraContaEditableRow = memo(function ExtratoRegraContaEditableRow(
             </button>
           </div>
         </div>
-        <div className="min-w-0">
+        <div className="w-full sm:flex-1 sm:min-w-[200px] sm:max-w-[340px]">
           <div className="grid grid-cols-[minmax(72px,1fr)_minmax(0,2fr)] gap-1 mb-0.5">
             <p className="font-bold uppercase text-brand-text/45 text-[8px]">Cód. reduzido</p>
             <p className="font-bold uppercase text-brand-text/45 text-[8px]">Descrição da conta</p>
@@ -165,15 +170,15 @@ const ExtratoRegraContaEditableRow = memo(function ExtratoRegraContaEditableRow(
             </span>
           ) : null}
         </div>
+        <button
+          type="button"
+          onClick={() => onRemove(regra.id)}
+          className="technical-button text-[8px] py-1 px-2 inline-flex items-center justify-center gap-1 w-full sm:w-auto shrink-0 min-h-[26px]"
+        >
+          <Trash2 size={11} aria-hidden="true" />
+          Remover
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={() => onRemove(regra.id)}
-        className="technical-button text-[8px] py-1 px-2 inline-flex items-center justify-center gap-1 w-full sm:w-auto"
-      >
-        <Trash2 size={11} aria-hidden="true" />
-        Remover
-      </button>
     </li>
   );
 });
@@ -507,7 +512,7 @@ export default memo(function ExtratoRegrasContasModal({
   return (
     <div className="fixed inset-0 z-[81] flex items-center justify-center p-3 bg-black/50">
       <div
-        className="technical-panel shadow-[6px_6px_0_0_#141414] w-full max-w-6xl max-h-[92vh] h-[92vh] min-h-0 flex flex-col overflow-hidden"
+        className="technical-panel shadow-[6px_6px_0_0_#141414] w-full max-w-4xl max-h-[92vh] h-[92vh] min-h-0 flex flex-col overflow-hidden"
         role="dialog"
         aria-labelledby="extrato-regras-contas-title"
       >
@@ -536,8 +541,8 @@ export default memo(function ExtratoRegrasContasModal({
         </div>
 
         {/* Corpo rolável: banco + regras */}
-        <div className="flex-1 min-h-0 overflow-y-scroll overscroll-contain">
-          <div className="p-3 border-b border-brand-border bg-white space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-scroll overscroll-contain px-3">
+          <div className={cn('p-3 border-b border-brand-border bg-white space-y-2', REGRAS_CONTENT_MAX)}>
             <div className="flex items-center gap-2 flex-wrap">
               <Building2 size={14} className="text-brand-text/70 shrink-0" aria-hidden="true" />
               <p className="text-[9px] font-black uppercase tracking-wider">
@@ -552,7 +557,7 @@ export default memo(function ExtratoRegrasContasModal({
             <p className="text-[9px] text-brand-text/55 leading-snug max-w-2xl">
               Informe o <strong>código reduzido</strong> da conta banco. Pode apagar e digitar outro.
             </p>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 max-w-4xl">
+            <div className="grid grid-cols-1 gap-3">
               <div className="space-y-1.5 min-w-0">
                 {bancoOptions.length > 0 ? (
                   <ExtratoContaPicker
@@ -627,153 +632,151 @@ export default memo(function ExtratoRegrasContasModal({
             </div>
           </div>
 
-          <div className="flex flex-col min-h-0">
-            <div className="p-3 border-b border-brand-border/40 space-y-2 shrink-0">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
-                    Nova regra · contrapartida (código reduzido) ·{' '}
-                    {bancoLabel(selectedBanco) || 'sem banco'}
-                  </p>
-                </div>
-                {uncoveredRows.length > 0 ? (
-                  <p className="text-[8px] text-amber-800">
-                    {uncoveredRows.length} padrão(ões) do extrato ainda sem regra.
-                  </p>
-                ) : extratoSample.length > 0 ? (
-                  <p className="text-[8px] text-green-800">
-                    Todos os lançamentos do extrato têm regra neste banco.
-                  </p>
-                ) : null}
-                <div className="space-y-2">
-                  {padroesHistoricoExtrato.length > 0 ? (
-                    <div className="space-y-1">
-                      <label
-                        htmlFor="regra-padrao-historico"
-                        className="text-[8px] font-bold uppercase text-brand-text/50 block"
-                      >
-                        Puxar histórico do extrato ({padroesHistoricoExtrato.length} sem regra)
-                      </label>
-                      <ExtratoHistoricoPicker
-                        padroes={padroesHistoricoExtrato}
-                        value={padraoHistoricoPick}
-                        disabled={!selectedBanco}
-                        placeholder="Buscar histórico do extrato…"
-                        onSelect={(hit) => {
-                          const key = `${hit.nature}|${hit.descricao}`;
-                          setPadraoHistoricoPick(key);
-                          setDraftDescricao(hit.descricao);
-                          setDraftNature(hit.nature);
-                          setAddError('');
-                        }}
-                        onClear={() => {
-                          setPadraoHistoricoPick('');
-                          setDraftDescricao('');
-                        }}
-                      />
-                    </div>
-                  ) : null}
-
+          <div className={cn('flex flex-col min-h-0 border-b border-brand-border/40', REGRAS_CONTENT_MAX)}>
+            <div className="p-3 space-y-2 shrink-0">
+              <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
+                Nova regra · contrapartida (código reduzido) ·{' '}
+                {bancoLabel(selectedBanco) || 'sem banco'}
+              </p>
+              {uncoveredRows.length > 0 ? (
+                <p className="text-[8px] text-amber-800">
+                  {uncoveredRows.length} padrão(ões) do extrato ainda sem regra.
+                </p>
+              ) : extratoSample.length > 0 ? (
+                <p className="text-[8px] text-green-800">
+                  Todos os lançamentos do extrato têm regra neste banco.
+                </p>
+              ) : null}
+              <div className="space-y-3 max-w-2xl">
+                {padroesHistoricoExtrato.length > 0 ? (
                   <div className="space-y-1">
                     <label
-                      htmlFor="regra-historico-nova"
+                      htmlFor="regra-padrao-historico"
                       className="text-[8px] font-bold uppercase text-brand-text/50 block"
                     >
-                      Histórico no extrato (texto que identifica o lançamento)
+                      Puxar histórico do extrato ({padroesHistoricoExtrato.length} sem regra)
                     </label>
-                    <input
-                      id="regra-historico-nova"
-                      type="text"
-                      aria-label="Histórico no extrato"
-                      value={draftDescricao}
-                      onChange={(e) => {
-                        setDraftDescricao(e.target.value);
-                        setPadraoHistoricoPick('');
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAdd();
-                        }
-                      }}
-                      placeholder="Ex.: PIX EMITIDO, TARIFA, PAGAMENTO FORNECEDOR…"
-                      className={INPUT_REGRA_CLS}
+                    <ExtratoHistoricoPicker
+                      padroes={padroesHistoricoExtrato}
+                      value={padraoHistoricoPick}
                       disabled={!selectedBanco}
+                      placeholder="Buscar histórico do extrato…"
+                      onSelect={(hit) => {
+                        const key = `${hit.nature}|${hit.descricao}`;
+                        setPadraoHistoricoPick(key);
+                        setDraftDescricao(hit.descricao);
+                        setDraftNature(hit.nature);
+                        setAddError('');
+                      }}
+                      onClear={() => {
+                        setPadraoHistoricoPick('');
+                        setDraftDescricao('');
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                <div className="space-y-1">
+                  <label
+                    htmlFor="regra-historico-nova"
+                    className="text-[8px] font-bold uppercase text-brand-text/50 block"
+                  >
+                    Histórico no extrato (texto que identifica o lançamento)
+                  </label>
+                  <input
+                    id="regra-historico-nova"
+                    type="text"
+                    aria-label="Histórico no extrato"
+                    value={draftDescricao}
+                    onChange={(e) => {
+                      setDraftDescricao(e.target.value);
+                      setPadraoHistoricoPick('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAdd();
+                      }
+                    }}
+                    placeholder="Ex.: PIX EMITIDO, TARIFA, PAGAMENTO FORNECEDOR…"
+                    className={INPUT_REGRA_CLS}
+                    disabled={!selectedBanco}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                  <div className="w-full sm:w-[88px] shrink-0">
+                    <p className="text-[8px] font-bold uppercase text-brand-text/50 mb-0.5">
+                      Natureza
+                    </p>
+                    <div className="flex border border-brand-border h-[26px]">
+                      <button
+                        type="button"
+                        onClick={() => setDraftNature('D')}
+                        disabled={!selectedBanco}
+                        className={cn(
+                          'flex-1 text-[8px] font-black uppercase',
+                          draftNature === 'D' ? 'bg-red-600 text-white' : 'bg-transparent',
+                        )}
+                      >
+                        D
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDraftNature('C')}
+                        disabled={!selectedBanco}
+                        className={cn(
+                          'flex-1 text-[8px] font-black uppercase',
+                          draftNature === 'C' ? 'bg-blue-600 text-white' : 'bg-transparent',
+                        )}
+                      >
+                        C
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="w-full sm:flex-1 sm:min-w-[200px] sm:max-w-[340px]">
+                    <div className="grid grid-cols-[minmax(72px,1fr)_minmax(0,2fr)] gap-1 mb-0.5">
+                      <p className="text-[8px] font-bold uppercase text-brand-text/50">
+                        Cód. reduzido
+                      </p>
+                      <p className="text-[8px] font-bold uppercase text-brand-text/50">
+                        Descrição da conta
+                      </p>
+                    </div>
+                    <ExtratoContaPicker
+                      value={draftConta}
+                      options={planoOptions}
+                      lookupOptions={planoLookup}
+                      includeSinteticas
+                      showNomeInline
+                      placeholder="Código…"
+                      ariaLabel="Conta contrapartida (código reduzido)"
+                      onChange={(code) => {
+                        setDraftConta(code);
+                        setAddError('');
+                      }}
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-[108px_1fr_auto] gap-2 items-end">
-                    <div className="shrink-0">
-                      <p className="text-[8px] font-bold uppercase text-brand-text/50 mb-0.5">
-                        Natureza
-                      </p>
-                      <div className="flex border border-brand-border h-[26px]">
-                        <button
-                          type="button"
-                          onClick={() => setDraftNature('D')}
-                          disabled={!selectedBanco}
-                          className={cn(
-                            'flex-1 text-[8px] font-black uppercase',
-                            draftNature === 'D' ? 'bg-red-600 text-white' : 'bg-transparent',
-                          )}
-                        >
-                          D
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDraftNature('C')}
-                          disabled={!selectedBanco}
-                          className={cn(
-                            'flex-1 text-[8px] font-black uppercase',
-                            draftNature === 'C' ? 'bg-blue-600 text-white' : 'bg-transparent',
-                          )}
-                        >
-                          C
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0">
-                      <div className="grid grid-cols-[minmax(72px,1fr)_minmax(0,2fr)] gap-1 mb-0.5">
-                        <p className="text-[8px] font-bold uppercase text-brand-text/50">
-                          Cód. reduzido
-                        </p>
-                        <p className="text-[8px] font-bold uppercase text-brand-text/50">
-                          Descrição da conta
-                        </p>
-                      </div>
-                      <ExtratoContaPicker
-                        value={draftConta}
-                        options={planoOptions}
-                        lookupOptions={planoLookup}
-                        includeSinteticas
-                        showNomeInline
-                        placeholder="Código…"
-                        ariaLabel="Conta contrapartida (código reduzido)"
-                        onChange={(code) => {
-                          setDraftConta(code);
-                          setAddError('');
-                        }}
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleAdd}
-                      disabled={!draftDescricao.trim() || !draftConta.trim() || !selectedBanco.trim()}
-                      className="technical-button-primary text-[9px] py-1 px-4 shrink-0 inline-flex items-center justify-center gap-1 disabled:opacity-40 self-stretch min-h-[26px] sm:self-end"
-                    >
-                      <Plus size={12} aria-hidden="true" />
-                      ADD
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAdd}
+                    disabled={!draftDescricao.trim() || !draftConta.trim() || !selectedBanco.trim()}
+                    className="technical-button-primary text-[9px] py-1 px-4 shrink-0 inline-flex items-center justify-center gap-1 disabled:opacity-40 min-h-[26px] w-full sm:w-auto"
+                  >
+                    <Plus size={12} aria-hidden="true" />
+                    ADD
+                  </button>
                 </div>
               </div>
+            </div>
 
-              <div
-                id="regras-do-banco-lista"
-                ref={regrasListRef}
-                className="p-3 space-y-2 scroll-mt-2 transition-shadow"
-              >
+            <div
+              id="regras-do-banco-lista"
+              ref={regrasListRef}
+              className="p-3 pt-0 space-y-2 scroll-mt-2 transition-shadow"
+            >
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
                     Regras deste banco · {regrasDoBanco.length}
