@@ -58,7 +58,30 @@ function isValueToken(str: string): boolean {
   return RE_NUBANK_VAL.test(normVal(str));
 }
 
-export function isNubankExtratoLayout(items: PosicionadoLike[], imgWidth: number): boolean {
+export type NubankLayoutDetectOptions = {
+  /** Quando a página 1 já foi identificada como Nubank, páginas seguintes herdam. */
+  documentIsNubank?: boolean;
+};
+
+function hasNubankTransactionPattern(items: PosicionadoLike[], imgWidth: number): boolean {
+  return items.some(
+    (it) =>
+      RE_NUBANK_TX_HINT.test(it.str) &&
+      items.some(
+        (o) =>
+          Math.abs(o.y - it.y) < 14 &&
+          o.x > imgWidth * 0.65 &&
+          isValueToken(o.str),
+      ),
+  );
+}
+
+export function isNubankExtratoLayout(
+  items: PosicionadoLike[],
+  imgWidth: number,
+  options?: NubankLayoutDetectOptions,
+): boolean {
+  if (options?.documentIsNubank) return true;
   if (items.length < 15 || imgWidth <= 0) return false;
   const blob = items.map((i) => i.str).join(' ').toUpperCase();
   const looksNu =
@@ -67,7 +90,9 @@ export function isNubankExtratoLayout(items: PosicionadoLike[], imgWidth: number
   const nubankDates = items.filter(
     (it) => it.x < imgWidth * 0.2 && RE_NUBANK_DATE.test(it.str.trim()),
   );
-  return looksNu && hasMov && nubankDates.length >= 1;
+  const hasDayTotals = /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/i.test(blob);
+  const hasTxRows = hasNubankTransactionPattern(items, imgWidth);
+  return looksNu && hasMov && (nubankDates.length >= 1 || hasTxRows || hasDayTotals);
 }
 
 function pct(startPx: number, endPx: number, imgWidth: number): { startX: number; width: number } {
@@ -329,6 +354,25 @@ function captureDateAnchor(
   return { text: tok.text.trim(), y: tok.y, h: tok.height };
 }
 
+function findDateAnchorOnPage(
+  textItems: PDFTextItem[],
+  geo: NubankGeometry,
+  dateText?: string,
+): { text: string; y: number; h: number } | null {
+  const normalized = dateText?.trim().toUpperCase();
+  const candidates = textItems.filter(
+    (it) => inZoneDate(it, geo) && RE_NUBANK_DATE.test(it.text.trim()),
+  );
+  if (!candidates.length) return null;
+  if (normalized) {
+    const exact = candidates.find((it) => it.text.trim().toUpperCase() === normalized);
+    if (exact) return { text: exact.text.trim(), y: exact.y, h: exact.height };
+  }
+  const sorted = [...candidates].sort((a, b) => b.y - a.y);
+  const tok = sorted[0];
+  return { text: tok.text.trim(), y: tok.y, h: tok.height };
+}
+
 function findLastDayDateInPage(items: PosicionadoLike[], geo: NubankGeometry): string {
   const minY = geo.movimentacoesY ?? geo.faixaStart;
   const dates = items
@@ -341,6 +385,18 @@ function findLastDayDateInPage(items: PosicionadoLike[], geo: NubankGeometry): s
     )
     .sort((a, b) => b.y - a.y);
   return dates[0]?.str.trim() ?? '';
+}
+
+/** Última âncora de data visível na página (texto + posição para recorte). */
+export function getNubankLastDateAnchor(
+  textItems: PDFTextItem[],
+  imgWidth: number,
+  imgHeight: number,
+  pageNumber: number,
+): { text: string; y: number; h: number } | null {
+  const pos = pdfTextItemsToPosicionado(textItems);
+  const geo = calibrateNubankGeometry(pos, imgWidth, imgHeight, pageNumber);
+  return findDateAnchorOnPage(textItems, geo);
 }
 
 /** Última data de dia visível na página (para propagar à página seguinte). */
@@ -364,11 +420,16 @@ export function getNubankLastFlowSign(
 ): NubankFlowSign | null {
   const pos = pdfTextItemsToPosicionado(textItems);
   const geo = calibrateNubankGeometry(pos, imgWidth, imgHeight, pageNumber);
+  const medianH = medianTokenHeight(pos);
   const rawRows = detectRowsFromText(textItems, 8);
+  const flowZoneMinY =
+    geo.movimentacoesY != null && pageNumber <= 1
+      ? geo.movimentacoesY
+      : Math.max(0, geo.faixaStart - medianH * 4);
   let lastFlow: NubankFlowSign | null = null;
   for (const row of rawRows) {
     const rowCenterY = row.y + row.height / 2;
-    if (rowCenterY < geo.faixaStart || rowCenterY > geo.faixaEnd) continue;
+    if (rowCenterY < flowZoneMinY || rowCenterY > geo.faixaEnd + medianH) continue;
     const flow = detectFlowFromRow(rowBlob(row.items));
     if (flow) lastFlow = flow;
   }
@@ -387,20 +448,30 @@ export function detectNubankTransactionRows(
   pageNumber = 1,
   carryDate = '',
   carryFlow: NubankFlowSign | null = null,
+  carryDateY = 0,
+  carryDateH = 0,
 ): NubankRowConfig[] {
   if (!textItems.length) return [];
 
   const pos = pdfTextItemsToPosicionado(textItems);
   const h = imgHeight ?? Math.max(...pos.map((i) => i.y + i.h), 400);
   const geo = calibrateNubankGeometry(pos, imgWidth, h, pageNumber);
+  const medianH = medianTokenHeight(pos);
 
   const rawRows = detectRowsFromText(textItems, 8);
+  const pageDateAnchor = findDateAnchorOnPage(textItems, geo);
   let currentDate = carryDate.trim() || findLastDayDateInPage(pos, geo);
-  let currentDateY = 0;
-  let currentDateH = medianTokenHeight(pos);
+  let currentDateY = carryDateY > 0 ? carryDateY : pageDateAnchor?.y ?? 0;
+  let currentDateH =
+    carryDateH > 0 ? carryDateH : pageDateAnchor?.h ?? medianH;
   let currentFlow: NubankFlowSign | null = carryFlow;
   const out: NubankRowConfig[] = [];
   let pending: NubankRowConfig | null = null;
+
+  const flowZoneMinY =
+    geo.movimentacoesY != null && pageNumber <= 1
+      ? geo.movimentacoesY
+      : Math.max(0, geo.faixaStart - medianH * 4);
 
   const flush = () => {
     if (pending) {
@@ -421,7 +492,7 @@ export function detectNubankTransactionRows(
     }
 
     const flowHit = detectFlowFromRow(blob);
-    if (flowHit && rowCenterY >= geo.faixaStart && rowCenterY <= geo.faixaEnd) {
+    if (flowHit && rowCenterY >= flowZoneMinY && rowCenterY <= geo.faixaEnd + medianH) {
       currentFlow = flowHit;
       flush();
       continue;
@@ -434,12 +505,17 @@ export function detectNubankTransactionRows(
 
     if (isTransactionStartRow(row.items, geo, blob)) {
       flush();
+      const dateAnchor =
+        findDateAnchorOnPage(textItems, geo, currentDate) ??
+        (currentDateY > 0
+          ? { text: currentDate, y: currentDateY, h: currentDateH }
+          : null);
       pending = {
         y: row.y,
         height: row.height,
         anchorDate: currentDate,
-        anchorDateY: currentDateY,
-        anchorDateH: currentDateH,
+        anchorDateY: dateAnchor?.y ?? currentDateY,
+        anchorDateH: dateAnchor?.h ?? currentDateH,
         flowSign: currentFlow,
       };
       continue;
@@ -491,19 +567,24 @@ function resolveNubankDateCrop(
   dPx: { x: number; w: number },
   pad: number,
 ): string {
-  let dateY = cfg.anchorDateY ?? 0;
-  let dateH = cfg.anchorDateH ?? medianTokenHeight(pdfTextItemsToPosicionado(textItems));
+  const medianH = medianTokenHeight(pdfTextItemsToPosicionado(textItems));
+  let dateH = cfg.anchorDateH ?? medianH;
 
+  const pageAnchor = findDateAnchorOnPage(textItems, geo, cfg.anchorDate);
+  if (pageAnchor) {
+    return cropSection(canvas, dPx.x, pageAnchor.y - pad, dPx.w, pageAnchor.h + pad * 2);
+  }
+
+  let dateY = cfg.anchorDateY ?? 0;
   if (dateY <= 0 && cfg.anchorDate) {
     const normalized = cfg.anchorDate.trim().toUpperCase();
     const tok = textItems
       .filter(
         (it) =>
           inZoneDate(it, geo) &&
-          it.text.trim().toUpperCase() === normalized &&
-          it.y <= cfg.y + 40,
+          it.text.trim().toUpperCase() === normalized,
       )
-      .sort((a, b) => cfg.y - a.y - (cfg.y - b.y))[0];
+      .sort((a, b) => Math.abs(a.y - cfg.y) - Math.abs(b.y - cfg.y))[0];
     if (tok) {
       dateY = tok.y;
       dateH = tok.height;

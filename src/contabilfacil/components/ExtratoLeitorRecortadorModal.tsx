@@ -29,6 +29,7 @@ import {
   detectNubankTransactionRows,
   extractNubankDataFromCanvas,
   getNubankLastDayDate,
+  getNubankLastDateAnchor,
   getNubankLastFlowSign,
   isNubankExtratoLayout,
   NUBANK_EXCLUSION_RULES,
@@ -120,6 +121,7 @@ export function ExtratoLeitorRecortadorModal({
   const [savedLayouts, setSavedLayouts] = useState<ExtratoOcrLayoutSaved[]>([]);
   const [sideTab, setSideTab] = useState<'config' | 'layouts'>('config');
   const isNubankLayoutRef = useRef(false);
+  const documentIsNubankRef = useRef(false);
   const loadedFileKeyRef = useRef('');
   const pruneStorageKey = `${companyName.trim()}::${file.name}`;
 
@@ -140,7 +142,10 @@ export function ExtratoLeitorRecortadorModal({
       options?: { setBancoIfEmpty?: boolean },
     ) => {
       const pos = pdfTextItemsToPosicionado(page.textItems);
-      const isNu = isNubankExtratoLayout(pos, page.width);
+      const isNu =
+        documentIsNubankRef.current ||
+        isNubankExtratoLayout(pos, page.width, { documentIsNubank: documentIsNubankRef.current });
+      if (isNu) documentIsNubankRef.current = true;
       isNubankLayoutRef.current = isNu;
 
       if (!isNu) {
@@ -227,6 +232,8 @@ export function ExtratoLeitorRecortadorModal({
     setActiveTab('align');
     setCropStartPct(10);
     setCropEndPct(90);
+    documentIsNubankRef.current = false;
+    isNubankLayoutRef.current = false;
 
     try {
       if (loadedFile.type === 'application/pdf' || loadedFile.name.toLowerCase().endsWith('.pdf')) {
@@ -355,6 +362,33 @@ export function ExtratoLeitorRecortadorModal({
         return;
       }
       const stmtYear = resolveExtratoYearFromContext(textItems, file.name);
+      let nubankCarryDate = '';
+      let nubankCarryFlow: import('../../lib/leitorRecortador/nubankExtratoLayout').NubankFlowSign | null = null;
+      let nubankCarryDateY = 0;
+      let nubankCarryDateH = 0;
+      if (isNubankLayoutRef.current && currentPage > 1) {
+        for (let p = 1; p < currentPage; p++) {
+          const prevPage = pdfPages.find((pp) => pp.pageNumber === p);
+          if (!prevPage) continue;
+          nubankCarryDate =
+            getNubankLastDayDate(prevPage.textItems, prevPage.width, prevPage.height, p) ||
+            nubankCarryDate;
+          nubankCarryFlow =
+            getNubankLastFlowSign(prevPage.textItems, prevPage.width, prevPage.height, p) ??
+            nubankCarryFlow;
+          const lastAnchor = getNubankLastDateAnchor(
+            prevPage.textItems,
+            prevPage.width,
+            prevPage.height,
+            p,
+          );
+          if (lastAnchor) {
+            nubankCarryDate = lastAnchor.text;
+            nubankCarryDateY = lastAnchor.y;
+            nubankCarryDateH = lastAnchor.h;
+          }
+        }
+      }
       const nubankRows = isNubankLayoutRef.current
         ? filterRowsInCropBand(
             detectNubankTransactionRows(
@@ -362,6 +396,10 @@ export function ExtratoLeitorRecortadorModal({
               activeCanvas.width,
               activeCanvas.height,
               currentPage,
+              nubankCarryDate,
+              nubankCarryFlow,
+              nubankCarryDateY,
+              nubankCarryDateH,
             ),
             startY,
             endY,
@@ -403,15 +441,29 @@ export function ExtratoLeitorRecortadorModal({
       let allExtractedRows: ExtractedRow[] = [];
       let nubankCarryDate = '';
       let nubankCarryFlow: import('../../lib/leitorRecortador/nubankExtratoLayout').NubankFlowSign | null = null;
+      let nubankCarryDateY = 0;
+      let nubankCarryDateH = 0;
       pdfPages.forEach((page) => {
         const p = page.pageNumber;
         if (p < cropStartPage || p > cropEndPage) return;
         let pageRows: { y: number; height: number }[] = [];
         const pos = pdfTextItemsToPosicionado(page.textItems);
-        const pageIsNu = isNubankExtratoLayout(pos, page.width);
+        const pageIsNu =
+          documentIsNubankRef.current ||
+          isNubankExtratoLayout(pos, page.width, { documentIsNubank: documentIsNubankRef.current });
+        if (pageIsNu) documentIsNubankRef.current = true;
         if (rowMode === 'auto') {
           pageRows = pageIsNu
-            ? detectNubankTransactionRows(page.textItems, page.width, page.height, p)
+            ? detectNubankTransactionRows(
+                page.textItems,
+                page.width,
+                page.height,
+                p,
+                nubankCarryDate,
+                nubankCarryFlow,
+                nubankCarryDateY,
+                nubankCarryDateH,
+              )
             : detectRowsFromText(page.textItems, 10).map((r) => ({ y: r.y, height: r.height }));
         } else {
           pageRows = Array.from({ length: gridRowCount }).map((_, i) => ({
@@ -432,6 +484,8 @@ export function ExtratoLeitorRecortadorModal({
                 p,
                 nubankCarryDate,
                 nubankCarryFlow,
+                nubankCarryDateY,
+                nubankCarryDateH,
               ).filter((r) => filterRowsInCropBand([r], startY, endY).length > 0)
             : null;
           if (pageIsNu) {
@@ -439,6 +493,12 @@ export function ExtratoLeitorRecortadorModal({
               getNubankLastDayDate(page.textItems, page.width, page.height, p) || nubankCarryDate;
             nubankCarryFlow =
               getNubankLastFlowSign(page.textItems, page.width, page.height, p) ?? nubankCarryFlow;
+            const lastAnchor = getNubankLastDateAnchor(page.textItems, page.width, page.height, p);
+            if (lastAnchor) {
+              nubankCarryDate = lastAnchor.text;
+              nubankCarryDateY = lastAnchor.y;
+              nubankCarryDateH = lastAnchor.h;
+            }
           }
           const extracted =
             pageIsNu && nubankPageRows

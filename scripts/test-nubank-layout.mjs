@@ -21,6 +21,32 @@ function isValueToken(str) {
   return RE_NUBANK_VAL.test(normVal(str));
 }
 
+function hasNubankTransactionPattern(items, imgWidth) {
+  return items.some(
+    (it) =>
+      RE_NUBANK_TX_HINT.test(it.str) &&
+      items.some(
+        (o) =>
+          Math.abs(o.y - it.y) < 14 && o.x > imgWidth * 0.65 && isValueToken(o.str),
+      ),
+  );
+}
+
+function isNubankExtratoLayout(items, imgWidth, documentIsNubank = false) {
+  if (documentIsNubank) return true;
+  if (items.length < 15 || imgWidth <= 0) return false;
+  const blob = items.map((i) => i.str).join(' ').toUpperCase();
+  const looksNu =
+    /NUBANK|NU\s+PAGAMENTOS|NU\s+FINANCEIRA|4020\s+0185|0800\s+591\s+2117|NUPAGAMENTOS/i.test(blob);
+  const hasMov = /MOVIMENTAÇÕES|VALORES EM R\$/i.test(blob);
+  const nubankDates = items.filter(
+    (it) => it.x < imgWidth * 0.22 && RE_NUBANK_DATE.test(it.str.trim()),
+  );
+  const hasDayTotals = /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/i.test(blob);
+  const hasTxRows = hasNubankTransactionPattern(items, imgWidth);
+  return looksNu && hasMov && (nubankDates.length >= 1 || hasTxRows || hasDayTotals);
+}
+
 function calibrateNubankGeometry(items, imgWidth, imgHeight, pageNumber = 1) {
   const heights = items.map((i) => i.h).filter((h) => h > 0).sort((a, b) => a - b);
   const medianH = heights[Math.floor(heights.length / 2)] || 12;
@@ -92,7 +118,41 @@ function inZoneValue(item, geo) {
   return item.x >= geo.valueMinX - 4;
 }
 
-function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber = 1, carryDate = '') {
+function detectFlowFromRow(blob) {
+  if (/TOTAL DE ENTRADAS/i.test(blob)) return 'entrada';
+  if (/TOTAL DE SAÍDAS/i.test(blob)) return 'saida';
+  return null;
+}
+
+function parseMoney(valStr, flowSign) {
+  const t = normVal(valStr).replace(/^[+-]\s*/, '');
+  const num = Number(t.replace(/\./g, '').replace(',', '.'));
+  if (!Number.isFinite(num)) return null;
+  if (flowSign === 'saida') return -Math.abs(num);
+  if (flowSign === 'entrada') return Math.abs(num);
+  return Math.abs(num);
+}
+
+function getNubankLastFlowSign(textItems, imgWidth, imgHeight, pageNumber) {
+  const pos = textItems.map((t) => ({ str: t.text, x: t.x, y: t.y, w: t.width, h: t.height }));
+  const geo = calibrateNubankGeometry(pos, imgWidth, imgHeight, pageNumber);
+  const rawRows = detectRowsFromText(textItems, 8);
+  const flowZoneMinY =
+    geo.movimentacoesY != null && pageNumber <= 1
+      ? geo.movimentacoesY
+      : Math.max(0, geo.faixaStart - geo.medianH * 4);
+  let lastFlow = null;
+  for (const row of rawRows) {
+    const rowCenterY = row.y + row.height / 2;
+    if (rowCenterY < flowZoneMinY || rowCenterY > geo.faixaEnd + geo.medianH) continue;
+    const blob = row.items.map((i) => i.text).join(' ').toUpperCase();
+    const flow = detectFlowFromRow(blob);
+    if (flow) lastFlow = flow;
+  }
+  return lastFlow;
+}
+
+function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber = 1, carryDate = '', carryFlow = null, carryDateY = 0, carryDateH = 0) {
   const pos = textItems.map((t) => ({ str: t.text, x: t.x, y: t.y, w: t.width, h: t.height }));
   const geo = calibrateNubankGeometry(pos, imgWidth, imgHeight, pageNumber);
   const rawRows = detectRowsFromText(textItems, 8);
@@ -104,6 +164,13 @@ function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber 
       .sort((a, b) => b.y - a.y)[0];
     currentDate = d?.str.trim() ?? '';
   }
+  let currentDateY = carryDateY;
+  let currentDateH = carryDateH || geo.medianH;
+  let currentFlow = carryFlow;
+  const flowZoneMinY =
+    geo.movimentacoesY != null && pageNumber <= 1
+      ? geo.movimentacoesY
+      : Math.max(0, geo.faixaStart - geo.medianH * 4);
   const out = [];
   let pending = null;
 
@@ -123,7 +190,18 @@ function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber 
       .toUpperCase();
 
     const anchor = row.items.find((it) => inZoneDate(it, geo) && RE_NUBANK_DATE.test(it.text.trim()));
-    if (anchor) currentDate = anchor.text.trim();
+    if (anchor) {
+      currentDate = anchor.text.trim();
+      currentDateY = anchor.y;
+      currentDateH = anchor.height;
+    }
+
+    const flowHit = detectFlowFromRow(blob);
+    if (flowHit && rowCenterY >= flowZoneMinY && rowCenterY <= geo.faixaEnd + geo.medianH) {
+      currentFlow = flowHit;
+      flush();
+      continue;
+    }
 
     if (rowCenterY < geo.faixaStart || rowCenterY > geo.faixaEnd) {
       flush();
@@ -147,7 +225,7 @@ function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber 
 
     if (hasVal && hasHist && !/SALDO|TOTAL DE/i.test(blob)) {
       flush();
-      pending = { y: row.y, height: row.height, anchorDate: currentDate, blob };
+      pending = { y: row.y, height: row.height, anchorDate: currentDate, flowSign: currentFlow, blob };
       continue;
     }
     if (pending && hasHist && !hasVal) {
@@ -157,7 +235,7 @@ function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber 
     flush();
   }
   flush();
-  const rows = out.map((r) => ({ ...r, anchorDate: r.anchorDate || currentDate }));
+  const rows = out.map((r) => ({ ...r, anchorDate: r.anchorDate || currentDate, flowSign: r.flowSign ?? currentFlow }));
   return { rows, geo };
 }
 
@@ -185,26 +263,37 @@ const data = new Uint8Array(fs.readFileSync(pdfPath));
 const doc = await pdfjs.getDocument({ data }).promise;
 
 const expected = [
-  { date: '08 JUN 2026', val: '936,47', hint: 'cartão' },
-  { date: '08 JUN 2026', val: '936,47', hint: 'ALCANCE' },
-  { date: '10 JUN 2026', val: '9.335,00', hint: 'Castelo' },
-  { date: '10 JUN 2026', val: '9.334,05', hint: 'fatura' },
-  { date: '16 JUN 2026', val: '200,00', hint: 'cartão' },
-  { date: '16 JUN 2026', val: '200,00', hint: 'JESSICA' },
+  { date: '08 JUN 2026', val: '936,47', hint: 'cartão', sign: 1 },
+  { date: '08 JUN 2026', val: '936,47', hint: 'ALCANCE', sign: -1 },
+  { date: '10 JUN 2026', val: '9.335,00', hint: 'Castelo', sign: 1 },
+  { date: '10 JUN 2026', val: '9.334,05', hint: 'fatura', sign: -1 },
+  { date: '16 JUN 2026', val: '200,00', hint: 'cartão', sign: 1 },
+  { date: '16 JUN 2026', val: '200,00', hint: 'JESSICA', sign: -1 },
 ];
 
 let allRows = [];
 let carryDate = '';
+let carryFlow = null;
+let carryDateY = 0;
+let carryDateH = 0;
+let documentIsNubank = false;
+
 for (let p = 1; p <= doc.numPages; p++) {
   const page = await doc.getPage(p);
   const { items, width, height } = await pdfItems(page);
-  const { rows, geo } = detectNubankTransactionRows(items, width, height, p, carryDate);
+  const pos = items.map((t) => ({ str: t.text, x: t.x, y: t.y, w: t.width, h: t.height }));
+  const pageIsNu = isNubankExtratoLayout(pos, width, documentIsNubank);
+  if (pageIsNu) documentIsNubank = true;
+  console.log(`\n=== Página ${p} | Nubank=${pageIsNu} ===`);
+  if (!pageIsNu) {
+    console.error('FALHA: página não reconhecida como Nubank');
+    process.exit(1);
+  }
+  const { rows, geo } = detectNubankTransactionRows(items, width, height, p, carryDate, carryFlow, carryDateY, carryDateH);
   carryDate = items
     .filter((it) => it.x < geo.dateMaxX && RE_NUBANK_DATE.test(it.text.trim()))
     .sort((a, b) => b.y - a.y)[0]?.text.trim() || carryDate;
-  console.log(`\n=== Página ${p} ===`);
-  console.log('Geometria:', geo);
-  console.log('Faixa:', geo.faixaStart.toFixed(0), '-', geo.faixaEnd.toFixed(0), 'de', height);
+  carryFlow = getNubankLastFlowSign(items, width, height, p) ?? carryFlow;
   for (const r of rows) {
     const hist = items
       .filter((it) => {
@@ -220,8 +309,9 @@ for (let p = 1; p <= doc.numPages; p++) {
       })
       .map((i) => i.text)
       .join(' ');
-    console.log(`  [${r.anchorDate}] y=${r.y} h=${r.height} | ${hist.slice(0, 60)} | ${val}`);
-    allRows.push({ ...r, hist, val, page: p });
+    const parsed = parseMoney(val, r.flowSign);
+    console.log(`  [${r.anchorDate}] ${r.flowSign} ${parsed} | ${hist.slice(0, 55)} | ${val}`);
+    allRows.push({ ...r, hist, val, parsed, page: p });
   }
 }
 
@@ -231,7 +321,6 @@ if (allRows.length !== expected.length) {
   console.error('FALHA: quantidade de lançamentos incorreta');
   process.exit(1);
 }
-console.log('OK —', allRows.length, 'lançamentos detectados com precisão');
 for (let i = 0; i < expected.length; i++) {
   const exp = expected[i];
   const got = allRows[i];
@@ -243,4 +332,10 @@ for (let i = 0; i < expected.length; i++) {
     console.error('FALHA data linha', i + 1, 'esperado', exp.date, 'obtido', got.anchorDate);
     process.exit(1);
   }
+  const gotSign = got.parsed == null ? 0 : got.parsed < 0 ? -1 : 1;
+  if (gotSign !== exp.sign) {
+    console.error('FALHA sinal linha', i + 1, 'esperado', exp.sign, 'obtido', got.parsed, 'flow', got.flowSign);
+    process.exit(1);
+  }
 }
+console.log('OK —', allRows.length, 'lançamentos com datas e sinais corretos');
