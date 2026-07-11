@@ -41,23 +41,23 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Organizar pastas para GitHub Pages (/v1.0.31/)
+      - name: Organizar pastas para GitHub Pages (/v1.0.32/)
         run: |
-          mkdir -p dist/v1.0.31
+          mkdir -p dist/v1.0.32
           for item in index.html assets data _redirects; do
-            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.31/"; fi
+            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.32/"; fi
           done
-          cp "dist/v1.0.31/index.html" "dist/v1.0.31/404.html"
+          cp "dist/v1.0.32/index.html" "dist/v1.0.32/404.html"
           if [ -d gh-pages-prev ]; then
             for dir in gh-pages-prev/v1.0.*; do
               ver=$(basename "$dir")
-              if [ "$ver" != "v1.0.31" ] && [ -d "$dir" ]; then
+              if [ "$ver" != "v1.0.32" ] && [ -d "$dir" ]; then
                 echo "Preservando $ver"
                 cp -r "$dir" "dist/$ver"
               fi
             done
           fi
-          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.31/"><title>Contábil ERP Nova Versão v1.0.31</title></head><body><p><a href="v1.0.31/">Contábil ERP Nova Versão v1.0.31</a></p></body></html>' > dist/index.html
+          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.32/"><title>Contábil ERP Nova Versão v1.0.32</title></head><body><p><a href="v1.0.32/">Contábil ERP Nova Versão v1.0.32</a></p></body></html>' > dist/index.html
 
       - uses: peaceiris/actions-gh-pages@v4
         with:
