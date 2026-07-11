@@ -79,31 +79,14 @@ export default memo(function AiInteligenciaPastasModal({
     setError('');
     setOkMsg('');
     let cancelled = false;
-    void loadAiInteligenciaAsync(company).then(async (s) => {
+    void loadAiInteligenciaAsync(company).then((s) => {
       if (cancelled) return;
       setStore((prev) => mergeInteligenciaStorePreferNewer(prev, s));
-      const current = loadAiInteligencia(company);
-      if (!current.docs.length) return;
-      setAutoExtracting(true);
-      try {
-        const auto = await extrairPastasPendentesAutomaticamente(company);
-        if (cancelled) return;
-        const merged = mergeInteligenciaStorePreferNewer(loadAiInteligencia(company), auto.store);
-        refresh(merged);
-        await persistAiInteligenciaToBackend(company, merged);
-        if (auto.messages.length) {
-          setOkMsg(auto.messages.map((m) => m.replace(/^(\w+):/, (_, p) => `${PASTA_LABELS[p as AiInteligenciaPasta] || p}:`)).join(' · '));
-        }
-      } catch {
-        /* extração automática opcional */
-      } finally {
-        if (!cancelled) setAutoExtracting(false);
-      }
     });
     return () => {
       cancelled = true;
     };
-  }, [open, company, refresh]);
+  }, [open, company]);
 
   const docsByPasta = useMemo(() => {
     const map: Record<AiInteligenciaPasta, AiInteligenciaDoc[]> = {

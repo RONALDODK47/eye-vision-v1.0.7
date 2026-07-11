@@ -6,7 +6,9 @@ import {
   ALL_INTELIGENCIA_PASTAS,
   formatIaExtractBlock,
   iaMarkersForPasta,
+  loadAiInteligencia,
   loadAiInteligenciaAsync,
+  mergeInteligenciaStorePreferNewer,
   saveAiInteligencia,
   upsertColigadasFromExtract,
   upsertSociosFromExtract,
@@ -103,11 +105,11 @@ export async function extrairDadosPastaInteligenciaIa(
   let docsIgnorados = 0;
   const allColigadas: Array<{ nome: string; aliases: string[] }> = [];
   const allSocios: Array<{ nome: string; aliases: string[] }> = [];
-  const docsUpdated = [...store.docs];
+  const textoPatches = new Map<string, string>();
 
   for (const doc of docs) {
-    const idx = docsUpdated.findIndex((d) => d.id === doc.id);
-    if (idx < 0) continue;
+    const live = loadAiInteligencia(company);
+    if (!live.docs.some((d) => d.id === doc.id)) continue;
 
     const texto = String(doc.textoExtraido ?? '').trim();
     if (!texto || texto.startsWith('[arquivo]')) {
@@ -117,14 +119,19 @@ export async function extrairDadosPastaInteligenciaIa(
 
     docsProcessados += 1;
     const result = await extrairDocumentoComIa(pasta, doc);
+    if (!loadAiInteligencia(company).docs.some((d) => d.id === doc.id)) continue;
     allColigadas.push(...result.coligadas);
     allSocios.push(...result.socios);
     if (result.texto !== doc.textoExtraido) {
-      docsUpdated[idx] = { ...docsUpdated[idx]!, textoExtraido: result.texto };
+      textoPatches.set(doc.id, result.texto);
     }
   }
 
-  let next = saveAiInteligencia(company, { ...store, docs: docsUpdated });
+  const liveBeforeSave = loadAiInteligencia(company);
+  const mergedDocs = liveBeforeSave.docs.map((d) =>
+    textoPatches.has(d.id) ? { ...d, textoExtraido: textoPatches.get(d.id)! } : d,
+  );
+  let next = saveAiInteligencia(company, { ...liveBeforeSave, docs: mergedDocs });
   if (allColigadas.length > 0 && pasta === 'coligadas') {
     next = upsertColigadasFromExtract(company, allColigadas);
   }
@@ -163,9 +170,10 @@ export async function extrairPastasPendentesAutomaticamente(
   const alvo = (pastas ?? ALL_INTELIGENCIA_PASTAS).filter((pasta) =>
     store.docs.some((d) => d.pasta === pasta),
   );
-  let current = store;
+  let current = loadAiInteligencia(company);
   const messages: string[] = [];
   for (const pasta of alvo) {
+    current = loadAiInteligencia(company);
     const temDocs = current.docs.some((d) => d.pasta === pasta);
     if (!temDocs) continue;
     const temPendente = current.docs.some(
@@ -178,7 +186,7 @@ export async function extrairPastasPendentesAutomaticamente(
     if (!temPendente && linhasAtuais > 0) continue;
 
     const result = await extrairDadosPastaInteligenciaIa(company, pasta);
-    current = result.store;
+    current = mergeInteligenciaStorePreferNewer(loadAiInteligencia(company), result.store);
     if (result.message && result.message !== 'Nada a extrair.') {
       messages.push(`${pasta}: ${result.message}`);
     }
