@@ -58,11 +58,8 @@ export default function PersistenceStatusBar() {
     return () => window.clearTimeout(t);
   }, [phase]);
 
-  const active =
-    phase === 'scheduled' ||
-    phase === 'saving' ||
-    phase === 'syncing' ||
-    phase === 'offline';
+  const active = phase === 'scheduled' || phase === 'saving' || phase === 'syncing';
+  const isOffline = phase === 'offline';
 
   if (phase === 'idle') return null;
   if (phase === 'saved' && hideSaved) return null;
@@ -71,7 +68,7 @@ export default function PersistenceStatusBar() {
 
   return (
     <div
-      className="flex items-center gap-2 shrink-0 min-w-0"
+      className="flex items-center gap-2 shrink-0 max-w-[min(100%,14rem)] sm:max-w-[18rem]"
       role="status"
       aria-live="polite"
       aria-label={ariaLabel}
@@ -81,28 +78,39 @@ export default function PersistenceStatusBar() {
         className={`w-2.5 h-2.5 rounded-full shrink-0 ${
           phase === 'error'
             ? 'bg-red-600'
-            : active
-              ? 'bg-green-500 animate-pulse'
-              : 'bg-green-600'
+            : isOffline
+              ? 'bg-amber-500 animate-pulse'
+              : active
+                ? 'bg-green-500 animate-pulse'
+                : 'bg-green-600'
         }`}
       />
-      <div className="flex items-center gap-1.5 min-w-0 text-[10px] font-black uppercase tracking-widest">
-        <span className={phase === 'error' ? 'text-red-700' : 'text-green-700'}>{primary}</span>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-0 sm:gap-1.5 min-w-0 text-[10px] font-black uppercase tracking-widest leading-tight">
+        <span
+          className={
+            phase === 'error'
+              ? 'text-red-700'
+              : isOffline
+                ? 'text-amber-700'
+                : 'text-green-700'
+          }
+        >
+          {primary}
+        </span>
         {secondary ? (
-          <>
-            <span className="text-green-700/30 shrink-0">·</span>
-            <span
-              className={`truncate ${
-                phase === 'error'
-                  ? 'text-red-700'
+          <span
+            className={`truncate text-[9px] sm:text-[10px] ${
+              phase === 'error'
+                ? 'text-red-700'
+                : isOffline
+                  ? 'text-amber-600'
                   : active
                     ? 'text-green-600'
                     : 'text-green-700/80'
-              }`}
-            >
-              {secondary}
-            </span>
-          </>
+            }`}
+          >
+            {secondary}
+          </span>
         ) : null}
       </div>
     </div>

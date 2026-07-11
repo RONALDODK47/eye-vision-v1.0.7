@@ -106,7 +106,7 @@ export default function ApiStatusBar({ activeTab }: { activeTab: ActiveTab }) {
   if (registry.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 max-w-[min(100%,52rem)]">
+    <div className="flex flex-wrap items-center justify-start lg:justify-end gap-x-4 gap-y-1 max-w-full lg:max-w-[min(100%,52rem)]">
       {registry.map((entry) => (
         <ApiStatusItem
           key={entry.id}

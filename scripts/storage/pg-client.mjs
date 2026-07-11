@@ -25,7 +25,10 @@ export function resolveServerStorageBackend() {
 }
 
 export function getDatabaseUrl() {
-  return String(process.env.DATABASE_URL || '').trim();
+  let url = String(process.env.DATABASE_URL || '').trim();
+  // Render/Supabase: remove colchetes do placeholder [SENHA] se colados por engano.
+  url = url.replace(/:(\[([^[\]]+)\])@/, ':$2@');
+  return url;
 }
 
 function needsSupabaseSsl(url) {

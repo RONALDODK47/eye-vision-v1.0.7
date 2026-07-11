@@ -16,7 +16,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      VITE_BASE_PATH: /eye-vision-v1.0.7/v1.0.8/
+      VITE_BASE_PATH: /eye-vision-v1.0.7/v1.0.9/
       VITE_STORAGE_BACKEND: supabase
       VITE_AGENT_API_URL: https://contabil-erp-nova-versao-v1-0-8.onrender.com/api/agent
       VITE_FISCAL_API_URL: https://contabil-erp-nova-versao-v1-0-8.onrender.com/api/fiscal-nfe
@@ -34,14 +34,14 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Organizar pastas para GitHub Pages (/v1.0.8/)
+      - name: Organizar pastas para GitHub Pages (/v1.0.9/)
         run: |
-          mkdir -p dist/v1.0.8
+          mkdir -p dist/v1.0.9
           for item in index.html assets data _redirects; do
-            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.8/"; fi
+            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.9/"; fi
           done
-          cp "dist/v1.0.8/index.html" "dist/v1.0.8/404.html"
-          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.8/"><title>Contábil ERP Nova Versão v1.0.8</title></head><body><p><a href="v1.0.8/">Contábil ERP Nova Versão v1.0.8</a></p></body></html>' > dist/index.html
+          cp "dist/v1.0.9/index.html" "dist/v1.0.9/404.html"
+          printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=v1.0.9/"><title>Contábil ERP Nova Versão v1.0.9</title></head><body><p><a href="v1.0.9/">Contábil ERP Nova Versão v1.0.9</a></p></body></html>' > dist/index.html
 
       - uses: peaceiris/actions-gh-pages@v4
         with:

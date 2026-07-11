@@ -19,6 +19,7 @@ import {
 } from '../../gestaoContabil/dbClientPostgres';
 import { resetStorageBackendProbe } from '../../gestaoContabil/dbClient';
 import { migrateFromFirebaseIfNeeded } from '../logic/migrateFromFirebase';
+import { setOperationalSavePhase } from '../../lib/operationalSaveStatus';
 
 /**
  * Sincroniza dados Eye Vision com o backend (Docker local ou Supabase na nuvem).
@@ -68,11 +69,16 @@ export default function EyeVisionCloudBootstrap() {
         }
       }
 
-      let backendReady = await waitForWorkspaceStorageHealth(90_000, 1_000);
+      const isCloud = resolveStorageBackendMode() === 'supabase';
+      const initialWaitMs = isCloud ? 45_000 : 90_000;
+      const extraPollMs = isCloud ? 30_000 : 120_000;
+
+      let backendReady = await waitForWorkspaceStorageHealth(initialWaitMs, 1_000);
       if (cancelled) return;
 
       if (!backendReady) {
-        const pollUntil = Date.now() + 120_000;
+        setOperationalSavePhase('offline');
+        const pollUntil = Date.now() + extraPollMs;
         while (!cancelled && Date.now() < pollUntil) {
           await new Promise((r) => setTimeout(r, 3_000));
           resetWorkspaceHealthCache();
@@ -85,8 +91,11 @@ export default function EyeVisionCloudBootstrap() {
 
       if (!backendReady) {
         console.warn(
-          '[EyeVisionCloud] Backend Postgres/MinIO indisponível — use npm run dev para subir Docker e agent-api.',
+          isCloud
+            ? '[EyeVisionCloud] API Render não conectou ao Supabase — confira DATABASE_URL no Render.'
+            : '[EyeVisionCloud] Backend Postgres/MinIO indisponível — use npm run dev para subir Docker e agent-api.',
         );
+        setOperationalSavePhase('offline');
         return;
       }
 
