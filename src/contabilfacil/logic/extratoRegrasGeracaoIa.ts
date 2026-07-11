@@ -43,8 +43,10 @@ import {
 import {
   filterExtratoRegrasPorBanco,
   normalizeExtratoMatchText,
+  normContaBancoCode,
   type ExtratoRegraConta,
 } from './extratoRegrasContasStorage';
+import { corrigeRegrasForaGrupoPastaInteligencia } from './aiInteligenciaPastaGrupos';
 import { buildContaCandidatosTextoParaIa, contaTemSentidoLogicoParaHistorico } from './planoContasMatch';
 import {
   assertInteligenciaDocsParaRegras,
@@ -788,6 +790,30 @@ export async function gerarRegrasExtratoConciliacaoCompleta(
       });
     }
     await yieldToMain();
+
+    {
+      const doBanco = filterExtratoRegrasPorBanco(current, bancoAtivo);
+      const corrigidasGrupo = corrigeRegrasForaGrupoPastaInteligencia({
+        company,
+        regras: doBanco,
+        plano: planoOptions,
+        coligadas,
+        socios: listAiSociosParaIa(company),
+      });
+      if (
+        corrigidasGrupo.length !== doBanco.length ||
+        corrigidasGrupo.some(
+          (r, i) =>
+            r.contaContrapartida !== doBanco[i]?.contaContrapartida ||
+            r.descricao !== doBanco[i]?.descricao,
+        )
+      ) {
+        const outros = current.filter((r) => normContaBancoCode(r.contaBanco) !== normContaBancoCode(bancoAtivo));
+        current = [...outros, ...corrigidasGrupo];
+        totalUpdated += corrigidasGrupo.filter((r, i) => r.contaContrapartida !== doBanco[i]?.contaContrapartida).length;
+        progress('Correção: regras ajustadas aos grupos sintéticos das pastas…');
+      }
+    }
 
     const after = filterExtratoRegrasPorBanco(current, bancoAtivo);
     const stillOpen = findUncoveredExtratoRows(extratoSample, after).length;

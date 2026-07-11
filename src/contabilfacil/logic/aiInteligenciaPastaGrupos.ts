@@ -14,6 +14,8 @@ import {
   type AiSocio,
 } from './aiInteligenciaStorage';
 import type { PlanoOptionLike } from './extratoRegrasCobertura';
+import { isLancamentoFornecedorOuClienteGenerico } from './extratoRegrasCobertura';
+import { sanitizarHistoricoExtratoParaRegra } from './extratoRegrasCobertura';
 import { normalizeExtratoMatchText } from './extratoRegrasContasStorage';
 import { scorePlanoContaParaHistorico } from './planoContasMatch';
 import { resolveCodigoReduzidoDoPlano, sanitizeCodigoReduzido } from './planoContasMapper';
@@ -233,7 +235,60 @@ export function inferPastaInteligenciaParaRegra(
     return 'despesas';
   }
 
+  if (
+    nature === 'D' &&
+    /MATERIAL|HIGIENE|LIMPEZA|ESGOTO|SANEAGO|AGUA|ENERG|ELETRIC|ALUGUEL|COMPRA|SUPRIMENT|CONSERV|MANUTEN|TELEFON|INTERNET|PAPELARIA/.test(
+      h,
+    )
+  ) {
+    return 'despesas';
+  }
+
   return null;
+}
+
+/** Pasta cujo grupo sintético deve limitar a conta (inclui fallback despesas/receitas). */
+export function resolverPastaGrupoParaRegra(
+  company: string,
+  historico: string,
+  nature: 'D' | 'C',
+  coligadas: AiColigada[] = [],
+  socios: AiSocio[] = [],
+): AiInteligenciaPasta | null {
+  const specific = inferPastaInteligenciaParaRegra(historico, nature, coligadas, socios);
+  if (specific) return specific;
+
+  const h = normalizeExtratoMatchText(historico);
+  if (!h) return null;
+  if (matchColigadaNoHistorico(h, coligadas)) return 'coligadas';
+  if (matchSocioNoHistorico(h, socios)) return 'contratos';
+
+  // PIX/TED genérico fornecedor/cliente continua na etapa 2 (conta geral).
+  if (isLancamentoFornecedorOuClienteGenerico(h, nature, coligadas)) return null;
+
+  if (nature === 'D' && pastaTemGrupoConfiguradoParaNatureza(company, 'despesas', 'D')) {
+    return 'despesas';
+  }
+  if (nature === 'C' && pastaTemGrupoConfiguradoParaNatureza(company, 'receitas', 'C')) {
+    return 'receitas';
+  }
+
+  return null;
+}
+
+const MIN_SCORE_CONTA_NO_GRUPO = 30;
+
+function planoItemPorReduzido(
+  reduzido: string,
+  plano: PlanoOptionLike[],
+): PlanoOptionLike | undefined {
+  const red = sanitizeCodigoReduzido(reduzido);
+  if (!red) return undefined;
+  return plano.find(
+    (p) =>
+      sanitizeCodigoReduzido(p.codigoReduzido) === red ||
+      sanitizeCodigoReduzido(p.code) === red,
+  );
 }
 
 function pickMelhorContaReduzidaNoGrupo(
@@ -253,8 +308,8 @@ function pickMelhorContaReduzidaNoGrupo(
       best = red;
     }
   }
-  if (best) return best;
-  return [...allowed][0] ?? '';
+  if (best && bestScore >= MIN_SCORE_CONTA_NO_GRUPO) return best;
+  return '';
 }
 
 export type AiRegraGrupoPastaLike = {
@@ -277,9 +332,12 @@ export function aplicarRestricaoGrupoPastaInteligencia(input: {
   socios?: AiSocio[];
 }): AiRegraGrupoPastaLike | null {
   const { company, regra, historico, plano, coligadas = [], socios = [] } = input;
-  const pasta = inferPastaInteligenciaParaRegra(historico, regra.nature, coligadas, socios);
-  if (!pasta) return regra;
-  if (!pastaTemGrupoConfiguradoParaNatureza(company, pasta, regra.nature)) return regra;
+  const historicoLimpo = sanitizarHistoricoExtratoParaRegra(historico, regra.nature, coligadas);
+  const pasta = resolverPastaGrupoParaRegra(company, historicoLimpo, regra.nature, coligadas, socios);
+  if (!pasta) return { ...regra, descricao: historicoLimpo || regra.descricao };
+  if (!pastaTemGrupoConfiguradoParaNatureza(company, pasta, regra.nature)) {
+    return { ...regra, descricao: historicoLimpo || regra.descricao };
+  }
 
   const allowed = listReduzidosAnaliticosGrupoPasta(company, pasta, regra.nature);
   if (allowed.size === 0) return null;
@@ -288,16 +346,73 @@ export function aplicarRestricaoGrupoPastaInteligencia(input: {
     sanitizeCodigoReduzido(regra.contaContrapartida) ||
     resolveCodigoReduzidoDoPlano(regra.contaContrapartida, plano) ||
     '';
+
+  const descricao = historicoLimpo || regra.descricao;
+
   if (contra && allowed.has(contra)) {
-    return { ...regra, contaContrapartida: contra };
+    const contaHit = planoItemPorReduzido(contra, plano);
+    const scoreAtual = contaHit
+      ? scorePlanoContaParaHistorico(descricao, regra.nature, contaHit)
+      : 0;
+    if (scoreAtual >= MIN_SCORE_CONTA_NO_GRUPO) {
+      return { ...regra, descricao, contaContrapartida: contra };
+    }
   }
 
-  const melhor = pickMelhorContaReduzidaNoGrupo(historico, regra.nature, allowed, plano);
+  const melhor = pickMelhorContaReduzidaNoGrupo(descricao, regra.nature, allowed, plano);
   if (!melhor) return null;
 
   return {
     ...regra,
+    descricao,
     contaContrapartida: melhor,
-    motivo: `${regra.motivo || 'Regra'} — limitada ao grupo ${PASTA_LABELS[pasta]}`,
+    motivo: `${regra.motivo || 'Regra'} — conta no grupo ${PASTA_LABELS[pasta]}`,
   };
+}
+
+/** Reaplica limites de grupo em regras já salvas (fallback/IA antiga). */
+export function corrigeRegrasForaGrupoPastaInteligencia(input: {
+  company: string;
+  regras: Array<{
+    id: string;
+    nome: string;
+    descricao: string;
+    nature: 'D' | 'C';
+    contaBanco: string;
+    contaContrapartida: string;
+  }>;
+  plano: PlanoOptionLike[];
+  coligadas?: AiColigada[];
+  socios?: AiSocio[];
+}): typeof input.regras {
+  const { company, regras, plano, coligadas = [], socios = [] } = input;
+  let changed = false;
+  const next = regras.flatMap((r) => {
+    const nature = r.nature === 'C' ? ('C' as const) : ('D' as const);
+    const enforced = aplicarRestricaoGrupoPastaInteligencia({
+      company,
+      regra: { descricao: r.descricao, nature, contaContrapartida: r.contaContrapartida },
+      historico: r.descricao,
+      plano,
+      coligadas,
+      socios,
+    });
+    if (!enforced) return [];
+    if (
+      enforced.contaContrapartida !== r.contaContrapartida ||
+      enforced.descricao !== r.descricao
+    ) {
+      changed = true;
+    }
+    return [
+      {
+        ...r,
+        descricao: enforced.descricao,
+        nature: enforced.nature,
+        contaContrapartida: enforced.contaContrapartida,
+        nome: enforced.descricao.slice(0, 40),
+      },
+    ];
+  });
+  return changed ? next : regras;
 }

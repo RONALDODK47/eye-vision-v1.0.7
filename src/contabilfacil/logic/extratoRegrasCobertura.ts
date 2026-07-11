@@ -1010,6 +1010,10 @@ function extrairFraseOperacionalDominante(text: string): string {
   const s = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!s) return '';
   const frases = [
+    /\bMATERIAL\s+DE\s+HIGIENE\b/i,
+    /\bMATERIAL\s+DE\s+LIMPEZA\b/i,
+    /\bMATERIAL\s+DE\s+ESCRITORIO\b/i,
+    /\bMATERIAL\s+DE\s+CONSUMO\b/i,
     /\bIMPOSTOS?\s+SOBRE\s+VENDAS\b/i,
     /\bIMPOSTOS?\s+SOBRE\s+SERVICOS\b/i,
     /\bPAGAMENTOS?\s+TRIB(?:UTO)?\b/i,
@@ -1024,6 +1028,16 @@ function extrairFraseOperacionalDominante(text: string): string {
   for (const re of frases) {
     const m = s.match(re);
     if (m?.[0]?.trim()) return m[0].replace(/\s+/g, ' ').trim().toUpperCase();
+  }
+  const frasesConhecidas = [
+    'MATERIAL DE HIGIENE',
+    'MATERIAL DE LIMPEZA',
+    'MATERIAL DE ESCRITORIO',
+    'MATERIAL DE CONSUMO',
+  ];
+  const upper = s.toUpperCase();
+  for (const frase of frasesConhecidas) {
+    if (upper.includes(frase)) return frase;
   }
   return '';
 }
