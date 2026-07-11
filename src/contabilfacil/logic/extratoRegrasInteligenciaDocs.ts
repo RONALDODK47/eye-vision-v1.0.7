@@ -290,6 +290,6 @@ export async function assertInteligenciaDocsParaRegras(
     mensagem:
       razaoCount > 0
         ? 'Importe o plano com código reduzido e abra o balancete — ou envie docs na Inteligência IA.'
-        : 'Configure grupos de contas na Inteligência IA ou envie documentos (coligadas, sócios, honorários, financeiras).',
+        : 'Configure grupos de contas na Inteligência IA ou envie documentos (coligadas, sócios, funcionários, honorários, despesas e receitas).',
   };
 }

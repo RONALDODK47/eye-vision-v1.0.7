@@ -18,7 +18,9 @@ export type AiInteligenciaPasta =
   | 'coligadas'
   | 'contratos'
   | 'honorarios'
-  | 'financeiras';
+  | 'funcionarios'
+  | 'despesas'
+  | 'receitas';
 
 /** Grupos sintéticos por pasta — orientam a IA sem precisar de documento. */
 export type AiInteligenciaPastaConfig = {
@@ -32,7 +34,9 @@ export const ALL_INTELIGENCIA_PASTAS: AiInteligenciaPasta[] = [
   'coligadas',
   'contratos',
   'honorarios',
-  'financeiras',
+  'funcionarios',
+  'despesas',
+  'receitas',
 ];
 
 export type AiInteligenciaDoc = {
@@ -89,7 +93,9 @@ function emptyPastaConfigs(): Record<AiInteligenciaPasta, AiInteligenciaPastaCon
     coligadas: {},
     contratos: {},
     honorarios: {},
-    financeiras: {},
+    funcionarios: {},
+    despesas: {},
+    receitas: {},
   };
 }
 
@@ -106,20 +112,24 @@ function mergePastaConfigs(
   const base = emptyPastaConfigs();
   if (!raw || typeof raw !== 'object') return base;
   for (const pasta of ALL_INTELIGENCIA_PASTAS) {
-    base[pasta] = sanitizePastaConfig(raw[pasta]);
+    const legadoFinanceiro =
+      pasta === 'despesas' || pasta === 'receitas' ? raw.financeiras : undefined;
+    base[pasta] = sanitizePastaConfig(raw[pasta] ?? legadoFinanceiro);
   }
   return base;
 }
 
-/** Migra pastas legadas (balancetes → financeiras, outros → honorarios). */
+/** Migra pastas legadas sem perder documentos já salvos. */
 export function normalizeLegacyInteligenciaPasta(pasta: string): AiInteligenciaPasta {
-  if (pasta === 'balancetes') return 'financeiras';
+  if (pasta === 'balancetes' || pasta === 'financeiras') return 'despesas';
   if (pasta === 'outros') return 'honorarios';
   if (
     pasta === 'coligadas' ||
     pasta === 'contratos' ||
     pasta === 'honorarios' ||
-    pasta === 'financeiras'
+    pasta === 'funcionarios' ||
+    pasta === 'despesas' ||
+    pasta === 'receitas'
   ) {
     return pasta;
   }
@@ -531,7 +541,9 @@ export function listAiInteligenciaTextoParaIa(company: string): string[] {
     coligadas: 0,
     contratos: 1,
     honorarios: 2,
-    financeiras: 3,
+    funcionarios: 3,
+    despesas: 4,
+    receitas: 5,
   };
   return [...store.docs]
     .sort((a, b) => (pastaOrdem[a.pasta] ?? 9) - (pastaOrdem[b.pasta] ?? 9))
@@ -558,10 +570,12 @@ export function inferPastaFromFileName(name: string): AiInteligenciaPasta {
   if (/coligad|grupo|participad|controlad|ajtf|relacionad/.test(n)) return 'coligadas';
   if (/contrato|social|socios|sócios|estatuto/.test(n)) return 'contratos';
   if (/honor[aá]rio|contador|escritorio|escritório/.test(n)) return 'honorarios';
-  if (/financeir|tarifa|juros|rendimento|aplicac|despesa\s+fin|receita\s+fin/.test(n)) {
-    return 'financeiras';
+  if (/funcion[aá]ri|empregado|colaborador|folha|sal[aá]rio|f[eé]rias|rescis/.test(n)) {
+    return 'funcionarios';
   }
-  if (/balanc|razao|razão|dre|plano/.test(n)) return 'financeiras';
+  if (/receita|rendimento|recebimento|juros\s+ativo|ganho/.test(n)) return 'receitas';
+  if (/despesa|tarifa|juros\s+passivo|encargo|pagamento|financeir/.test(n)) return 'despesas';
+  if (/balanc|razao|razão|dre|plano/.test(n)) return 'despesas';
   return 'honorarios';
 }
 
@@ -700,8 +714,12 @@ export function iaMarkersForPasta(pasta: AiInteligenciaPasta): string[] {
       return ['socios'];
     case 'honorarios':
       return ['honorarios', 'socios'];
-    case 'financeiras':
-      return ['financeiras'];
+    case 'funcionarios':
+      return ['funcionarios'];
+    case 'despesas':
+      return ['despesas', 'financeiras'];
+    case 'receitas':
+      return ['receitas'];
     default:
       return [];
   }
@@ -953,7 +971,7 @@ export function extractSociosFromTexto(texto: string): Array<{ nome: string; ali
     }
   }
 
-  for (const item of parseIaMarkerNomes(raw, ['socios', 'honorarios', 'financeiras'])) {
+  for (const item of parseIaMarkerNomes(raw, ['socios'])) {
     push(item.nome, item.aliases);
   }
 
@@ -1340,7 +1358,9 @@ export const PASTA_LABELS: Record<AiInteligenciaPasta, string> = {
   coligadas: 'Coligadas',
   contratos: 'Contratos / sócios',
   honorarios: 'Honorários',
-  financeiras: 'Despesas e receitas financeiras',
+  funcionarios: 'Funcionários',
+  despesas: 'Despesas',
+  receitas: 'Receitas',
 };
 
 export function updateAiInteligenciaPastaConfig(

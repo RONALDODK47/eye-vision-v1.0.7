@@ -35,7 +35,14 @@ export function getPastaTableColumns(pasta: AiInteligenciaPasta): PastaTableColu
         { key: 'nome', label: 'Descrição' },
         { key: 'aliases', label: 'Aliases' },
       ];
-    case 'financeiras':
+    case 'funcionarios':
+      return [
+        { key: 'documento', label: 'Documento' },
+        { key: 'nome', label: 'Funcionário' },
+        { key: 'aliases', label: 'Aliases' },
+      ];
+    case 'despesas':
+    case 'receitas':
       return [
         { key: 'documento', label: 'Documento' },
         { key: 'tipo', label: 'Tipo' },
@@ -69,15 +76,19 @@ export function buildPastaGrupoTableRows(
 
 function tipoLinhaPasta(pasta: AiInteligenciaPasta, nome: string): string | undefined {
   if (pasta === 'honorarios') return 'Honorário';
-  if (pasta === 'financeiras') {
-    return /rendimento|aplicac|juros|receita/i.test(nome) ? 'Receita financeira' : 'Despesa financeira';
-  }
+  if (pasta === 'despesas') return 'Despesa';
+  if (pasta === 'receitas') return 'Receita';
   return undefined;
 }
 
 function isLinhaTabelaInvalida(pasta: AiInteligenciaPasta, nome: string): boolean {
   if (pasta === 'coligadas' && isNomeColigadaInvalido(nome)) return true;
-  if ((pasta === 'contratos' || pasta === 'honorarios') && isNomeSocioInvalido(nome)) return true;
+  if (
+    (pasta === 'contratos' || pasta === 'honorarios' || pasta === 'funcionarios') &&
+    isNomeSocioInvalido(nome)
+  ) {
+    return true;
+  }
   if (/\b\d+\.\d+\.\d+\b/.test(nome)) return true;
   if (/\d+[.,]\d{2}\s*[DC]\b/i.test(nome)) return true;
   return false;

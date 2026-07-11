@@ -127,7 +127,7 @@ function buildAnexosSubEtapa1(
     if (coligadasMapa) scoped.push(coligadasMapa);
     scoped.push(...ctx.inteligenciaColigadas);
   } else if (sub === 'socios') {
-    scoped.push(...ctx.inteligenciaContratos);
+    scoped.push(...ctx.inteligenciaContratos, ...ctx.inteligenciaFuncionarios);
   } else if (sub === 'honorarios') {
     scoped.push(...ctx.inteligenciaHonorarios);
   } else {

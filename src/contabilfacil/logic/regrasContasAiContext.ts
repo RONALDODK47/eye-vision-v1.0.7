@@ -29,7 +29,13 @@ export type RegrasContasInteligenciaContext = {
   inteligenciaContratos: string[];
   /** Honorários. */
   inteligenciaHonorarios: string[];
-  /** Despesas e receitas financeiras. */
+  /** Funcionários / folha. */
+  inteligenciaFuncionarios: string[];
+  /** Despesas. */
+  inteligenciaDespesas: string[];
+  /** Receitas. */
+  inteligenciaReceitas: string[];
+  /** Compatibilidade: despesas + receitas. */
   inteligenciaFinanceiras: string[];
   /** Mapa estruturado: contas que a empresa já usa no razão/balancete. */
   balanceteUsoContas: string;
@@ -231,7 +237,9 @@ export async function buildInteligenciaContextoParaRegrasIaAsync(
   const coligadasDocs: string[] = [];
   const contratosDocs: string[] = [];
   const honorariosDocs: string[] = [];
-  const financeirasDocs: string[] = [];
+  const funcionariosDocs: string[] = [];
+  const despesasDocs: string[] = [];
+  const receitasDocs: string[] = [];
 
   for (const d of store.docs) {
     const texto = d.textoExtraido.trim();
@@ -240,8 +248,11 @@ export async function buildInteligenciaContextoParaRegrasIaAsync(
     if (d.pasta === 'coligadas') coligadasDocs.push(block);
     else if (d.pasta === 'contratos') contratosDocs.push(block);
     else if (d.pasta === 'honorarios') honorariosDocs.push(block);
-    else if (d.pasta === 'financeiras') financeirasDocs.push(block);
+    else if (d.pasta === 'funcionarios') funcionariosDocs.push(block);
+    else if (d.pasta === 'despesas') despesasDocs.push(block);
+    else if (d.pasta === 'receitas') receitasDocs.push(block);
   }
+  const financeirasDocs = [...despesasDocs, ...receitasDocs];
 
   const balanceteUsoContas = buildBalanceteUsoContasParaIa(scoped);
   const planoHierarquia = buildPlanoHierarquiaSinteticasParaIa(scoped);
@@ -253,10 +264,22 @@ export async function buildInteligenciaContextoParaRegrasIaAsync(
   if (pastasGruposContas) anexosTexto.push(pastasGruposContas);
   if (balanceteUsoContas) anexosTexto.push(balanceteUsoContas);
   if (coligadasMapa) anexosTexto.push(coligadasMapa);
-  anexosTexto.push(...coligadasDocs, ...contratosDocs, ...honorariosDocs, ...financeirasDocs);
+  anexosTexto.push(
+    ...coligadasDocs,
+    ...contratosDocs,
+    ...honorariosDocs,
+    ...funcionariosDocs,
+    ...despesasDocs,
+    ...receitasDocs,
+  );
 
   const docsComTexto =
-    coligadasDocs.length + contratosDocs.length + honorariosDocs.length + financeirasDocs.length;
+    coligadasDocs.length +
+    contratosDocs.length +
+    honorariosDocs.length +
+    funcionariosDocs.length +
+    despesasDocs.length +
+    receitasDocs.length;
   const pastasComGrupos = ALL_INTELIGENCIA_PASTAS.filter((p) =>
     pastaConfigTemGrupos(store.pastaConfigs?.[p]),
   ).length;
@@ -267,6 +290,9 @@ export async function buildInteligenciaContextoParaRegrasIaAsync(
     inteligenciaColigadas: coligadasDocs,
     inteligenciaContratos: contratosDocs,
     inteligenciaHonorarios: honorariosDocs,
+    inteligenciaFuncionarios: funcionariosDocs,
+    inteligenciaDespesas: despesasDocs,
+    inteligenciaReceitas: receitasDocs,
     inteligenciaFinanceiras: financeirasDocs,
     balanceteUsoContas,
     docsComTexto,
@@ -345,6 +371,8 @@ export function buildAnexosTextoEtapa1ParaIa(ctx: RegrasContasInteligenciaContex
   scoped.push(...ctx.inteligenciaColigadas);
   scoped.push(...ctx.inteligenciaContratos);
   scoped.push(...ctx.inteligenciaHonorarios);
-  scoped.push(...ctx.inteligenciaFinanceiras);
+  scoped.push(...ctx.inteligenciaFuncionarios);
+  scoped.push(...ctx.inteligenciaDespesas);
+  scoped.push(...ctx.inteligenciaReceitas);
   return scoped;
 }

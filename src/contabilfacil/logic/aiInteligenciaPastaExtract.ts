@@ -36,9 +36,8 @@ export function docPrecisaExtracaoAutomatica(doc: AiInteligenciaDoc): boolean {
 
 function iaMarkerForPasta(pasta: AiInteligenciaPasta): string {
   if (pasta === 'coligadas') return 'coligadas';
-  if (pasta === 'financeiras') return 'financeiras';
-  if (pasta === 'honorarios') return 'honorarios';
-  return 'socios';
+  if (pasta === 'contratos') return 'socios';
+  return pasta;
 }
 
 async function extrairDocumentoComIa(
@@ -135,7 +134,7 @@ export async function extrairDadosPastaInteligenciaIa(
   if (allColigadas.length > 0 && pasta === 'coligadas') {
     next = upsertColigadasFromExtract(company, allColigadas);
   }
-  if (allSocios.length > 0 && (pasta === 'contratos' || pasta === 'honorarios' || pasta === 'financeiras')) {
+  if (allSocios.length > 0 && pasta === 'contratos') {
     next = upsertSociosFromExtract(company, allSocios);
   }
 

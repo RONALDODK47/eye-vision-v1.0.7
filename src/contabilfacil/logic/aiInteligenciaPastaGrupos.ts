@@ -3,6 +3,7 @@
  */
 import { readManagerData } from './companyWorkspace';
 import {
+  ALL_INTELIGENCIA_PASTAS,
   PASTA_LABELS,
   type AiInteligenciaPasta,
   type AiInteligenciaPastaConfig,
@@ -118,8 +119,7 @@ export function buildPastasGruposContasParaIa(
   ];
 
   let hasAny = false;
-  const pastas: AiInteligenciaPasta[] = ['coligadas', 'contratos', 'honorarios', 'financeiras'];
-  for (const pasta of pastas) {
+  for (const pasta of ALL_INTELIGENCIA_PASTAS) {
     const cfg = pastaConfigs[pasta];
     if (!cfg?.contaGrupoEntrada?.trim() && !cfg?.contaGrupoSaida?.trim()) continue;
     hasAny = true;

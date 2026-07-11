@@ -93,7 +93,9 @@ export default memo(function AiInteligenciaPastasModal({
       coligadas: [],
       contratos: [],
       honorarios: [],
-      financeiras: [],
+      funcionarios: [],
+      despesas: [],
+      receitas: [],
     };
     for (const d of store.docs) map[d.pasta].push(d);
     return map;
@@ -180,14 +182,18 @@ export default memo(function AiInteligenciaPastasModal({
                 }
               } else {
                 const marker =
-                  pasta === 'financeiras' ? 'financeiras' : pasta === 'honorarios' ? 'honorarios' : 'socios';
+                  pasta === 'contratos'
+                    ? 'socios'
+                    : pasta === 'honorarios'
+                      ? 'honorarios'
+                      : pasta;
                 const ia = await extractSociosWithAi({
                   fileName: file.name,
                   text: ocrText,
                   images: prepared.images,
                 });
                 if (ia.ok && ia.coligadas?.length) {
-                  allSocios.push(...ia.coligadas);
+                  if (pasta === 'contratos') allSocios.push(...ia.coligadas);
                   texto = formatIaExtractBlock(marker, ia.coligadas);
                 } else if (prepared.images.length > 0) {
                   texto = `Imagem anexada: ${file.name}`;
@@ -321,7 +327,7 @@ export default memo(function AiInteligenciaPastasModal({
             <p className="text-[9px] text-slate-600 mt-0.5 leading-snug">
               Pastas com grupos de contas (entrada/saída) e documentos opcionais. A conciliação{' '}
               <strong>obrigatoriamente</strong> usa esta configuração para criar regras (coligadas,
-              sócios, honorários, financeiras). Grava automaticamente em{' '}
+              sócios, funcionários, honorários, despesas e receitas). Grava automaticamente em{' '}
               <strong>{storageLabel}</strong>.
             </p>
             <p className="text-[8px] font-mono text-amber-800 mt-1">
