@@ -136,9 +136,14 @@ export function mergeAiExtratoRows(base, extra) {
 
 function normalizeDateBr(raw, statementYear) {
   const t = String(raw ?? '').trim().split(/\s/)[0] ?? '';
+  
+  const mYmd = t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (mYmd) {
+    return `${mYmd[3].padStart(2, '0')}/${mYmd[2].padStart(2, '0')}/${mYmd[1]}`;
+  }
+
   const clean = t.replace(/[-.]/g, '/');
   
-  // Caso 1: DD/MM/AAAA ou DD/MM/AA
   const m3 = clean.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (m3) {
     let year = m3[3];
@@ -147,7 +152,6 @@ function normalizeDateBr(raw, statementYear) {
     return `${m3[1].padStart(2, '0')}/${m3[2].padStart(2, '0')}/${year}`;
   }
   
-  // Caso 2: DD/MM
   const m2 = clean.match(/^(\d{1,2})\/(\d{1,2})$/);
   if (m2) {
     const year = String(statementYear ?? new Date().getFullYear());

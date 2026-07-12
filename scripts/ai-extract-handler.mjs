@@ -38,7 +38,7 @@ async function callGeminiExtract({ model, systemInstruction, userParts, images, 
     return callGeminiVision({
       ...extractOpts,
       userText: userParts,
-      images: images.slice(0, 10),
+      images: images.slice(0, 15),
     });
   }
   return callGemini({
@@ -999,10 +999,7 @@ export async function handleAiExtractExtrato(body) {
         break;
       case 'gemini':
       default:
-        result =
-          payload.perPage && payload.images.length >= 2
-            ? await extractWithGeminiPerPage({ ...payload, bankHint: resolvedBankHint })
-            : await extractWithGemini({ ...payload, bankHint: resolvedBankHint });
+        result = await extractWithGemini({ ...payload, bankHint: resolvedBankHint });
         break;
     }
 
