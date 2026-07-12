@@ -12,7 +12,7 @@ export function detectBankHint(fileName, ocrText) {
   if (/ita[uú]|itaú\s+empresas/i.test(blob)) return 'itau';
   if (/sicoob|sisbr/i.test(blob)) return 'sicoob';
   if (/bradesco/i.test(blob)) return 'bradesco';
-  if (/sicredi/i.test(blob)) return 'sicredi';
+  if (/sicredi|cooperativa.{0,40}748|associado.{0,80}sicredi/i.test(blob)) return 'sicredi';
   if (/caixa\s+econ/i.test(blob)) return 'caixa';
   return null;
 }
@@ -44,6 +44,34 @@ function bankRulesAppendix(bank) {
         '### Sicoob',
         '- Valor único com sufixo C/D na mesma coluna.',
         '- Ignore linhas de saldo informativo entre lançamentos.',
+      ].join('\n');
+    case 'sicredi':
+      return [
+        '',
+        '### Sicredi (prioridade se detectado)',
+        '- Layout típico escaneado: Data | Descrição | Documento | Valor (R$) | Saldo (R$).',
+        '- O LANÇAMENTO é o valor da coluna «Valor (R$)» — NUNCA importe o «Saldo (R$)» da coluna direita.',
+        '- Formato comum: valor com sufixo C (crédito/entrada) ou D (débito/saída) na mesma célula.',
+        '- Alguns extratos têm colunas Entrada e Saída separadas — use só a coluna com valor na linha.',
+        '- Ignore: Saldo anterior, Saldo bloq., Saldo do dia, Saldo total disponível, Saldo total disponível dia.',
+        '- Ignore cabeçalhos (Cooperativa, Conta, Associado), rodapés e totais de período.',
+        '- CAPTACAO, INVESTIMENTOS, CONTA CORRENTE são rótulos de conta — não são lançamentos.',
+        '- Inclua PIX, TED, DOC, tarifas, IOF, rendimentos, convênios, débito automático, transferências.',
+        '- Datas DD/MM — complete com o ano do período «Extrato (Período de … a …)».',
+      ].join('\n');
+    case 'bradesco':
+      return [
+        '',
+        '### Bradesco',
+        '- Colunas Crédito e Débito separadas OU valor único com natureza.',
+        '- Não confunda coluna Saldo com lançamento.',
+      ].join('\n');
+    case 'caixa':
+      return [
+        '',
+        '### Caixa Econômica',
+        '- Valor do lançamento separado do saldo acumulado.',
+        '- Ignore linhas de saldo do dia e totais informativos.',
       ].join('\n');
     default:
       return '';

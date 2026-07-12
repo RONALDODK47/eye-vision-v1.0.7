@@ -233,7 +233,7 @@ export function normalizeAiRows(raw, options = {}) {
 
       if (RE_MONEY_CD_COLADO.test(row._linhaOcr) && !/,\d{2}\s+[DCdc]\s*$/i.test(row._linhaOcr)) {
         row = assignNatureFromLinhaOcr(row);
-      } else if (bankHint === 'bb') {
+      } else if (bankHint === 'bb' || bankHint === 'sicredi') {
         row = assignNatureFromLinhaOcr(row);
       }
 

@@ -559,29 +559,35 @@ async function finalizeAiExtratoResult({
   };
 }
 
-async function extractWithGeminiPerPage({ model, ocrText, images, statementYear, fileName }) {
+async function extractWithGeminiPerPage({ model, ocrText, images, statementYear, fileName, bankHint: bankHintIn }) {
   if (!isGeminiConfigured()) {
     return { ok: false, reason: 'gemini_not_configured', detail: 'Configure a chave Gemini na aba IA ou no .env' };
   }
-  const bankHint = detectBankHint(fileName, ocrText);
+  const bankHint = bankHintIn ?? detectBankHint(fileName, ocrText);
   const pages = (images ?? []).slice(0, 12);
   if (pages.length === 0) {
-    return extractWithGemini({ model, ocrText, images, statementYear, fileName });
+    return extractWithGemini({ model, ocrText, images, statementYear, fileName, bankHint });
   }
 
   let mergedRows = [];
   let saldoAnterior;
   let saldoFinal;
   let lastModel = model;
+  const ocrChunks = String(ocrText ?? '')
+    .split(/\n{2,}/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   for (let i = 0; i < pages.length; i++) {
     const pageLabel = `${fileName || 'extrato'} — pág. ${i + 1}/${pages.length}`;
+    const pageOcr = ocrChunks[i] ?? (pages.length === 1 ? ocrText : '');
     const pageResult = await extractWithGemini({
       model,
-      ocrText: '',
+      ocrText: pageOcr,
       images: [pages[i]],
       statementYear,
       fileName: pageLabel,
+      bankHint,
     });
     if (!pageResult.ok) continue;
     lastModel = pageResult.model ?? model;
@@ -614,12 +620,12 @@ async function extractWithGeminiPerPage({ model, ocrText, images, statementYear,
   });
 }
 
-async function extractWithGemini({ model, ocrText, images, statementYear, fileName }) {
+async function extractWithGemini({ model, ocrText, images, statementYear, fileName, bankHint: bankHintIn }) {
   if (!isGeminiConfigured()) {
     return { ok: false, reason: 'gemini_not_configured', detail: 'Configure a chave Gemini na aba IA ou no .env' };
   }
 
-  const bankHint = detectBankHint(fileName, ocrText);
+  const bankHint = bankHintIn ?? detectBankHint(fileName, ocrText);
   const systemInstruction = buildExtratoAiExtractSystem(bankHint);
   const userParts = buildExtractUserParts({ statementYear, fileName, ocrText, bankHint });
 
@@ -849,7 +855,10 @@ export async function handleAiExtractExtrato(body) {
     statementYear: String(body?.statementYear ?? new Date().getFullYear()),
     fileName: String(body?.fileName ?? '').trim(),
     perPage: body?.perPage === true,
+    bankHint: body?.bankHint ? String(body.bankHint).trim() : undefined,
   };
+
+  const resolvedBankHint = payload.bankHint || detectBankHint(payload.fileName, payload.ocrText);
 
   try {
     let result;
@@ -863,9 +872,9 @@ export async function handleAiExtractExtrato(body) {
       case 'gemini':
       default:
         result =
-          payload.perPage && payload.images.length > 4
-            ? await extractWithGeminiPerPage(payload)
-            : await extractWithGemini(payload);
+          payload.perPage && payload.images.length >= 2
+            ? await extractWithGeminiPerPage({ ...payload, bankHint: resolvedBankHint })
+            : await extractWithGemini({ ...payload, bankHint: resolvedBankHint });
         break;
     }
 

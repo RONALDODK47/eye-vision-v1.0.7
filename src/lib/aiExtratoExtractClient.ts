@@ -129,6 +129,7 @@ export async function extractExtratoWithAi(params: {
   providerId?: string;
   model?: string;
   perPage?: boolean;
+  bankHint?: string;
   signal?: AbortSignal;
 }): Promise<AiExtractExtratoResult> {
   try {
@@ -147,6 +148,7 @@ export async function extractExtratoWithAi(params: {
           providerId: params.providerId,
           model: params.model,
           perPage: params.perPage === true,
+          bankHint: params.bankHint,
         }),
         signal,
       });
