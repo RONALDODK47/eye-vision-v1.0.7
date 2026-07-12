@@ -37,6 +37,23 @@ Isso aplica o schema no Supabase e valida Postgres + Storage de PDFs.
 
 ## Deploy
 
+### Um comando (recomendado)
+
+```bash
+npm run deploy
+```
+
+Isso faz automaticamente:
+
+1. Cria/mescla `.env.production` (usa `.env`, `SUPABASE_DATABASE_URL` e chave Gemini em `.data/api-keys/gemini/`)
+2. Valida Supabase localmente **se** as credenciais estiverem preenchidas
+3. Roda `npm run build` (sanidade antes do push)
+4. **Commit + push** para `main` → dispara **GitHub Pages** e **Render** no CI
+5. Opcional: hook do Render (`RENDER_DEPLOY_HOOK_URL`) e Vercel CLI (`VERCEL_TOKEN`)
+6. Aguarda GitHub Actions terminar (se `gh` estiver instalado)
+
+Variáveis extras em `.env.production` — ver `.env.production.example` (`DEPLOY_*`, `RENDER_DEPLOY_HOOK_URL`).
+
 ### Render (API)
 
 - Arquivo: [`render.yaml`](render.yaml)

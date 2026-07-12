@@ -6,6 +6,7 @@ import {
   extractExtratoWithAi,
   marcarRowsExtracaoAi,
   previewUrlToBase64,
+  fileToBase64Payload,
   type AiExtractExtratoResult,
   type OcrConfirmMeta,
 } from '../../lib/aiExtratoExtractClient';
@@ -123,15 +124,18 @@ export async function importExtratoScannerPureAi(
 
   const ignoreLineWords = parseOcrIgnoreLineWords(getOcrUserSettings().ignoreLineWords);
   const aiCfg = await fetchAiConfig();
+  const filePayload = await fileToBase64Payload(file);
   const aiResult = await extractExtratoWithAi({
     ocrText: ocrTextAgg || undefined,
-    images,
+    images: filePayload?.mimeType.includes('pdf') ? undefined : images,
     statementYear: stmtYear,
     fileName: file.name,
     providerId: aiCfg?.config?.providerId,
     model: aiCfg?.config?.model,
     perPage: images.length >= 2,
     bankHint: bankHint ?? undefined,
+    fileBase64: filePayload?.fileBase64,
+    mimeType: filePayload?.mimeType,
   });
 
   if (!aiResult.ok || !aiResult.rows?.length) {

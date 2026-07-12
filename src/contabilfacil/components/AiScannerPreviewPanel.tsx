@@ -6,7 +6,7 @@
  *
  * Interface baseada no erp.contabil com cores e bordas do sistema atual.
  */
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   FileImage,
   FileText,
@@ -37,7 +37,6 @@ export interface AiScannerTransaction {
   description: string;
   amount: number;
   type: 'DEBIT' | 'CREDIT';
-  category: string;
 }
 
 interface AiScannerPreviewPanelProps {
@@ -47,13 +46,9 @@ interface AiScannerPreviewPanelProps {
   onCancel?: () => void;
   /** Ano base para datas sem ano */
   statementYear?: string;
+  /** Arquivo já escolhido antes de abrir o painel — inicia processamento automaticamente */
+  initialFile?: File | null;
 }
-
-const COMMON_CATEGORIES = [
-  'Alimentação', 'Transporte', 'Lazer', 'Saúde', 'Salário',
-  'Serviços', 'Investimentos', 'Transferência', 'Impostos',
-  'Educação', 'Habitação', 'Outros',
-];
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
@@ -73,9 +68,10 @@ export default function AiScannerPreviewPanel({
   onConfirm,
   onCancel,
   statementYear = String(new Date().getFullYear()),
+  initialFile = null,
 }: AiScannerPreviewPanelProps) {
   const [isDragOver, setIsDragOver] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(!!initialFile);
   const [processingStep, setProcessingStep] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,26 +110,6 @@ export default function AiScannerPreviewPanel({
 
       if (!isPdf) {
         images = [{ base64, mimeType }];
-      } else {
-        setProcessingStep('Convertendo PDF para imagens…');
-        const pdfData = atob(base64);
-        const pdfBytes = new Uint8Array(pdfData.length);
-        for (let i = 0; i < pdfData.length; i++) pdfBytes[i] = pdfData.charCodeAt(i);
-
-        const pdfjs = (window as any).pdfjsLib;
-        if (!pdfjs) throw new Error('PDF.js não carregado. Recarregue a página.');
-
-        const pdfDoc = await pdfjs.getDocument({ data: pdfBytes }).promise;
-        for (let p = 1; p <= Math.min(pdfDoc.numPages, 15); p++) {
-          setProcessingStep(`Rasterizando página ${p} de ${pdfDoc.numPages}…`);
-          const page = await pdfDoc.getPage(p);
-          const viewport = page.getViewport({ scale: 1.5 });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.min(viewport.width, 1600);
-          canvas.height = Math.round(viewport.height * (canvas.width / viewport.width));
-          await page.render({ canvasContext: canvas.getContext('2d')!, viewport: page.getViewport({ scale: canvas.width / viewport.width }) }).promise;
-          images.push({ base64: canvas.toDataURL('image/jpeg', 0.88).split(',')[1], mimeType: 'image/jpeg' });
-        }
       }
 
       setProcessingStep('IA analisando o documento linha a linha…');
@@ -142,13 +118,15 @@ export default function AiScannerPreviewPanel({
       const aiCfg = await fetchAiConfig();
 
       const json = await extractExtratoWithAi({
-        images,
+        images: isPdf ? undefined : images,
         statementYear,
         fileName: file.name,
         providerId: aiCfg?.config?.providerId,
         model: aiCfg?.config?.model,
-        perPage: images.length >= 2,
+        perPage: !isPdf && images.length >= 2,
         bankHint: bankHint ?? undefined,
+        fileBase64: isPdf ? base64 : undefined,
+        mimeType: isPdf ? mimeType : undefined,
       });
 
       if (!json.ok) throw new Error(json.detail || json.reason || 'Erro na extração pela IA.');
@@ -165,17 +143,21 @@ export default function AiScannerPreviewPanel({
           ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`
           : String(r.data ?? '').slice(0, 10);
 
-        return { id: `ai_${idx}_${Date.now()}`, date: isoDate, description: String(r.descricao ?? '').trim(), amount, type: isCredit ? 'CREDIT' : 'DEBIT', category: 'Outros' };
+        return { id: `ai_${idx}_${Date.now()}`, date: isoDate, description: String(r.descricao ?? '').trim(), amount, type: isCredit ? 'CREDIT' : 'DEBIT' };
       });
 
       if (json.saldoAnterior != null && Number.isFinite(json.saldoAnterior)) setSaldoAnterior(json.saldoAnterior);
       setTransactions(rows);
       setHasExtracted(true);
     } catch (err: any) {
-      const msg = err?.message || 'Falha na extração.';
-      setError(msg.includes('aborted') || msg.includes('timeout')
-        ? 'Tempo esgotado. O documento tem muitas páginas ou a conexão está lenta. Tente novamente.'
-        : msg);
+      const raw = err?.message || 'Falha na extração.';
+      const msg =
+        /429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(raw)
+          ? 'Limite de uso do Gemini atingido. Aguarde cerca de 1 minuto e tente novamente.'
+          : raw.includes('aborted') || raw.includes('timeout')
+            ? 'Tempo esgotado. O documento tem muitas páginas ou a conexão está lenta. Tente novamente.'
+            : raw;
+      setError(msg);
     } finally {
       setIsProcessing(false);
       setProcessingStep('');
@@ -184,6 +166,12 @@ export default function AiScannerPreviewPanel({
 
   const handleDrop = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); if (e.dataTransfer.files?.[0]) processFile(e.dataTransfer.files[0]); };
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { if (e.target.files?.[0]) processFile(e.target.files[0]); };
+
+  useEffect(() => {
+    if (initialFile) void processFile(initialFile);
+  }, [initialFile, processFile]);
+
+  const awaitingInitialProcess = !!initialFile && !hasExtracted && !error;
 
   /* ── Tabela ─────────────────────────────────────────────────────────── */
 
@@ -204,7 +192,7 @@ export default function AiScannerPreviewPanel({
 
   const handleDeleteRow = (id: string) => { setTransactions(p => p.filter(t => t.id !== id)); setSelectedIds(p => p.filter(s => s !== id)); };
   const handleDeleteSelected = () => { setTransactions(p => p.filter(t => !selectedIds.includes(t.id))); setSelectedIds([]); };
-  const handleAddRow = () => setTransactions(p => [{ id: `manual_${Date.now()}`, date: new Date().toISOString().slice(0, 10), description: 'NOVO LANÇAMENTO MANUAL', amount: -10, type: 'DEBIT', category: 'Outros' }, ...p]);
+  const handleAddRow = () => setTransactions(p => [{ id: `manual_${Date.now()}`, date: new Date().toISOString().slice(0, 10), description: 'NOVO LANÇAMENTO MANUAL', amount: -10, type: 'DEBIT' }, ...p]);
   const toggleSelect = (id: string) => setSelectedIds(p => p.includes(id) ? p.filter(s => s !== id) : [...p, id]);
   const toggleSelectAll = () => setSelectedIds(p => p.length === transactions.length ? [] : transactions.map(t => t.id));
 
@@ -212,31 +200,15 @@ export default function AiScannerPreviewPanel({
   const expenses = transactions.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0);
   const saldoFinal = saldoAnterior + incomes + expenses;
 
-  const allCategories = Array.from(new Set([...COMMON_CATEGORIES, ...transactions.map(t => t.category).filter(Boolean)]));
-
   /* ── Render ─────────────────────────────────────────────────────────── */
 
   return (
     <div className="flex flex-col gap-6 w-full text-brand-text">
 
-      {/* ZONA DE UPLOAD */}
+      {/* ZONA DE UPLOAD / PROCESSAMENTO */}
       <div className="w-full">
-        <div
-          onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
-          onDragLeave={() => setIsDragOver(false)}
-          onDrop={handleDrop}
-          onClick={isProcessing ? undefined : () => fileInputRef.current?.click()}
-          className={[
-            'relative flex flex-col items-center justify-center border border-brand-border p-10 h-[240px]',
-            'transition-all duration-200 cursor-pointer text-center select-none bg-white',
-            isProcessing ? 'opacity-60 cursor-not-allowed'
-              : isDragOver ? 'bg-brand-sidebar scale-[1.01]'
-              : 'hover:bg-brand-sidebar/40',
-          ].join(' ')}
-        >
-          <input ref={fileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" className="hidden" onChange={handleFileChange} disabled={isProcessing} />
-
-          {isProcessing ? (
+        {(awaitingInitialProcess || isProcessing) && !error ? (
+          <div className="relative flex flex-col items-center justify-center border border-brand-border p-10 min-h-[320px] text-center select-none bg-white">
             <div className="flex flex-col items-center gap-4 z-10">
               <div className="relative"><Loader2 className="w-12 h-12 text-brand-text animate-spin" /><Sparkles className="w-5 h-5 text-brand-text absolute inset-0 m-auto animate-pulse" /></div>
               <div className="text-center">
@@ -244,23 +216,47 @@ export default function AiScannerPreviewPanel({
                 <p className="text-xs font-mono uppercase tracking-widest text-brand-text px-3 py-1 bg-brand-sidebar border border-brand-border inline-block mt-1">{processingStep || 'Aguarde…'}</p>
               </div>
             </div>
-          ) : (
-            <div className="flex flex-col items-center gap-4 z-10">
-              <div className="flex gap-4 text-zinc-500"><FileImage className="w-9 h-9" /><FileText className="w-9 h-9" /></div>
-              <div>
-                <p className="text-3xl font-black tracking-tighter text-brand-text uppercase">{hasExtracted ? 'Enviar Novo Arquivo' : 'Arraste o Extrato Aqui'}</p>
-                <p className="text-zinc-500 text-xs font-bold tracking-[0.2em] uppercase mt-1">PDF Escaneado / PNG / JPG / FOTO</p>
-              </div>
-              <button type="button" onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }} className="technical-button-primary">
-                Buscar Arquivo
-              </button>
-              <div className="flex items-center gap-6 pt-3 border-t border-brand-border/20 w-full max-w-md text-zinc-500 text-[10px] font-mono tracking-wider uppercase">
-                <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-rose-500" /><span>PDF Bancário</span></div>
-                <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-sky-500" /><span>Foto / Scanner</span></div>
+          </div>
+        ) : (
+          <>
+            <div
+              onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={[
+                'relative flex flex-col items-center justify-center border border-brand-border p-10 h-[240px]',
+                'transition-all duration-200 cursor-pointer text-center select-none bg-white',
+                isDragOver ? 'bg-brand-sidebar scale-[1.01]' : 'hover:bg-brand-sidebar/40',
+              ].join(' ')}
+            >
+              <input ref={fileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" className="hidden" onChange={handleFileChange} />
+
+              <div className="flex flex-col items-center gap-4 z-10">
+                <div className="flex gap-4 text-zinc-500"><FileImage className="w-9 h-9" /><FileText className="w-9 h-9" /></div>
+                <div>
+                  <p className="text-3xl font-black tracking-tighter text-brand-text uppercase">{hasExtracted ? 'Enviar Novo Arquivo' : 'Arraste o Extrato Aqui'}</p>
+                  <p className="text-zinc-500 text-xs font-bold tracking-[0.2em] uppercase mt-1">PDF Escaneado / PNG / JPG / FOTO</p>
+                </div>
+                <button type="button" onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }} className="technical-button-primary">
+                  Buscar Arquivo
+                </button>
+                <div className="flex items-center gap-6 pt-3 border-t border-brand-border/20 w-full max-w-md text-zinc-500 text-[10px] font-mono tracking-wider uppercase">
+                  <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-rose-500" /><span>PDF Bancário</span></div>
+                  <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-sky-500" /><span>Foto / Scanner</span></div>
+                </div>
               </div>
             </div>
-          )}
-        </div>
+
+            <div className="mt-4 bg-brand-sidebar/30 border border-brand-border p-4 text-xs text-brand-text/80 flex gap-3">
+              <HelpCircle className="w-5 h-5 text-brand-text/60 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-black text-brand-text uppercase tracking-wider text-xs mb-1">Como funciona a extração IA</p>
+                <p className="text-zinc-650 font-mono text-[11px] leading-relaxed">O motor Gemini Vision lê o documento linha a linha, extrai todas as datas, descrições e valores — incluindo anotações manuais feitas à caneta — e monta a tabela abaixo para revisão antes da conciliação.</p>
+              </div>
+            </div>
+          </>
+        )}
 
         {error && (
           <div className="mt-3 p-4 bg-red-50 border border-red-400 text-red-900 flex items-start gap-3 text-xs font-mono">
@@ -268,14 +264,6 @@ export default function AiScannerPreviewPanel({
             <div><span className="font-bold uppercase tracking-wider text-red-700 block mb-1">Falha no processamento:</span><p>{error}</p></div>
           </div>
         )}
-
-        <div className="mt-4 bg-brand-sidebar/30 border border-brand-border p-4 text-xs text-brand-text/80 flex gap-3">
-          <HelpCircle className="w-5 h-5 text-brand-text/60 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-black text-brand-text uppercase tracking-wider text-xs mb-1">Como funciona a extração IA</p>
-            <p className="text-zinc-650 font-mono text-[11px] leading-relaxed">O motor Gemini Vision lê o documento linha a linha, extrai todas as datas, descrições e valores — incluindo anotações manuais feitas à caneta — e monta a tabela abaixo para revisão antes da conciliação.</p>
-          </div>
-        </div>
       </div>
 
       {/* TABELA DE REVISÃO */}
@@ -346,14 +334,13 @@ export default function AiScannerPreviewPanel({
                     <th className="py-3 px-3 w-36">Data</th>
                     <th className="py-3 px-3 min-w-[200px]">Descrição / Histórico</th>
                     <th className="py-3 px-3 w-28">Tipo</th>
-                    <th className="py-3 px-3 w-36">Categoria</th>
                     <th className="py-3 px-3 w-32 text-right">Valor (R$)</th>
                     <th className="py-3 px-3 w-10 text-center">—</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-brand-border/10 text-sm text-brand-text">
                   {transactions.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center py-10 text-zinc-500"><div className="flex flex-col items-center gap-2"><AlertCircle className="w-7 h-7 text-zinc-400 animate-bounce" /><p className="font-mono text-xs">Nenhuma transação extraída.</p></div></td></tr>
+                    <tr><td colSpan={6} className="text-center py-10 text-zinc-500"><div className="flex flex-col items-center gap-2"><AlertCircle className="w-7 h-7 text-zinc-400 animate-bounce" /><p className="font-mono text-xs">Nenhuma transação extraída.</p></div></td></tr>
                   ) : transactions.map(t => {
                     const isDebit = t.type === 'DEBIT';
                     return (
@@ -372,12 +359,6 @@ export default function AiScannerPreviewPanel({
                             className={`w-full border px-1.5 py-1 text-xs font-black outline-none bg-white ${isDebit ? 'text-rose-600 border-rose-900/10 focus:border-rose-500' : 'text-emerald-600 border-emerald-900/10 focus:border-emerald-500'}`}>
                             <option value="DEBIT">DÉBITO</option>
                             <option value="CREDIT">CRÉDITO</option>
-                          </select>
-                        </td>
-                        <td className="py-1.5 px-2">
-                          <select value={t.category} onChange={e => handleCellChange(t.id, 'category', e.target.value)}
-                            className="w-full bg-white border border-brand-border/25 hover:border-brand-border focus:border-brand-border text-brand-text text-xs px-1.5 py-1 outline-none">
-                            {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                           </select>
                         </td>
                         <td className="py-1.5 px-2 text-right">

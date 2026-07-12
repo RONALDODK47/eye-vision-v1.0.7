@@ -23,6 +23,7 @@ import {
   normalizeAiRows,
   parseAiSaldoFields,
 } from './ai-extract-utils.mjs';
+import { convertExtrato, convertPlano, DEFAULT_GEMINI_MODEL, formatGeminiErrorMessage } from './erp-contabil/index.mjs';
 
 async function callGeminiExtract({ model, systemInstruction, userParts, images, temperature = 0.05, responseSchema }) {
   const extractOpts = {
@@ -339,6 +340,8 @@ export async function handleAiExtractPlano(body) {
     images: Array.isArray(body?.images) ? body.images : [],
     fileName: String(body?.fileName ?? '').trim(),
     perPage: body?.perPage === true,
+    fileBase64: String(body?.fileBase64 ?? '').trim() || undefined,
+    mimeType: String(body?.mimeType ?? '').trim() || undefined,
   };
 
   try {
@@ -352,10 +355,7 @@ export async function handleAiExtractPlano(body) {
         break;
       case 'gemini':
       default:
-        result =
-          payload.perPage && payload.images.length > 4
-            ? await extractPlanoWithGeminiPerPage(payload)
-            : await extractPlanoWithGemini(payload);
+        result = await extractPlanoWithErpContabil(payload);
         break;
     }
 
@@ -595,6 +595,180 @@ async function finalizeAiExtratoResult({
     provider,
     model,
   };
+}
+
+function mapErpTransactionsToRawRows(transactions, statementYear) {
+  let lastDateBr = '';
+  return (transactions ?? []).map((t) => {
+    let dateStr = '';
+    if (t?.date) {
+      const parts = String(t.date).split('-');
+      if (parts.length === 3 && parts[0].length === 4) {
+        dateStr = `${parts[2]}/${parts[1]}/${parts[0]}`;
+      } else {
+        dateStr = String(t.date);
+      }
+    } else if (lastDateBr) {
+      dateStr = lastDateBr;
+    }
+
+    if (dateStr) lastDateBr = dateStr;
+
+    let valorCredito = '';
+    let valorDebito = '';
+    if (t?.amount != null && t.amount !== 0) {
+      const absVal = Math.abs(Number(t.amount));
+      const formattedVal = absVal.toLocaleString('pt-BR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      const isCredit = t.type === 'CREDIT' || (t.type !== 'DEBIT' && Number(t.amount) > 0);
+      if (isCredit) valorCredito = formattedVal;
+      else valorDebito = formattedVal;
+    }
+
+    return {
+      data: dateStr,
+      descricao: String(t?.description ?? '').trim(),
+      valorCredito,
+      valorDebito,
+      valorMisto: '',
+      _linhaOcr: `${t?.date || ''} ${t?.description || ''} ${t?.amount != null ? t.amount : ''}`.trim(),
+      _statementYear: statementYear,
+    };
+  });
+}
+
+function mapErpPlanoToRows(planoContas) {
+  return (planoContas ?? []).map((item) => {
+    const classification = String(item?.classification ?? '').trim();
+    const nivel = classification ? String(classification.split('.').length) : '';
+    const typeUpper = String(item?.type ?? '').toUpperCase();
+    let tipo = 'A';
+    if (item?.isSynthetic === true) tipo = 'S';
+    else if (typeUpper.includes('SINT') || nivel && Number(nivel) < 5) tipo = 'S';
+
+    return {
+      codigoReduzido: String(item?.code ?? '').trim(),
+      codigoClassificacao: classification,
+      descricao: String(item?.name ?? '').trim(),
+      tipo,
+      nivel,
+      _linhaOcr: `${classification} ${item?.name ?? ''}`.trim(),
+    };
+  });
+}
+
+/** Motor erp.contabil — extração exaustiva (PDF chunked, imagem, planilha). */
+async function extractWithErpContabil({
+  model,
+  ocrText,
+  images,
+  statementYear,
+  fileName,
+  bankHint: bankHintIn,
+  fileBase64,
+  mimeType,
+}) {
+  if (!isGeminiConfigured()) {
+    return { ok: false, reason: 'gemini_not_configured', detail: 'Configure a chave Gemini na aba IA ou no .env' };
+  }
+
+  const bankHint = bankHintIn ?? detectBankHint(fileName, ocrText);
+  const isPdf =
+    Boolean(fileBase64) &&
+    (String(mimeType || '').includes('pdf') || /\.pdf$/i.test(String(fileName || '')));
+
+  try {
+    const convertParams = {
+      fileName,
+      selectedModel: model || DEFAULT_GEMINI_MODEL,
+    };
+
+    if (isPdf) {
+      convertParams.fileBase64 = fileBase64;
+      convertParams.mimeType = mimeType || 'application/pdf';
+    } else if (Array.isArray(images) && images.length > 0) {
+      convertParams.images = images;
+    } else {
+      return {
+        ok: false,
+        reason: 'no_input',
+        detail: 'Envie PDF, imagem ou planilha para extração.',
+      };
+    }
+
+    const erpResult = await convertExtrato(convertParams);
+    const rawRows = mapErpTransactionsToRawRows(erpResult?.transactions, statementYear);
+    const rows = normalizeAiRows(rawRows, { statementYear, bankHint });
+    if (!rows.length) {
+      return { ok: false, reason: 'empty_extraction', detail: 'O motor erp.contabil não retornou lançamentos válidos.' };
+    }
+
+    return finalizeAiExtratoResult({
+      model: model || DEFAULT_GEMINI_MODEL,
+      rows,
+      saldoAnterior: null,
+      saldoFinal: null,
+      ocrText,
+      images,
+      fileName,
+      bankHint,
+      statementYear,
+      provider: 'erp-contabil',
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'extract_error',
+      detail: formatGeminiErrorMessage(err),
+    };
+  }
+}
+
+/** Motor erp.contabil — plano de contas. */
+async function extractPlanoWithErpContabil({ model, ocrText, images, fileName, fileBase64, mimeType }) {
+  if (!isGeminiConfigured()) {
+    return { ok: false, reason: 'gemini_not_configured', detail: 'Configure a chave Gemini na aba IA ou no .env' };
+  }
+
+  const isPdf =
+    Boolean(fileBase64) &&
+    (String(mimeType || '').includes('pdf') || /\.pdf$/i.test(String(fileName || '')));
+
+  try {
+    const convertParams = {
+      fileName,
+      selectedModel: model || DEFAULT_GEMINI_MODEL,
+      ocrText,
+      textContent: ocrText,
+    };
+
+    if (isPdf) {
+      convertParams.fileBase64 = fileBase64;
+      convertParams.mimeType = mimeType || 'application/pdf';
+    } else if (Array.isArray(images) && images.length > 0) {
+      convertParams.images = images;
+    } else if (String(ocrText ?? '').trim().length > 20) {
+      convertParams.textContent = ocrText;
+    } else {
+      return { ok: false, reason: 'no_input', detail: 'Envie documento ou texto OCR do plano de contas.' };
+    }
+
+    const erpResult = await convertPlano(convertParams);
+    const rows = normalizeAiPlanoRows(mapErpPlanoToRows(erpResult?.planoContas ?? []));
+    if (!rows.length) {
+      return { ok: false, reason: 'empty_extraction', detail: 'O motor erp.contabil não retornou contas válidas.' };
+    }
+
+    return { ok: true, rows, provider: 'erp-contabil', model: model || DEFAULT_GEMINI_MODEL };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'extract_error',
+      detail: formatGeminiErrorMessage(err),
+    };
+  }
 }
 
 async function extractWithGeminiPerPage({ model, ocrText, images, statementYear, fileName, bankHint: bankHintIn }) {
@@ -1013,6 +1187,8 @@ export async function handleAiExtractExtrato(body) {
     fileName: String(body?.fileName ?? '').trim(),
     perPage: body?.perPage === true,
     bankHint: body?.bankHint ? String(body.bankHint).trim() : undefined,
+    fileBase64: String(body?.fileBase64 ?? '').trim() || undefined,
+    mimeType: String(body?.mimeType ?? '').trim() || undefined,
   };
 
   const resolvedBankHint = payload.bankHint || detectBankHint(payload.fileName, payload.ocrText);
@@ -1028,7 +1204,7 @@ export async function handleAiExtractExtrato(body) {
         break;
       case 'gemini':
       default:
-        result = await extractWithGemini({ ...payload, bankHint: resolvedBankHint });
+        result = await extractWithErpContabil(payload);
         break;
     }
 

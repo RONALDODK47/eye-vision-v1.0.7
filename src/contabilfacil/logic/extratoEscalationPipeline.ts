@@ -3,7 +3,7 @@
  */
 import type { GenericOcrRow, ExtractGenericOptions } from '../../lib/parcelamentoColunasExtract';
 import type { AiExtractImage, OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
-import { extractExtratoWithAi, marcarRowsExtracaoAi } from '../../lib/aiExtratoExtractClient';
+import { extractExtratoWithAi, marcarRowsExtracaoAi, fileToBase64Payload } from '../../lib/aiExtratoExtractClient';
 import {
   extratoLinhasSaldoInformativoDoTextoOcr,
   prepararExtratoOcrRowsParaRevisao,
@@ -121,14 +121,17 @@ export async function buildExtratoReviewPackage(
           if (img) images.push(img);
         }
         if (images.length === 0) return false;
+        const filePayload = await fileToBase64Payload(ctx.file);
         const ai = await extractExtratoWithAi({
           ocrText: ctx.ocrText,
-          images,
+          images: filePayload?.mimeType.includes('pdf') ? undefined : images,
           statementYear: ctx.statementYear,
           fileName: ctx.file.name,
           providerId: ctx.aiProviderId,
           model: ctx.aiModel,
           perPage: true,
+          fileBase64: filePayload?.fileBase64,
+          mimeType: filePayload?.mimeType,
         });
         if (ai.ok && ai.rows?.length && ai.rows.length >= rows.length) {
           rows = prepararExtratoOcrRowsParaRevisao(marcarRowsExtracaoAi(ai.rows), prepOpts);

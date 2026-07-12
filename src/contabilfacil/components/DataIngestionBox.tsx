@@ -340,6 +340,8 @@ export default function DataIngestionBox({
   const [extratoDocumentKind, setExtratoDocumentKind] = useState<ExtratoDocumentKind | null>(null);
   /** Controla exibição do painel de preview do scanner IA (erp.contabil UI). */
   const [showScannerPreviewPanel, setShowScannerPreviewPanel] = useState(false);
+  /** Arquivo escolhido no botão scanner — processado ao abrir o painel. */
+  const [pendingScannerFile, setPendingScannerFile] = useState<File | null>(null);
 
   const [pendingOfxFile, setPendingOfxFile] = useState<File | null>(null);
   const [ofxBancoNome, setOfxBancoNome] = useState('');
@@ -363,6 +365,7 @@ export default function DataIngestionBox({
   const fileInputRefOfx = useRef<HTMLInputElement>(null);
   const fileInputRefPdf = useRef<HTMLInputElement>(null);
   const fileInputRefPdfDominio = useRef<HTMLInputElement>(null);
+  const fileInputRefScanner = useRef<HTMLInputElement>(null);
 
   // Helper template info based on module
   const getTemplateInfo = () => {
@@ -627,8 +630,21 @@ export default function DataIngestionBox({
     setDominioPdfKind(null);
     extratoImportModeRef.current = 'scanned_or_image';
     setExtratoDocumentKind('scanned_or_image');
-    // Mostra o painel de prévia com upload+tabela (interface erp.contabil)
+    fileInputRefScanner.current?.click();
+  };
+
+  const handleFileChangeScanner = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setPendingScannerFile(file);
     setShowScannerPreviewPanel(true);
+  };
+
+  const closeScannerPreviewPanel = () => {
+    setShowScannerPreviewPanel(false);
+    setPendingScannerFile(null);
+    setExtratoDocumentKind(null);
   };
 
 
@@ -1508,15 +1524,26 @@ export default function DataIngestionBox({
           />
         )}
         {dataType === 'extrato' && (
-          <input
-            aria-label="Importar OFX ou QFX"
-            type="file"
-            ref={fileInputRefOfx}
-            onChange={handleFileChangeOfx}
-            accept=".ofx,.qfx"
-            className="hidden"
-            data-testid="ingest-ofx-input"
-          />
+          <>
+            <input
+              aria-label="Importar OFX ou QFX"
+              type="file"
+              ref={fileInputRefOfx}
+              onChange={handleFileChangeOfx}
+              accept=".ofx,.qfx"
+              className="hidden"
+              data-testid="ingest-ofx-input"
+            />
+            <input
+              aria-label="Importar imagem ou PDF escaneado para scanner IA"
+              type="file"
+              ref={fileInputRefScanner}
+              onChange={handleFileChangeScanner}
+              accept=".pdf,.png,.jpg,.jpeg,.webp,image/*"
+              className="hidden"
+              data-testid="ingest-extrato-scanner-input"
+            />
+          </>
         )}
 
         {/* Action Buttons */}
@@ -1969,10 +1996,7 @@ export default function DataIngestionBox({
             </div>
             <button
               type="button"
-              onClick={() => {
-                setShowScannerPreviewPanel(false);
-                setExtratoDocumentKind(null);
-              }}
+              onClick={closeScannerPreviewPanel}
               className="technical-button px-4 py-2"
             >
               Fechar
@@ -1980,10 +2004,11 @@ export default function DataIngestionBox({
           </header>
           <div className="flex-1 p-6 max-w-6xl mx-auto w-full">
             <AiScannerPreviewPanel
+              key={pendingScannerFile ? `${pendingScannerFile.name}-${pendingScannerFile.lastModified}` : 'scanner-empty'}
+              initialFile={pendingScannerFile}
               statementYear={String(new Date().getFullYear())}
               onConfirm={(transactions, saldoAnterior) => {
-                setShowScannerPreviewPanel(false);
-                setExtratoDocumentKind(null);
+                closeScannerPreviewPanel();
                 
                 // Mapeia AiScannerTransaction[] para GenericOcrRow[]
                 const rows: GenericOcrRow[] = transactions.map(t => {
@@ -2014,10 +2039,7 @@ export default function DataIngestionBox({
                 // Passa as linhas e o saldo anterior para o fluxo de conciliação
                 handleOcrConfirm(rows, { saldoAnterior });
               }}
-              onCancel={() => {
-                setShowScannerPreviewPanel(false);
-                setExtratoDocumentKind(null);
-              }}
+              onCancel={closeScannerPreviewPanel}
             />
           </div>
         </div>

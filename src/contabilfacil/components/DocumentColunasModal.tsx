@@ -91,6 +91,7 @@ import {
   marcarRowsExtracaoAi,
   previewUrlToBase64,
   refineOcrRowsWithAi,
+  fileToBase64Payload,
   type AiExtractExtratoResult,
   type AiExtractPlanoResult,
   type OcrConfirmMeta,
@@ -2745,14 +2746,20 @@ export function DocumentColunasModal({
             ocrTextAgg || doc.ocrFullText || doc.items.map((i) => i.str).join(' '),
           ) || String(new Date().getFullYear());
         const aiCfg = await fetchAiConfig();
+        const filePayload = await fileToBase64Payload(file);
         const aiResult = await extractExtratoWithAi({
           ocrText: scannerPureAi ? undefined : ocrTextAgg || doc.ocrFullText || undefined,
-          images: images.filter(Boolean) as NonNullable<(typeof images)[number]>[],
+          images:
+            filePayload?.mimeType.includes('pdf')
+              ? undefined
+              : (images.filter(Boolean) as NonNullable<(typeof images)[number]>[]),
           statementYear: stmtYearAi,
           fileName: file.name,
           providerId: aiCfg?.config?.providerId,
           model: aiCfg?.config?.model,
           perPage: images.length > 4,
+          fileBase64: filePayload?.fileBase64,
+          mimeType: filePayload?.mimeType,
         });
         if (!aiResult.ok || !aiResult.rows?.length) {
           throw new Error(formatAiExtractError(aiResult));

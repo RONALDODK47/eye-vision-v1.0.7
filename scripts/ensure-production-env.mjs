@@ -1,9 +1,19 @@
 #!/usr/bin/env node
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+/**
+ * Cria/mescla .env.production antes do deploy.
+ * Não bloqueia o deploy se Supabase ainda não estiver preenchido —
+ * nesse caso o npm run deploy publica frontend/backend via GitHub e pula schema local.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  isLocalDatabaseUrl,
+  looksLikePlaceholder,
+  readGeminiKeyFromStore,
+  root,
+} from './deploy-utils.mjs';
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const example = path.join(root, '.env.production.example');
 const target = path.join(root, '.env.production');
 const localEnv = path.join(root, '.env');
@@ -12,92 +22,61 @@ function parseEnv(filePath) {
   if (!fs.existsSync(filePath)) return {};
   const obj = {};
   for (const line of String(fs.readFileSync(filePath, 'utf8')).split(/\r?\n/)) {
-    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m) obj[m[1]] = m[2] || '';
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    obj[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
   }
   return obj;
 }
 
-function serializeEnv(obj) {
-  return Object.entries(obj)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${String(value)}`)
-    .join('\n') + '\n';
+function serializeEnv(entries) {
+  const lines = [
+    '# Gerado/atualizado automaticamente por scripts/ensure-production-env.mjs',
+    '# Valores sensíveis: edite manualmente se necessário.',
+    '',
+  ];
+  for (const [key, value] of entries) {
+    lines.push(`${key}=${value}`);
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
-function looksLikePlaceholder(v) {
-  if (!v) return true;
-  const lower = String(v).toLowerCase();
-  return (
-    lower.includes('sua_') ||
-    lower.includes('alter') ||
-    lower.includes('<') ||
-    lower.includes('chang') ||
-    lower.includes('example') ||
-    lower.includes('seu_') ||
-    lower.includes('[ref]') ||
-    lower.includes('[senha]') ||
-    lower.includes('[regiao]')
-  );
-}
-
-function pickValue(source, key, fallback = '') {
+function pick(source, key) {
   const value = String(source?.[key] ?? '').trim();
-  return value || fallback;
+  return value || '';
 }
 
-function isValidUrl(value) {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
+function mergeValue(current, ...candidates) {
+  if (current && !looksLikePlaceholder(current)) return current;
+  for (const candidate of candidates) {
+    const value = String(candidate ?? '').trim();
+    if (value && !looksLikePlaceholder(value)) return value;
   }
-}
-
-function applyDefault(targetObj, sourceObj) {
-  for (const [key, fallback] of Object.entries(sourceObj)) {
-    if (targetObj[key] === undefined || looksLikePlaceholder(targetObj[key])) {
-      const candidate = pickValue(sourceObj, key, fallback);
-      if (candidate) targetObj[key] = candidate;
-    }
-  }
+  return current || '';
 }
 
 if (!fs.existsSync(example)) {
-  console.error('[ensure-prod-env] Falta .env.production.example — verifique o repositório.');
+  console.error('[ensure-prod-env] Falta .env.production.example');
   process.exit(1);
 }
 
 const exampleEnv = parseEnv(example);
 const localEnvData = parseEnv(localEnv);
-const processEnvData = {
-  DATABASE_URL: process.env.DATABASE_URL || '',
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  GEMINI_MODEL: process.env.GEMINI_MODEL || '',
-  MINIO_S3_ENDPOINT: process.env.MINIO_S3_ENDPOINT || '',
-  MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || '',
-  MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || '',
-  MINIO_BUCKET: process.env.MINIO_BUCKET || '',
-  MINIO_REGION: process.env.MINIO_REGION || '',
-  VITE_AGENT_API_URL: process.env.VITE_AGENT_API_URL || '',
-  VITE_STORAGE_BACKEND: process.env.VITE_STORAGE_BACKEND || '',
-  STORAGE_BACKEND: process.env.STORAGE_BACKEND || '',
-  CORS_ALLOWED_ORIGIN: process.env.CORS_ALLOWED_ORIGIN || '',
-  VERCEL_TOKEN: process.env.VERCEL_TOKEN || '',
-};
+let targetEnv = fs.existsSync(target) ? parseEnv(target) : { ...exampleEnv };
 
-let targetEnv = {};
-if (fs.existsSync(target)) {
-  targetEnv = parseEnv(target);
-  console.info('[ensure-prod-env] .env.production já existe — mesclando valores');
+if (!fs.existsSync(target)) {
+  console.info('[ensure-prod-env] Criando .env.production a partir do example + .env local');
 } else {
-  targetEnv = { ...exampleEnv };
-  console.info('[ensure-prod-env] Arquivo .env.production criado a partir de .env.production.example');
+  console.info('[ensure-prod-env] Mesclando .env.production com valores locais');
 }
 
-// defaults from example + local env + process env
+const geminiFromStore = readGeminiKeyFromStore();
+const supabaseDb = pick(localEnvData, 'SUPABASE_DATABASE_URL') || pick(targetEnv, 'SUPABASE_DATABASE_URL');
+const localDb = pick(localEnvData, 'DATABASE_URL') || pick(targetEnv, 'DATABASE_URL');
+
 const defaults = {
   NODE_ENV: 'production',
   STORAGE_BACKEND: 'supabase',
@@ -107,68 +86,114 @@ const defaults = {
   MINIO_BUCKET: 'eye-vision',
   MINIO_REGION: 'us-east-1',
   ALLOW_DEV_MIGRATION_ROUTES: 'false',
-  CORS_ALLOWED_ORIGIN: 'https://seu-app.vercel.app',
+  VITE_AGENT_API_URL: 'https://contabil-erp-nova-versao-v1-0-8.onrender.com/api/agent',
+  CORS_ALLOWED_ORIGIN: 'https://ronaldodk47.github.io/eye-vision-v1.0.7/',
+  DEPLOY_GITHUB_REPO: 'RONALDODK47/eye-vision-v1.0.7',
+  DEPLOY_GIT_REMOTE: 'https://github.com/RONALDODK47/eye-vision-v1.0.7.git',
 };
 
 for (const [key, fallback] of Object.entries(defaults)) {
-  if (!targetEnv[key] || looksLikePlaceholder(targetEnv[key])) {
-    targetEnv[key] = fallback;
-  }
+  targetEnv[key] = mergeValue(targetEnv[key], pick(localEnvData, key), pick(exampleEnv, key), fallback);
 }
 
-applyDefault(targetEnv, exampleEnv);
-applyDefault(targetEnv, localEnvData);
-applyDefault(targetEnv, processEnvData);
+targetEnv.DATABASE_URL = mergeValue(
+  targetEnv.DATABASE_URL,
+  !isLocalDatabaseUrl(localDb) ? localDb : '',
+  supabaseDb,
+  pick(exampleEnv, 'DATABASE_URL'),
+);
 
-// keep existing non-placeholder values over defaults
-for (const [key, value] of Object.entries(processEnvData)) {
-  if (value && (!targetEnv[key] || looksLikePlaceholder(targetEnv[key]))) {
-    targetEnv[key] = value;
+targetEnv.GEMINI_API_KEY = mergeValue(
+  targetEnv.GEMINI_API_KEY,
+  pick(localEnvData, 'GEMINI_API_KEY'),
+  geminiFromStore,
+  pick(exampleEnv, 'GEMINI_API_KEY'),
+);
+
+targetEnv.MINIO_S3_ENDPOINT = mergeValue(
+  targetEnv.MINIO_S3_ENDPOINT,
+  pick(localEnvData, 'MINIO_S3_ENDPOINT'),
+  pick(exampleEnv, 'MINIO_S3_ENDPOINT'),
+);
+
+targetEnv.MINIO_ACCESS_KEY = mergeValue(
+  targetEnv.MINIO_ACCESS_KEY,
+  pick(localEnvData, 'MINIO_ACCESS_KEY'),
+  pick(localEnvData, 'MINIO_ROOT_USER'),
+  pick(exampleEnv, 'MINIO_ACCESS_KEY'),
+);
+
+targetEnv.MINIO_SECRET_KEY = mergeValue(
+  targetEnv.MINIO_SECRET_KEY,
+  pick(localEnvData, 'MINIO_SECRET_KEY'),
+  pick(localEnvData, 'MINIO_ROOT_PASSWORD'),
+  pick(exampleEnv, 'MINIO_SECRET_KEY'),
+);
+
+targetEnv.RENDER_DEPLOY_HOOK_URL = mergeValue(
+  targetEnv.RENDER_DEPLOY_HOOK_URL,
+  pick(localEnvData, 'RENDER_DEPLOY_HOOK_URL'),
+  pick(process.env, 'RENDER_DEPLOY_HOOK_URL'),
+);
+
+targetEnv.VERCEL_TOKEN = mergeValue(targetEnv.VERCEL_TOKEN, pick(localEnvData, 'VERCEL_TOKEN'));
+
+const orderedKeys = [
+  'NODE_ENV',
+  'STORAGE_BACKEND',
+  'VITE_STORAGE_BACKEND',
+  'VITE_AGENT_API_URL',
+  'AGENT_API_HOST',
+  'DATABASE_URL',
+  'GEMINI_API_KEY',
+  'GEMINI_MODEL',
+  'CORS_ALLOWED_ORIGIN',
+  'ALLOW_DEV_MIGRATION_ROUTES',
+  'MINIO_S3_ENDPOINT',
+  'MINIO_ACCESS_KEY',
+  'MINIO_SECRET_KEY',
+  'MINIO_BUCKET',
+  'MINIO_REGION',
+  'RENDER_DEPLOY_HOOK_URL',
+  'VERCEL_TOKEN',
+  'DEPLOY_GITHUB_REPO',
+  'DEPLOY_GIT_REMOTE',
+  'DEPLOY_GIT_MESSAGE',
+];
+
+const serialized = [];
+const seen = new Set();
+for (const key of orderedKeys) {
+  if (targetEnv[key] !== undefined && targetEnv[key] !== '') {
+    serialized.push([key, targetEnv[key]]);
+    seen.add(key);
   }
 }
+for (const [key, value] of Object.entries(targetEnv)) {
+  if (!seen.has(key) && value !== undefined && value !== '') serialized.push([key, value]);
+}
 
-fs.writeFileSync(target, serializeEnv(targetEnv));
+fs.writeFileSync(target, serializeEnv(serialized));
 
 const warnings = [];
-const errors = [];
-
-if (!targetEnv.DATABASE_URL || looksLikePlaceholder(targetEnv.DATABASE_URL)) {
-  errors.push('DATABASE_URL');
+if (!targetEnv.DATABASE_URL || looksLikePlaceholder(targetEnv.DATABASE_URL) || isLocalDatabaseUrl(targetEnv.DATABASE_URL)) {
+  warnings.push('DATABASE_URL Supabase ausente — schema local será pulado no deploy');
 }
-
-const hasMinioS3 = Boolean(
-  targetEnv.MINIO_S3_ENDPOINT && !looksLikePlaceholder(targetEnv.MINIO_S3_ENDPOINT) && isValidUrl(targetEnv.MINIO_S3_ENDPOINT),
-);
-const hasMinioParts = Boolean(
-  targetEnv.MINIO_ENDPOINT &&
-  targetEnv.MINIO_ACCESS_KEY &&
-  targetEnv.MINIO_SECRET_KEY &&
-  !looksLikePlaceholder(targetEnv.MINIO_ACCESS_KEY),
-);
-if (!hasMinioS3 && !hasMinioParts) {
-  errors.push('MINIO_S3_ENDPOINT válido ou MINIO_ENDPOINT + MINIO_ACCESS_KEY + MINIO_SECRET_KEY');
-}
-
 if (!targetEnv.GEMINI_API_KEY || looksLikePlaceholder(targetEnv.GEMINI_API_KEY)) {
-  errors.push('GEMINI_API_KEY');
+  warnings.push('GEMINI_API_KEY ausente — schema/validação Supabase será pulada');
 }
-
-if (!targetEnv.VITE_AGENT_API_URL || looksLikePlaceholder(targetEnv.VITE_AGENT_API_URL) || !isValidUrl(targetEnv.VITE_AGENT_API_URL)) {
-  errors.push('VITE_AGENT_API_URL válido');
+if (!targetEnv.MINIO_S3_ENDPOINT || looksLikePlaceholder(targetEnv.MINIO_S3_ENDPOINT)) {
+  warnings.push('MINIO_S3_ENDPOINT ausente — PDFs na nuvem não serão validados localmente');
 }
-
-if (errors.length) {
-  console.error('\n[ensure-prod-env] Faltam valores essenciais para produção:');
-  for (const item of errors) console.error('  -', item);
-  console.error('\nPreencha .env.production ou .env antes de rodar o deploy real.');
-  process.exit(1);
+if (!targetEnv.RENDER_DEPLOY_HOOK_URL) {
+  warnings.push('RENDER_DEPLOY_HOOK_URL ausente — backend Render depende do workflow GitHub no push');
 }
 
 if (warnings.length) {
-  console.warn('\n[ensure-prod-env] Avisos de configuração:');
+  console.warn('\n[ensure-prod-env] Avisos (deploy continua via GitHub):');
   for (const item of warnings) console.warn('  -', item);
-  console.warn('\nO deploy pode continuar, mas estes valores devem ser ajustados para produção completa.');
+} else {
+  console.info('[ensure-prod-env] Supabase + credenciais OK para validação local');
 }
 
-console.info('[ensure-prod-env] Validação OK — prosseguindo com deploy');
-process.exit(0);
+console.info('[ensure-prod-env] .env.production pronto — iniciando deploy\n');

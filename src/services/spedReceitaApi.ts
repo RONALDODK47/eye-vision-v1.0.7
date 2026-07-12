@@ -1,4 +1,4 @@
-import { FISCAL_API_BASE, fiscalApiCandidateBases } from './fiscalApiBase';
+import { FISCAL_API_BASE, fiscalApiCandidateBases, pingFiscalHealth } from './fiscalApiBase';
 
 export type SpedReceitaDownloadParams = {
   cnpj: string;
@@ -32,8 +32,7 @@ export type SpedReceitaHealth = {
 };
 
 export async function pingSpedReceitaApi(): Promise<boolean> {
-  const h = await fetchSpedReceitaHealth();
-  return h.online;
+  return pingFiscalHealth('/sped/health');
 }
 
 export async function fetchSpedReceitaHealth(): Promise<SpedReceitaHealth> {
@@ -41,8 +40,9 @@ export async function fetchSpedReceitaHealth(): Promise<SpedReceitaHealth> {
     try {
       const res = await fetch(`${base}/sped/health`, { method: 'GET', cache: 'no-store' });
       if (!res.ok) continue;
-      const data = (await res.json()) as { mode?: string };
-      return { online: true, mode: String(data.mode ?? 'unknown') };
+      const data = (await res.json()) as { mode?: string; ok?: boolean; online?: boolean };
+      const online = data.online !== false && data.ok !== false;
+      return { online, mode: String(data.mode ?? 'unknown') };
     } catch {
       // próximo
     }

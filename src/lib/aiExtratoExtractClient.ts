@@ -130,6 +130,32 @@ export async function previewUrlToBase64(
   }
 }
 
+/** Converte File para base64 (uso interno — não altera a interface visual). */
+export async function fileToBase64Payload(
+  file: File,
+): Promise<{ fileBase64: string; mimeType: string } | null> {
+  try {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+    const fileBase64 = btoa(binary);
+    if (!fileBase64) return null;
+    const mimeType =
+      file.type ||
+      (/\.pdf$/i.test(file.name)
+        ? 'application/pdf'
+        : /\.png$/i.test(file.name)
+          ? 'image/png'
+          : /\.jpe?g$/i.test(file.name)
+            ? 'image/jpeg'
+            : 'application/octet-stream');
+    return { fileBase64, mimeType };
+  } catch {
+    return null;
+  }
+}
+
 export async function extractExtratoWithAi(params: {
   ocrText?: string;
   images?: AiExtractImage[];
@@ -140,6 +166,9 @@ export async function extractExtratoWithAi(params: {
   perPage?: boolean;
   bankHint?: string;
   signal?: AbortSignal;
+  /** PDF/planilha original — motor erp.contabil processa nativamente (melhor precisão). */
+  fileBase64?: string;
+  mimeType?: string;
 }): Promise<AiExtractExtratoResult> {
   try {
     const controller = new AbortController();
@@ -158,6 +187,8 @@ export async function extractExtratoWithAi(params: {
           model: params.model,
           perPage: params.perPage === true,
           bankHint: params.bankHint,
+          fileBase64: params.fileBase64,
+          mimeType: params.mimeType,
         }),
         signal,
       });
@@ -194,6 +225,8 @@ export async function extractPlanoWithAi(params: {
   model?: string;
   perPage?: boolean;
   signal?: AbortSignal;
+  fileBase64?: string;
+  mimeType?: string;
 }): Promise<AiExtractPlanoResult> {
   try {
     const controller = new AbortController();
@@ -210,6 +243,8 @@ export async function extractPlanoWithAi(params: {
           providerId: params.providerId,
           model: params.model,
           perPage: params.perPage === true,
+          fileBase64: params.fileBase64,
+          mimeType: params.mimeType,
         }),
         signal,
       });

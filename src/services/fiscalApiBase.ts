@@ -27,3 +27,20 @@ export function fiscalApiCandidateBases(): string[] {
   }
   return [...new Set(bases.map((b) => b.replace(/\/$/, '')))];
 }
+
+/** Verifica se alguma base fiscal responde no endpoint de health. */
+export async function pingFiscalHealth(path: string): Promise<boolean> {
+  const healthPath = path.startsWith('/') ? path : `/${path}`;
+  for (const base of fiscalApiCandidateBases()) {
+    try {
+      const res = await fetch(`${base}${healthPath}`, { method: 'GET', cache: 'no-store' });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { ok?: boolean; online?: boolean };
+      if (data.online === false || data.ok === false) continue;
+      return true;
+    } catch {
+      // próxima base
+    }
+  }
+  return false;
+}
