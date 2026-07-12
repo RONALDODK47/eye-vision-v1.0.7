@@ -26,7 +26,7 @@ import { fetchAiConfig } from '../ai/aiSettingsClient';
 import { EXTRATO_SCANNER_PURE_AI_BUILD_ID, logExtratoExtractBuild } from './extratoExtractBuild';
 
 const MAX_PAGES_FOR_AI = 12;
-const AI_IMAGE_MAX_LONG_EDGE = 3600;
+const AI_IMAGE_MAX_LONG_EDGE = 1600;
 
 function formatAiExtractError(result: AiExtractExtratoResult): string {
   if (result.detail?.trim()) return result.detail;
