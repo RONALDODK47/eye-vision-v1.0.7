@@ -125,8 +125,8 @@ export default function BalanceteTabPanel({
 
   return (
     <div className="space-y-6">
-      <div className="p-4 bg-brand-sidebar/35 border border-brand-border text-xs flex justify-between items-center">
-        <div>
+      <div className="p-4 bg-brand-sidebar/35 border border-brand-border text-xs flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 min-w-0">
+        <div className="min-w-0">
           <span className="font-bold">Balancete</span>
           <p className="opacity-60 text-[9px]">
             De/Até é só a janela do filtro. As colunas do comparativo ignoram meses/anos sem
@@ -134,7 +134,7 @@ export default function BalanceteTabPanel({
             aparece só a coluna 06/2026.
           </p>
         </div>
-        <div className="text-[10px] bg-red-800 text-white font-mono px-2 py-0.5 animate-pulse rounded-none border border-red-950">
+        <div className="text-[10px] bg-red-800 text-white font-mono px-2 py-0.5 animate-pulse rounded-none border border-red-950 shrink-0 self-start sm:self-center">
           REGRA REVERSA: Naturezas invertidas em vermelho forte
         </div>
       </div>
@@ -142,7 +142,7 @@ export default function BalanceteTabPanel({
       {(temRazao || temPlano) && (
         <div
           className={cn(
-            'technical-panel p-4 space-y-3',
+            'technical-panel p-4 space-y-3 min-w-0',
             !periodoConfirmado && 'border-amber-600/50 bg-amber-50/30',
           )}
         >
@@ -200,7 +200,9 @@ export default function BalanceteTabPanel({
               </button>
             )}
           </div>
-          {periodoConfirmado && periodToolbar}
+          {periodoConfirmado && (
+            <div className="w-full min-w-0">{periodToolbar}</div>
+          )}
           {periodoRazao.min && periodoRazao.max ? (
             <p className="text-[9px] font-mono text-slate-600">
               Lançamentos no razão: <strong>{periodoRazao.min}</strong> a{' '}

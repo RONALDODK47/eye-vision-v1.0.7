@@ -118,11 +118,22 @@ export function readPackageVersion() {
   }
 }
 
+/** Nome do repositório para URL do GitHub Pages (owner/repo → repo). */
+export function githubPagesRepoSlug(repoRef = process.env.DEPLOY_GITHUB_REPO || 'eye-vision-v1.0.7') {
+  const raw = String(repoRef ?? '').trim().replace(/\.git$/i, '');
+  if (!raw) return 'eye-vision-v1.0.7';
+  if (raw.includes('/')) {
+    const parts = raw.split('/').filter(Boolean);
+    return parts[parts.length - 1] || 'eye-vision-v1.0.7';
+  }
+  return raw;
+}
+
 export function defaultFrontendUrl() {
   const version = readPackageVersion();
-  const base = String(process.env.DEPLOY_GITHUB_REPO || 'eye-vision-v1.0.7').trim();
-  if (version) return `https://ronaldodk47.github.io/${base}/v${version}/`;
-  return `https://ronaldodk47.github.io/${base}/`;
+  const slug = githubPagesRepoSlug();
+  if (version) return `https://ronaldodk47.github.io/${slug}/v${version}/`;
+  return `https://ronaldodk47.github.io/${slug}/`;
 }
 
 export function defaultApiUrl() {

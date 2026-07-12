@@ -870,8 +870,8 @@ function ComparativoMensalInner({
 
   const periodToolbarNode = useMemo(
     () => (
-      <div className="flex flex-wrap items-end gap-3 w-full pt-3 border-t border-brand-border/30">
-        <div className="flex-1 min-w-[160px]">
+      <div className="flex flex-col gap-3 w-full min-w-0 pt-3 border-t border-brand-border/30">
+        <div className="w-full min-w-0 max-w-md">
           <label className="text-[9px] font-bold uppercase mb-1 block opacity-60">Filtrar</label>
           <input
             type="text"
@@ -881,12 +881,12 @@ function ComparativoMensalInner({
             className="w-full border border-brand-border bg-brand-bg px-3 py-2 text-xs font-mono"
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-stretch sm:items-center gap-2 w-full min-w-0">
           <button
             type="button"
             disabled={processandoGarantida || calculando}
             onClick={() => setConfigContasOpen(true)}
-            className={`technical-button-secondary px-4 py-2 text-[10px] font-black uppercase ${
+            className={`technical-button-secondary px-3 sm:px-4 py-2 text-[10px] font-black uppercase text-center whitespace-normal sm:whitespace-nowrap ${
               qtdContasConfig > 0 ? 'border-violet-700 text-violet-800' : ''
             }`}
             title="Configuração de automação"
@@ -902,7 +902,7 @@ function ComparativoMensalInner({
             type="button"
             disabled={!podeExportarPdf}
             onClick={() => exportarPdfBalanceteRef.current()}
-            className="technical-button-primary px-5 py-2 text-[10px] font-black uppercase disabled:opacity-40"
+            className="technical-button-primary px-3 sm:px-5 py-2 text-[10px] font-black uppercase whitespace-nowrap disabled:opacity-40"
             title="PDF do comparativo mensal, auditoria RF/CPC e contas invertidas (*)"
           >
             Exportar PDF
@@ -911,7 +911,7 @@ function ComparativoMensalInner({
             type="button"
             disabled={!razaoRows.length || calculando}
             onClick={() => exportarPdfInvertidasRef.current()}
-            className="technical-button-secondary px-4 py-2 text-[10px] font-black uppercase disabled:opacity-40"
+            className="technical-button-secondary px-3 sm:px-4 py-2 text-[10px] font-black uppercase whitespace-nowrap disabled:opacity-40"
             title="PDF só com contas de natureza invertida, mês a mês"
           >
             PDF Invertidas
@@ -920,7 +920,7 @@ function ComparativoMensalInner({
             type="button"
             disabled={processandoGarantida || calculando || (!todasLinhasBanco.length && !temRelatorios)}
             onClick={() => handleAutomatizarRef.current()}
-            className="technical-button-secondary px-5 py-2 text-[10px] font-black uppercase disabled:opacity-40"
+            className="technical-button-secondary px-3 sm:px-5 py-2 text-[10px] font-black uppercase whitespace-nowrap disabled:opacity-40"
             title="Conferência folha/fiscal e ciclo banco/garantida"
           >
             {processandoGarantida ? progressoAutomacao || 'Automatizando…' : 'Automatizar'}
@@ -932,7 +932,7 @@ function ComparativoMensalInner({
               const r = resultadoCicloRef.current;
               if (r) baixarRelatorioPdfRef.current(r);
             }}
-            className={`technical-button-secondary px-4 py-2 text-[10px] font-black uppercase ${
+            className={`technical-button-secondary px-3 sm:px-4 py-2 text-[10px] font-black uppercase whitespace-nowrap ${
               automacaoConcluida && resultadoCicloRef.current
                 ? 'border-green-700 text-green-800'
                 : 'opacity-40'
@@ -1059,8 +1059,8 @@ function ComparativoMensalInner({
           <strong className="text-cyan-300">Modo comparativo</strong> · {periodoDe} a {periodoAte} ·{' '}
           {periodosSelecionados.length} mês(es)
         </p>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[140px]">
+        <div className="flex flex-col gap-3 min-w-0">
+          <div className="w-full min-w-0 max-w-md">
             <label className="text-[10px] font-bold uppercase mb-1 block opacity-60">Filtrar conta</label>
             <input
               type="text"
@@ -1070,7 +1070,7 @@ function ComparativoMensalInner({
               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-white text-xs"
             />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-stretch sm:items-center gap-2 w-full min-w-0">
             <button
               type="button"
               disabled={processandoGarantida || calculando}
