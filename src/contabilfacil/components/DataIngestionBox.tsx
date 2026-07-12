@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, Suspense, lazy } from 'react';
-import { Download, Calendar, FileText, Upload, RefreshCw, CheckCircle, AlertCircle, HelpCircle, Loader2, Landmark, FileSpreadsheet, File } from 'lucide-react';
+import { Download, Calendar, FileText, Upload, RefreshCw, CheckCircle, AlertCircle, HelpCircle, Loader2, Landmark, FileSpreadsheet, File, ScanLine } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { notifyImportIssue, notifyValidationIssue, notifyAiInsight } from '../../lib/aiProactiveNotify';
 import { runExtratoGeminiAudit } from '../../lib/extratoGeminiAudit';
@@ -334,6 +334,8 @@ export default function DataIngestionBox({
   /** PDF Sistema Domínio: plano de contas ou razão contábil (texto nativo). */
   const [dominioPdfKind, setDominioPdfKind] = useState<'plano' | 'balancete' | null>(null);
   const dominioPdfTargetRef = useRef<'plano' | 'balancete' | null>(null);
+  /** Extrato: escolha explícita do botão (texto nativo vs scanner/IA). */
+  const extratoImportModeRef = useRef<ExtratoDocumentKind | null>(null);
   /** Extrato: native_text → recorte; scanned_or_image → extração IA. */
   const [extratoDocumentKind, setExtratoDocumentKind] = useState<ExtratoDocumentKind | null>(null);
   const [pendingOfxFile, setPendingOfxFile] = useState<File | null>(null);
@@ -607,6 +609,21 @@ export default function DataIngestionBox({
 
   const handlePdfUpload = () => {
     setDominioPdfKind(null);
+    extratoImportModeRef.current = null;
+    fileInputRefPdf.current?.click();
+  };
+
+  const handleExtratoTextoUpload = () => {
+    setDominioPdfKind(null);
+    extratoImportModeRef.current = 'native_text';
+    setExtratoDocumentKind('native_text');
+    fileInputRefPdf.current?.click();
+  };
+
+  const handleExtratoScannerUpload = () => {
+    setDominioPdfKind(null);
+    extratoImportModeRef.current = 'scanned_or_image';
+    setExtratoDocumentKind('scanned_or_image');
     fileInputRefPdf.current?.click();
   };
 
@@ -1026,7 +1043,18 @@ export default function DataIngestionBox({
     try {
       if (pdfOnly) {
         if (effectiveFormat === 'pdf' || isImageOrPdf(file)) {
-          setLoadingStep('Abrindo documento para recorte...');
+          if (dataType === 'extrato') {
+            const presetKind = extratoImportModeRef.current ?? 'native_text';
+            extratoImportModeRef.current = null;
+            setExtratoDocumentKind(presetKind);
+            setLoadingStep(
+              presetKind === 'scanned_or_image'
+                ? 'Abrindo extração com IA (scanner/imagem)…'
+                : 'Abrindo extrato com texto…',
+            );
+          } else {
+            setLoadingStep('Abrindo documento para recorte...');
+          }
           setLoading(false);
           setPendingOcrFile(file);
           return;
@@ -1064,6 +1092,19 @@ export default function DataIngestionBox({
 
       if (effectiveFormat === 'pdf' || isImageOrPdf(file)) {
         if (dataType === 'extrato') {
+          const presetKind = extratoImportModeRef.current;
+          extratoImportModeRef.current = null;
+          if (presetKind) {
+            setExtratoDocumentKind(presetKind);
+            setLoadingStep(
+              presetKind === 'scanned_or_image'
+                ? 'Abrindo extração com IA (scanner/imagem)…'
+                : 'Abrindo extrato com texto…',
+            );
+            setPendingOcrFile(file);
+            setLoading(false);
+            return;
+          }
           setLoadingStep('Identificando tipo do documento (texto nativo ou scanner)…');
           setLoading(true);
           try {
@@ -1549,12 +1590,36 @@ export default function DataIngestionBox({
           </button>
         )}
 
+        {dataType === 'extrato' ? (
+          <>
+            <button
+              type="button"
+              onClick={handleExtratoTextoUpload}
+              className="w-full flex items-center justify-between px-4 py-3 bg-brand-bg border border-brand-border hover:bg-brand-border hover:text-brand-bg transition-all text-[10px] font-bold uppercase tracking-widest"
+              title="PDF com texto nativo — leitor e recortador por colunas"
+              data-testid="ingest-extrato-texto-btn"
+            >
+              <span>Importar Extrato com Texto</span>
+              <FileText size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={handleExtratoScannerUpload}
+              className="w-full flex items-center justify-between px-4 py-3 bg-brand-bg border border-brand-border hover:bg-brand-border hover:text-brand-bg transition-all text-[10px] font-bold uppercase tracking-widest"
+              title="Imagem, PDF escaneado ou foto — extração com IA (OCR scanner)"
+              data-testid="ingest-extrato-scanner-btn"
+            >
+              <span>Importar Imagem e Scanner IA</span>
+              <ScanLine size={14} />
+            </button>
+          </>
+        ) : (
         <button 
           onClick={handlePdfUpload}
           className="w-full flex items-center justify-between px-4 py-3 bg-brand-bg border border-brand-border hover:bg-brand-border hover:text-brand-bg transition-all text-[10px] font-bold uppercase tracking-widest"
         >
           <span>
-            {pdfOnly || dataType === 'extrato'
+            {pdfOnly
               ? 'Importar PDF / Imagem (Recorte)'
               : dataType === 'plano'
                 ? 'Digitalizar imagem / PDF escaneado (OCR)'
@@ -1564,6 +1629,7 @@ export default function DataIngestionBox({
           </span>
           <Calendar size={14} />
         </button>
+        )}
 
         {!pdfOnly && (
         <button 
