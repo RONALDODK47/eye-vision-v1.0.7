@@ -651,32 +651,46 @@ async function extractWithGemini({ model, ocrText, images, statementYear, fileNa
   }
 
   const bankHint = bankHintIn ?? detectBankHint(fileName, ocrText);
-  const systemInstruction = buildExtratoAiExtractSystem(bankHint);
-  const userParts = buildExtractUserParts({ statementYear, fileName, ocrText, bankHint });
+  
+  const systemInstruction = "Você é um auditor financeiro com OCR de extrema precisão. Sua prioridade absoluta é extrair TODAS as transações financeiras do documento de forma 100% exaustiva e completa. NUNCA resuma, NUNCA use reticências, NUNCA pule páginas, e NUNCA agrupe lançamentos semelhantes. Se houver 80 transações, você DEVE retornar as 80 transações. Seja meticuloso e leia linha por linha de cada página, do cabeçalho ao rodapé, incluindo todas as anotações escritas à mão próximas aos lançamentos, mantendo também todos os lançamentos normais sem anotações.";
+
+  const userParts = `Você é um leitor de faturas e extratos bancários com OCR de altíssima precisão e especialista em auditoria financeira exaustiva. Analise o documento em anexo (pode ser um extrato de conta, fatura de cartão de crédito, comprovante escaneado ou foto de recibo) e extraia absolutamente todas as transações financeiras.
+
+DIRETRIZES DE EXTRAÇÃO CRÍTICAS E EXAUSTIVAS:
+1. Realize o OCR completo, minucioso e exaustivo de todas as tabelas de transações visíveis no documento. Capture absolutamente TODAS as linhas de transação visíveis, sem resumir e sem omitir nada. Não use reticências, não resuma e não agrupe transações.
+2. Cada linha de transação original do documento deve corresponder exatamente a um item no array de transações retornado.
+3. Formate as datas como YYYY-MM-DD. Se apenas o dia/mês estiver disponível (ex: "15/07"), assuma o ano atual baseado no contexto (ou ${statementYear} caso não seja identificável).
+4. Limpe as descrições mantendo apenas o nome legível do estabelecimento ou transação.
+5. O valor ('amount') deve ser um número float. Débitos devem ser representados como valores NEGATIVOS. Créditos como valores POSITIVOS.
+6. Atribua uma categoria financeira inteligente em português (ex: Alimentação, Transporte, Lazer, Saúde, Salário, Serviços, Impostos, etc.) para cada registro.
+7. Identifique a moeda predominante (geralmente BRL para documentos brasileiros).
+8. ANOTAÇÕES MANUAIS E CANETA: O documento contém importantes anotações feitas à mão com caneta ou lápis ao lado das transações (por exemplo: "Aluguel", "Advogado", "Secretaria", "Zelador", "faxina", "Contabilidade", "Psicologo", "Almoco", "Combustivel", "arraiá").
+   - Você DEVE identificar essas anotações escritas à mão próximas às transações e incorporá-las de forma limpa na descrição (ex: "RECEBIMENTO PIX Kayke Bruno Carneiro (Aluguel)" ou "PAGAMENTO PIX BRUNO OLIVEIRA REGO (Advogado)").
+   - Use as anotações para definir a categoria da transação da forma mais precisa possível.
+   - REGRA DE EXCLUSÃO CRÍTICA: Se uma transação NÃO tiver anotação feita à mão, você DEVE extraí-la normalmente do mesmo jeito! A ausência de anotações escritas à mão NÃO significa que o lançamento deva ser ignorado. O array final deve conter 100% de todos os lançamentos do documento, com ou sem anotações.`;
 
   const responseSchema = {
     type: 'OBJECT',
     properties: {
-      rows: {
+      transactions: {
         type: 'ARRAY',
-        description: 'Lista completa de lançamentos operacionais de forma exaustiva.',
+        description: 'Lista completa e exaustiva de TODAS as transações financeiras extraídas e estruturadas.',
         items: {
           type: 'OBJECT',
           properties: {
-            data: { type: 'STRING', description: 'Data (DD/MM/AAAA ou DD/MM)' },
-            descricao: { type: 'STRING', description: 'Histórico/descrição limpa do lançamento' },
-            valorCredito: { type: 'STRING', description: 'Valor de crédito/entrada (ex: 123,45 ou vazio)' },
-            valorDebito: { type: 'STRING', description: 'Valor de débito/saída (ex: 123,45 ou vazio)' },
-            valorMisto: { type: 'STRING', description: 'Valor em coluna única com sufixo C/D ou sinal' },
-            _linhaOcr: { type: 'STRING', description: 'Texto bruto original correspondente' },
+            date: { type: 'STRING', description: 'Data da transação no formato YYYY-MM-DD' },
+            description: { type: 'STRING', description: 'Descrição limpa do lançamento' },
+            amount: { type: 'NUMBER', description: 'Valor numérico (positivo para entradas, negativo para saídas)' },
+            type: { type: 'STRING', description: 'Tipo de transação bancária', enum: ['DEBIT', 'CREDIT'] },
+            category: { type: 'STRING', description: 'Categoria financeira em português' }
           },
-          required: ['data', 'descricao'],
-        },
+          required: ['date', 'description', 'amount', 'type', 'category']
+        }
       },
-      saldoAnterior: { type: 'NUMBER', description: 'Saldo anterior do período' },
-      saldoFinal: { type: 'NUMBER', description: 'Saldo final do período' },
+      currency: { type: 'STRING', description: 'Moeda detectada (ex: BRL, USD, EUR)' },
+      summary: { type: 'STRING', description: 'Um resumo descritivo curto do documento processado' }
     },
-    required: ['rows'],
+    required: ['transactions', 'currency', 'summary']
   };
 
   const out = await callGeminiExtract({
@@ -704,10 +718,46 @@ async function extractWithGemini({ model, ocrText, images, statementYear, fileNa
     };
   }
 
-  const rows = normalizeAiRows(parsed?.rows ?? parsed?.lancamentos ?? (Array.isArray(parsed) ? parsed : []), {
+  let rawRows = parsed?.rows ?? parsed?.lancamentos ?? (Array.isArray(parsed) ? parsed : []);
+  if (Array.isArray(parsed?.transactions)) {
+    rawRows = parsed.transactions.map(t => {
+      let dateStr = '';
+      if (t.date) {
+        const parts = t.date.split('-');
+        if (parts.length === 3) {
+          dateStr = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        } else {
+          dateStr = t.date;
+        }
+      }
+      
+      let valorCredito = '';
+      let valorDebito = '';
+      const absVal = Math.abs(t.amount || 0);
+      const formattedVal = absVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      
+      if (t.type === 'CREDIT' || (t.type !== 'DEBIT' && (t.amount || 0) >= 0)) {
+        valorCredito = formattedVal;
+      } else {
+        valorDebito = formattedVal;
+      }
+
+      return {
+        data: dateStr,
+        descricao: t.description,
+        valorCredito,
+        valorDebito,
+        valorMisto: '',
+        _linhaOcr: `${t.date || ''} ${t.description || ''} ${t.amount || ''}`.trim()
+      };
+    });
+  }
+
+  const rows = normalizeAiRows(rawRows, {
     statementYear,
     bankHint,
   });
+  
   const { saldoAnterior, saldoFinal } = parseAiSaldoFields(parsed);
 
   const finalized = await finalizeAiExtratoResult({
