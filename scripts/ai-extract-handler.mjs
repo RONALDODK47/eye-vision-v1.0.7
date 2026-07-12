@@ -150,14 +150,27 @@ async function extractPlanoWithGeminiPerPage({ model, ocrText, images, fileName 
   let mergedRows = [];
   let lastModel = model;
 
-  for (let i = 0; i < pages.length; i++) {
-    const pageLabel = `${fileName || 'plano'} — pág. ${i + 1}/${pages.length}`;
-    const pageResult = await extractPlanoWithGemini({
-      model,
-      ocrText: '',
-      images: [pages[i]],
-      fileName: pageLabel,
+  const concurrency = 4;
+  const results = [];
+
+  for (let i = 0; i < pages.length; i += concurrency) {
+    const batch = pages.slice(i, i + concurrency);
+    const batchPromises = batch.map((page, index) => {
+      const pageIndex = i + index;
+      const pageLabel = `${fileName || 'plano'} — pág. ${pageIndex + 1}/${pages.length}`;
+      return extractPlanoWithGemini({
+        model,
+        ocrText: '',
+        images: [page],
+        fileName: pageLabel,
+      });
     });
+
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+  }
+
+  for (const pageResult of results) {
     if (!pageResult.ok) continue;
     lastModel = pageResult.model ?? model;
     if (pageResult.rows?.length) {
@@ -603,17 +616,30 @@ async function extractWithGeminiPerPage({ model, ocrText, images, statementYear,
     .map((s) => s.trim())
     .filter(Boolean);
 
-  for (let i = 0; i < pages.length; i++) {
-    const pageLabel = `${fileName || 'extrato'} — pág. ${i + 1}/${pages.length}`;
-    const pageOcr = ocrChunks[i] ?? (pages.length === 1 ? ocrText : '');
-    const pageResult = await extractWithGemini({
-      model,
-      ocrText: pageOcr,
-      images: [pages[i]],
-      statementYear,
-      fileName: pageLabel,
-      bankHint,
+  const concurrency = 4;
+  const results = [];
+
+  for (let i = 0; i < pages.length; i += concurrency) {
+    const batch = pages.slice(i, i + concurrency);
+    const batchPromises = batch.map((page, index) => {
+      const pageIndex = i + index;
+      const pageLabel = `${fileName || 'extrato'} — pág. ${pageIndex + 1}/${pages.length}`;
+      const pageOcr = ocrChunks[pageIndex] ?? (pages.length === 1 ? ocrText : '');
+      return extractWithGemini({
+        model,
+        ocrText: pageOcr,
+        images: [page],
+        statementYear,
+        fileName: pageLabel,
+        bankHint,
+      });
     });
+
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+  }
+
+  for (const pageResult of results) {
     if (!pageResult.ok) continue;
     lastModel = pageResult.model ?? model;
     if (pageResult.rows?.length) {
