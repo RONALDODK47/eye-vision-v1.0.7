@@ -207,7 +207,7 @@ export default function AiScannerPreviewPanel({
   /* ── Render ─────────────────────────────────────────────────────────── */
 
   return (
-    <div className="flex flex-col gap-6 w-full">
+    <div className="flex flex-col gap-6 w-full text-brand-text">
 
       {/* ZONA DE UPLOAD */}
       <div className="w-full">
@@ -217,35 +217,34 @@ export default function AiScannerPreviewPanel({
           onDrop={handleDrop}
           onClick={isProcessing ? undefined : () => fileInputRef.current?.click()}
           className={[
-            'relative flex flex-col items-center justify-center border-4 p-10 h-[260px]',
-            'transition-all duration-200 cursor-pointer text-center select-none',
-            isProcessing ? 'bg-zinc-900/40 border-zinc-700 cursor-not-allowed'
-              : isDragOver ? 'bg-emerald-950/30 border-emerald-500 scale-[1.01]'
-              : 'bg-zinc-900 border-zinc-700 hover:border-emerald-500',
+            'relative flex flex-col items-center justify-center border border-brand-border p-10 h-[240px]',
+            'transition-all duration-200 cursor-pointer text-center select-none bg-white',
+            isProcessing ? 'opacity-60 cursor-not-allowed'
+              : isDragOver ? 'bg-brand-sidebar scale-[1.01]'
+              : 'hover:bg-brand-sidebar/40',
           ].join(' ')}
         >
-          <div className="absolute inset-0 border border-white/5 m-2 pointer-events-none" />
           <input ref={fileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" className="hidden" onChange={handleFileChange} disabled={isProcessing} />
 
           {isProcessing ? (
             <div className="flex flex-col items-center gap-4 z-10">
-              <div className="relative"><Loader2 className="w-12 h-12 text-emerald-400 animate-spin" /><Sparkles className="w-5 h-5 text-emerald-400 absolute inset-0 m-auto animate-pulse" /></div>
+              <div className="relative"><Loader2 className="w-12 h-12 text-brand-text animate-spin" /><Sparkles className="w-5 h-5 text-brand-text absolute inset-0 m-auto animate-pulse" /></div>
               <div className="text-center">
-                <h3 className="text-lg font-black text-white uppercase">Processando Documento</h3>
-                <p className="text-xs font-mono uppercase tracking-widest text-emerald-400 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 inline-block mt-1">{processingStep || 'Aguarde…'}</p>
+                <h3 className="text-lg font-black text-brand-text uppercase">Processando Documento</h3>
+                <p className="text-xs font-mono uppercase tracking-widest text-brand-text px-3 py-1 bg-brand-sidebar border border-brand-border inline-block mt-1">{processingStep || 'Aguarde…'}</p>
               </div>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-4 z-10">
               <div className="flex gap-4 text-zinc-500"><FileImage className="w-9 h-9" /><FileText className="w-9 h-9" /></div>
               <div>
-                <p className="text-3xl font-black tracking-tighter text-white uppercase">{hasExtracted ? 'Enviar Novo Arquivo' : 'Arraste o Extrato Aqui'}</p>
-                <p className="text-zinc-400 text-xs font-bold tracking-[0.2em] uppercase mt-1">PDF Escaneado / PNG / JPG / FOTO</p>
+                <p className="text-3xl font-black tracking-tighter text-brand-text uppercase">{hasExtracted ? 'Enviar Novo Arquivo' : 'Arraste o Extrato Aqui'}</p>
+                <p className="text-zinc-500 text-xs font-bold tracking-[0.2em] uppercase mt-1">PDF Escaneado / PNG / JPG / FOTO</p>
               </div>
-              <button type="button" onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }} className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-widest transition-colors">
+              <button type="button" onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }} className="technical-button-primary">
                 Buscar Arquivo
               </button>
-              <div className="flex items-center gap-6 pt-3 border-t border-zinc-800 w-full max-w-md text-zinc-500 text-[10px] font-mono tracking-wider uppercase">
+              <div className="flex items-center gap-6 pt-3 border-t border-brand-border/20 w-full max-w-md text-zinc-500 text-[10px] font-mono tracking-wider uppercase">
                 <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-rose-500" /><span>PDF Bancário</span></div>
                 <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-sky-500" /><span>Foto / Scanner</span></div>
               </div>
@@ -254,17 +253,17 @@ export default function AiScannerPreviewPanel({
         </div>
 
         {error && (
-          <div className="mt-3 p-4 bg-rose-950/40 border-l-4 border-rose-500 text-rose-200 flex items-start gap-3 text-xs font-mono">
-            <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-            <div><span className="font-bold uppercase tracking-wider text-rose-400 block mb-1">Falha no processamento:</span><p>{error}</p></div>
+          <div className="mt-3 p-4 bg-red-50 border border-red-400 text-red-900 flex items-start gap-3 text-xs font-mono">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <div><span className="font-bold uppercase tracking-wider text-red-700 block mb-1">Falha no processamento:</span><p>{error}</p></div>
           </div>
         )}
 
-        <div className="mt-4 bg-zinc-900 border-l-4 border-zinc-600 p-4 text-xs text-zinc-400 flex gap-3">
-          <HelpCircle className="w-5 h-5 text-zinc-500 shrink-0 mt-0.5" />
+        <div className="mt-4 bg-brand-sidebar/30 border border-brand-border p-4 text-xs text-brand-text/80 flex gap-3">
+          <HelpCircle className="w-5 h-5 text-brand-text/60 shrink-0 mt-0.5" />
           <div>
-            <p className="font-black text-white uppercase tracking-wider text-xs mb-1">Como funciona a extração IA</p>
-            <p className="text-zinc-400 font-mono text-[11px] leading-relaxed">O motor Gemini Vision lê o documento linha a linha, extrai todas as datas, descrições e valores — incluindo anotações manuais feitas à caneta — e monta a tabela abaixo para revisão antes da conciliação.</p>
+            <p className="font-black text-brand-text uppercase tracking-wider text-xs mb-1">Como funciona a extração IA</p>
+            <p className="text-zinc-650 font-mono text-[11px] leading-relaxed">O motor Gemini Vision lê o documento linha a linha, extrai todas as datas, descrições e valores — incluindo anotações manuais feitas à caneta — e monta a tabela abaixo para revisão antes da conciliação.</p>
           </div>
         </div>
       </div>
@@ -274,66 +273,66 @@ export default function AiScannerPreviewPanel({
         <div className="space-y-5">
 
           {/* Título */}
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+          <div className="flex items-center justify-between border-b border-brand-border pb-3">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-              <h2 className="font-black text-white text-sm uppercase tracking-wider">Revise os Lançamentos Antes de Confirmar</h2>
+              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              <h2 className="font-black text-brand-text text-sm uppercase tracking-wider">Revise os Lançamentos Antes de Confirmar</h2>
             </div>
-            <span className="text-xs font-mono text-zinc-500 bg-zinc-800 px-2 py-1">{transactions.length} lançamentos</span>
+            <span className="text-xs font-mono text-brand-text/60 bg-brand-sidebar px-2 py-1">{transactions.length} lançamentos</span>
           </div>
 
           {/* Cards de resumo */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-zinc-900 border-t-4 border-emerald-500 p-4 flex items-center gap-3">
-              <div className="bg-emerald-500/10 p-2 text-emerald-400"><TrendingUp className="w-5 h-5" /></div>
-              <div><span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Entradas</span><span className="text-xl font-black text-emerald-400">{formatCurrency(incomes)}</span></div>
+            <div className="bg-white border border-brand-border border-t-4 border-t-emerald-500 p-4 flex items-center gap-3">
+              <div className="bg-emerald-500/10 p-2 text-emerald-600"><TrendingUp className="w-5 h-5" /></div>
+              <div><span className="text-[10px] uppercase font-bold text-zinc-550 tracking-wider block">Entradas</span><span className="text-xl font-black text-emerald-600">{formatCurrency(incomes)}</span></div>
             </div>
-            <div className="bg-zinc-900 border-t-4 border-rose-500 p-4 flex items-center gap-3">
-              <div className="bg-rose-500/10 p-2 text-rose-400"><TrendingDown className="w-5 h-5" /></div>
-              <div><span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Saídas</span><span className="text-xl font-black text-rose-400">{formatCurrency(Math.abs(expenses))}</span></div>
+            <div className="bg-white border border-brand-border border-t-4 border-t-rose-500 p-4 flex items-center gap-3">
+              <div className="bg-rose-500/10 p-2 text-rose-600"><TrendingDown className="w-5 h-5" /></div>
+              <div><span className="text-[10px] uppercase font-bold text-zinc-550 tracking-wider block">Saídas</span><span className="text-xl font-black text-rose-600">{formatCurrency(Math.abs(expenses))}</span></div>
             </div>
-            <div className="bg-zinc-900 border-t-4 border-zinc-600 p-4 flex items-center gap-3">
-              <div className="bg-zinc-600/10 p-2 text-zinc-400"><History className="w-5 h-5" /></div>
+            <div className="bg-white border border-brand-border border-t-4 border-t-zinc-500 p-4 flex items-center gap-3">
+              <div className="bg-zinc-500/10 p-2 text-zinc-600"><History className="w-5 h-5" /></div>
               <div className="flex-1 min-w-0">
-                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Saldo Anterior</span>
+                <span className="text-[10px] uppercase font-bold text-zinc-550 tracking-wider block">Saldo Anterior</span>
                 <div className="flex items-center gap-1 mt-0.5">
                   <span className="text-xs font-mono text-zinc-500">R$</span>
                   <input type="number" step="0.01" value={saldoAnterior || ''} onChange={e => setSaldoAnterior(parseFloat(e.target.value) || 0)} placeholder="0,00"
-                    className="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-emerald-500 text-white font-mono font-black text-base px-2 py-0.5 outline-none" />
+                    className="w-full bg-brand-bg/20 border border-brand-border focus:border-brand-border text-brand-text font-mono font-black text-base px-2 py-0.5 outline-none" />
                 </div>
               </div>
             </div>
-            <div className="bg-zinc-900 border-t-4 border-white p-4 flex items-center gap-3">
-              <div className="bg-white/10 p-2 text-white"><DollarSign className="w-5 h-5" /></div>
+            <div className="bg-white border border-brand-border border-t-4 border-t-brand-border p-4 flex items-center gap-3">
+              <div className="bg-brand-sidebar p-2 text-brand-text"><DollarSign className="w-5 h-5" /></div>
               <div>
-                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Saldo Final</span>
-                <span className={`text-xl font-black ${saldoFinal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(saldoFinal)}</span>
+                <span className="text-[10px] uppercase font-bold text-zinc-550 tracking-wider block">Saldo Final</span>
+                <span className={`text-xl font-black ${saldoFinal >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(saldoFinal)}</span>
               </div>
             </div>
           </div>
 
           {/* Barra controle */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-zinc-900 border border-zinc-800 p-4">
-            <div className="flex items-center gap-2"><Grid className="w-5 h-5 text-emerald-400" /><h3 className="font-black text-white text-sm uppercase tracking-wider">Tabela de Lançamentos ({transactions.length})</h3></div>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-brand-sidebar border border-brand-border p-4">
+            <div className="flex items-center gap-2"><Grid className="w-5 h-5 text-brand-text" /><h3 className="font-black text-brand-text text-sm uppercase tracking-wider">Tabela de Lançamentos ({transactions.length})</h3></div>
             <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
               {selectedIds.length > 0 && (
-                <button onClick={handleDeleteSelected} className="flex items-center gap-1.5 px-4 py-2 border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-400 text-xs font-black uppercase tracking-widest transition-colors">
+                <button onClick={handleDeleteSelected} className="flex items-center gap-1.5 px-4 py-2 border border-rose-500 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-black uppercase tracking-widest transition-colors">
                   <Trash2 className="w-4 h-4" /><span>Excluir ({selectedIds.length})</span>
                 </button>
               )}
-              <button onClick={handleAddRow} className="flex items-center gap-1.5 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs font-black uppercase tracking-widest transition-colors">
+              <button onClick={handleAddRow} className="technical-button bg-white">
                 <Plus className="w-4 h-4" /><span>Adicionar Linha</span>
               </button>
             </div>
           </div>
 
           {/* Tabela */}
-          <div className="bg-zinc-900 border-4 border-zinc-800 overflow-hidden">
+          <div className="bg-white border border-brand-border overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-zinc-950 border-b border-zinc-800 text-zinc-400 text-[10px] font-black uppercase tracking-wider">
-                    <th className="py-3 px-3 w-10 text-center"><input type="checkbox" checked={transactions.length > 0 && selectedIds.length === transactions.length} onChange={toggleSelectAll} className="accent-emerald-500" /></th>
+                  <tr className="bg-brand-sidebar border-b border-brand-border text-brand-text text-[10px] font-black uppercase tracking-wider">
+                    <th className="py-3 px-3 w-10 text-center"><input type="checkbox" checked={transactions.length > 0 && selectedIds.length === transactions.length} onChange={toggleSelectAll} className="accent-brand-border" /></th>
                     <th className="py-3 px-3 w-36">Data</th>
                     <th className="py-3 px-3 min-w-[200px]">Descrição / Histórico</th>
                     <th className="py-3 px-3 w-28">Tipo</th>
@@ -342,44 +341,44 @@ export default function AiScannerPreviewPanel({
                     <th className="py-3 px-3 w-10 text-center">—</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800 text-sm text-zinc-300">
+                <tbody className="divide-y divide-brand-border/10 text-sm text-brand-text">
                   {transactions.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center py-10 text-zinc-500"><div className="flex flex-col items-center gap-2"><AlertCircle className="w-7 h-7 text-zinc-600 animate-bounce" /><p className="font-mono text-xs">Nenhuma transação extraída.</p></div></td></tr>
+                    <tr><td colSpan={7} className="text-center py-10 text-zinc-500"><div className="flex flex-col items-center gap-2"><AlertCircle className="w-7 h-7 text-zinc-400 animate-bounce" /><p className="font-mono text-xs">Nenhuma transação extraída.</p></div></td></tr>
                   ) : transactions.map(t => {
                     const isDebit = t.type === 'DEBIT';
                     return (
-                      <tr key={t.id} className={`hover:bg-zinc-800/40 transition-colors ${selectedIds.includes(t.id) ? 'bg-zinc-800/70' : ''}`}>
-                        <td className="py-1.5 px-3 text-center"><input type="checkbox" checked={selectedIds.includes(t.id)} onChange={() => toggleSelect(t.id)} className="accent-emerald-500" /></td>
+                      <tr key={t.id} className={`hover:bg-brand-sidebar/20 transition-colors ${selectedIds.includes(t.id) ? 'bg-brand-sidebar/40' : ''}`}>
+                        <td className="py-1.5 px-3 text-center"><input type="checkbox" checked={selectedIds.includes(t.id)} onChange={() => toggleSelect(t.id)} className="accent-brand-border" /></td>
                         <td className="py-1.5 px-2">
                           <input type="date" value={t.date} onChange={e => handleCellChange(t.id, 'date', e.target.value)}
-                            className="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-emerald-500 text-white font-mono text-xs px-2 py-1 outline-none" />
+                            className="w-full bg-brand-bg/10 border border-brand-border/25 hover:border-brand-border focus:border-brand-border text-brand-text font-mono text-xs px-2 py-1 outline-none" />
                         </td>
                         <td className="py-1.5 px-2">
                           <input type="text" value={t.description} onChange={e => handleCellChange(t.id, 'description', e.target.value)}
-                            className="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-emerald-500 text-white text-xs px-2 py-1 outline-none font-medium uppercase tracking-wide" />
+                            className="w-full bg-brand-bg/10 border border-brand-border/25 hover:border-brand-border focus:border-brand-border text-brand-text text-xs px-2 py-1 outline-none font-medium uppercase tracking-wide" />
                         </td>
                         <td className="py-1.5 px-2">
                           <select value={t.type} onChange={e => handleCellChange(t.id, 'type', e.target.value)}
-                            className={`w-full border px-1.5 py-1 text-xs font-black outline-none bg-zinc-950 ${isDebit ? 'text-rose-400 border-rose-900/40 focus:border-rose-500' : 'text-emerald-400 border-emerald-900/40 focus:border-emerald-500'}`}>
+                            className={`w-full border px-1.5 py-1 text-xs font-black outline-none bg-white ${isDebit ? 'text-rose-600 border-rose-900/10 focus:border-rose-500' : 'text-emerald-600 border-emerald-900/10 focus:border-emerald-500'}`}>
                             <option value="DEBIT">DÉBITO</option>
                             <option value="CREDIT">CRÉDITO</option>
                           </select>
                         </td>
                         <td className="py-1.5 px-2">
                           <select value={t.category} onChange={e => handleCellChange(t.id, 'category', e.target.value)}
-                            className="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-emerald-500 text-white text-xs px-1.5 py-1 outline-none">
+                            className="w-full bg-white border border-brand-border/25 hover:border-brand-border focus:border-brand-border text-brand-text text-xs px-1.5 py-1 outline-none">
                             {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                           </select>
                         </td>
                         <td className="py-1.5 px-2 text-right">
                           <div className="relative inline-flex items-center w-full justify-end">
-                            <span className={`text-xs absolute left-2 font-black ${isDebit ? 'text-rose-400' : 'text-emerald-400'}`}>{isDebit ? '−' : '+'}</span>
+                            <span className={`text-xs absolute left-2 font-black ${isDebit ? 'text-rose-600' : 'text-emerald-600'}`}>{isDebit ? '−' : '+'}</span>
                             <input type="number" step="0.01" value={Math.abs(t.amount) || ''} onChange={e => handleCellChange(t.id, 'amount', e.target.value)}
-                              className={`w-28 text-right bg-zinc-950 border pl-5 pr-2 py-1 text-xs font-mono font-black outline-none ${isDebit ? 'text-rose-400 border-rose-900/30 focus:border-rose-500' : 'text-emerald-400 border-emerald-900/30 focus:border-emerald-500'}`} />
+                              className={`w-28 text-right bg-white border pl-5 pr-2 py-1 text-xs font-mono font-black outline-none ${isDebit ? 'text-rose-600 border-rose-900/20 focus:border-rose-500' : 'text-emerald-600 border-emerald-900/20 focus:border-emerald-500'}`} />
                           </div>
                         </td>
                         <td className="py-1.5 px-3 text-center">
-                          <button onClick={() => handleDeleteRow(t.id)} className="text-zinc-500 hover:text-rose-400 p-1 hover:bg-rose-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => handleDeleteRow(t.id)} className="text-zinc-550 hover:text-rose-600 p-1 hover:bg-rose-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
                         </td>
                       </tr>
                     );
@@ -387,23 +386,23 @@ export default function AiScannerPreviewPanel({
                 </tbody>
               </table>
             </div>
-            <div className="bg-zinc-950 border-t border-zinc-800 py-3 px-5 flex flex-col sm:flex-row items-center justify-between text-xs text-zinc-500 gap-2 font-mono">
+            <div className="bg-brand-sidebar border-t border-brand-border py-3 px-5 flex flex-col sm:flex-row items-center justify-between text-xs text-brand-text/70 gap-2 font-mono">
               <span>Edite data, descrição e valor diretamente antes de confirmar para a conciliação.</span>
-              <span className="bg-zinc-900 px-2 py-1 text-zinc-400">ANO BASE: {statementYear}</span>
+              <span className="bg-white border border-brand-border px-2 py-0.5 font-bold">ANO BASE: {statementYear}</span>
             </div>
           </div>
 
           {/* Botões */}
-          <div className="flex items-center justify-between gap-4 pt-2 border-t border-zinc-800">
+          <div className="flex items-center justify-between gap-4 pt-2 border-t border-brand-border">
             {onCancel && (
-              <button onClick={onCancel} className="px-6 py-2.5 border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-black uppercase tracking-widest transition-colors">
+              <button onClick={onCancel} className="technical-button bg-white">
                 Cancelar
               </button>
             )}
             <button
               onClick={() => onConfirm(transactions, saldoAnterior, saldoFinal)}
               disabled={transactions.length === 0}
-              className="flex items-center gap-2 px-8 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-widest transition-colors ml-auto"
+              className="technical-button-primary flex items-center gap-2 ml-auto"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>Confirmar {transactions.length} Lançamentos</span>
@@ -416,3 +415,4 @@ export default function AiScannerPreviewPanel({
     </div>
   );
 }
+

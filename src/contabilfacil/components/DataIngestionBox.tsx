@@ -1961,11 +1961,11 @@ export default function DataIngestionBox({
       ) : null}
 
       {showScannerPreviewPanel && (
-        <div className="fixed inset-0 z-[120] bg-zinc-950 text-white flex flex-col overflow-y-auto">
-          <header className="border-b border-zinc-800 bg-zinc-900 px-6 py-4 flex items-center justify-between shrink-0">
+        <div className="fixed inset-0 z-[120] bg-brand-bg text-brand-text flex flex-col overflow-y-auto">
+          <header className="border-b border-brand-border bg-white px-6 py-4 flex items-center justify-between shrink-0">
             <div>
-              <p className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Scanner e Imagem IA</p>
-              <h2 className="text-sm font-black uppercase text-white">Importador Inteligente</h2>
+              <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Scanner e Imagem IA</p>
+              <h2 className="text-sm font-black uppercase">Importador Inteligente</h2>
             </div>
             <button
               type="button"
@@ -1973,7 +1973,7 @@ export default function DataIngestionBox({
                 setShowScannerPreviewPanel(false);
                 setExtratoDocumentKind(null);
               }}
-              className="px-4 py-2 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-black uppercase tracking-widest transition-colors"
+              className="technical-button px-4 py-2"
             >
               Fechar
             </button>
