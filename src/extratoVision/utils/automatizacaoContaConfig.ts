@@ -25,6 +25,10 @@ export type AutomacaoContaPapelConfig = {
   classificacao?: string;
   codigo?: string;
   nome?: string;
+  /** % sobre faturamento para lançamento automático de custo (papel custos). */
+  porcentagemCusto?: number;
+  /** Conta de faturamento/receita usada como base do cálculo (papel custos). */
+  contaFaturamento?: AutomacaoContaVinculo;
 };
 
 /** Data usada nos lançamentos gerados pela automação. */
@@ -93,7 +97,16 @@ function normalizePapelConfig(raw: AutomacaoContaPapelConfig | undefined): Autom
     out.codigo = leg.codigo;
     out.nome = leg.nome;
   }
-  if (!out.debito && !out.credito && !out.classificacao) return undefined;
+  if (typeof raw.porcentagemCusto === 'number' && Number.isFinite(raw.porcentagemCusto)) {
+    const pct = Math.max(0, Math.min(100, raw.porcentagemCusto));
+    if (pct > 0) out.porcentagemCusto = pct;
+  }
+  if (raw.contaFaturamento && isVinculo(raw.contaFaturamento)) {
+    out.contaFaturamento = raw.contaFaturamento;
+  }
+  if (!out.debito && !out.credito && !out.classificacao && !out.porcentagemCusto && !out.contaFaturamento) {
+    return undefined;
+  }
   return out;
 }
 
@@ -200,6 +213,20 @@ export function saveAutomatizacaoContaConfig(empresa: string, config: AutomacaoC
   writePersistedLocalStorageJson(STORAGE_KEY, all);
 }
 
+/** Salva um único papel (bloco) da configuração sem alterar os demais. */
+export function savePapelAutomatizacaoContaConfig(
+  empresa: string,
+  papel: AutomacaoContaPapel,
+  cfg: AutomacaoContaPapelConfig | undefined,
+): AutomacaoContaConfig {
+  const current = readAutomatizacaoContaConfig(empresa);
+  const next: AutomacaoContaConfig = { ...current };
+  if (cfg) next[papel] = cfg;
+  else delete next[papel];
+  saveAutomatizacaoContaConfig(empresa, next);
+  return next;
+}
+
 /** Blocos exibidos na modal (caixa e despesa usam detecção automática no plano). */
 export const PAPEIS_AUTOMACAO_UI: {
   id: AutomacaoContaPapel;
@@ -255,16 +282,18 @@ export const PAPEIS_AUTOMACAO_UI: {
   {
     id: 'custos',
     titulo: 'Custos',
-    hint: 'Contas de custo / CMV / CPV usadas como contrapartida de ajustes.',
+    hint: 'Contas de custo / CMV / CPV. Opcional: % sobre faturamento para lançar custo automaticamente.',
     debHint: 'D — conta de custo (ex.: CMV, custo dos serviços)',
-    credHint: 'C — opcional (contrapartida do custo)',
+    credHint: 'C — contrapartida do custo (ex.: estoque, fornecedor)',
     info: [
       'Como a automação usa:',
       '• Prefere estas contas ao lançar ajustes de custo/despesa (folha, fiscal e provisões).',
-      '• Se só o débito estiver preenchido, ele é usado como conta de custo padrão.',
+      '• Com porcentagem e conta de faturamento: calcula custo = faturamento × % e lança D/C no mês.',
+      '• Faturamento = créditos − débitos da conta de receita escolhida no período.',
       '',
       'Quando é usada:',
       '• Sempre que a automação precisar de uma conta de custo e esta configuração existir.',
+      '• Lançamento por %: exige D, C, porcentagem > 0 e conta de faturamento.',
     ].join('\n'),
   },
 ];

@@ -20,6 +20,7 @@ import {
   resolverDataAutomacao,
 } from './automatizacaoContaConfig';
 import { executarEmprestimoEntreColigadas } from './balanceteAutomatizacaoColigadas';
+import { executarLancamentoCustoPorFaturamento } from './balanceteCustoFaturamento';
 import { detectFiscalImpostoKey, readFiscalContaMap, type FiscalContaMap } from './fiscalContaMapping';
 import {
   gerarLancamentosComRegraReceitaFederal,
@@ -781,6 +782,20 @@ export function executarAutomatizacaoCompleta(params: {
     razaoAtual = coligadas.razao;
     todosLancamentos.push(...coligadas.lancamentos);
     detalhes.push(...coligadas.detalhes);
+  }
+
+  onProgress?.({ fase: 'final', atual: 1, total: 1, mensagem: 'Custo × faturamento…' });
+  const custoFat = executarLancamentoCustoPorFaturamento({
+    periodos,
+    razaoRows: razaoAtual,
+    planoRows,
+    contaConfig,
+    onProgress: (msg) => onProgress?.({ fase: 'final', atual: 1, total: 1, mensagem: msg }),
+  });
+  if (custoFat.lancamentos.length || custoFat.detalhes.length) {
+    razaoAtual = custoFat.razao;
+    todosLancamentos.push(...custoFat.lancamentos);
+    detalhes.push(...custoFat.detalhes);
   }
 
   const ok = todosLancamentos.length > 0 || cicloBanco.ok;

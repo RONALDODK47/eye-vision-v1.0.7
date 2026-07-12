@@ -13,6 +13,7 @@ import {
   newEmprestimoColigadaId,
   readAutomatizacaoContaConfig,
   saveAutomatizacaoContaConfig,
+  savePapelAutomatizacaoContaConfig,
   vinculoFromCodigoManual,
   vinculoFromPlano,
 } from '../utils/automatizacaoContaConfig';
@@ -88,6 +89,10 @@ function VinculoLadoField({
     ? 'technical-button text-[10px] py-1 px-2'
     : 'px-2 py-1 rounded-lg border border-slate-600 text-slate-400 text-[10px] uppercase';
 
+  const btnApply = contabil
+    ? 'technical-button-primary text-[10px] py-1 px-3'
+    : 'px-2 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-bold uppercase';
+
   React.useEffect(() => {
     setCodigoManual(vinculo?.classificacao ?? '');
   }, [vinculo?.classificacao]);
@@ -152,21 +157,152 @@ function VinculoLadoField({
             type="text"
             value={codigoManual}
             onChange={(e) => setCodigoManual(e.target.value)}
-            onBlur={aplicarCodigo}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 aplicarCodigo();
-                (e.target as HTMLInputElement).blur();
               }
             }}
-            placeholder="Código / classificação — clique fora para aplicar"
+            placeholder="Código / classificação"
             className={inputMonoClass}
             aria-label={`Código manual ${tituloLado}`}
           />
         </div>
+        <button type="button" onClick={aplicarCodigo} className={btnApply}>
+          Aplicar
+        </button>
         {vinculo && (
           <button type="button" onClick={() => onClear(lado)} className={btnSecondary}>
+            Limpar
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ContaUnicaField({
+  titulo,
+  hint,
+  vinculo,
+  planoRows,
+  buscaGlobal,
+  resultadosBusca,
+  onSelectPlano,
+  onApplyCodigo,
+  onClear,
+  contabil,
+}: {
+  titulo: string;
+  hint: string;
+  vinculo?: AutomacaoContaVinculo;
+  planoRows: VisionPlanoRow[];
+  buscaGlobal: string;
+  resultadosBusca: VisionPlanoRow[];
+  onSelectPlano: (p: VisionPlanoRow) => void;
+  onApplyCodigo: (codigo: string) => void;
+  onClear: () => void;
+  contabil: boolean;
+}) {
+  const [codigoManual, setCodigoManual] = useState(vinculo?.classificacao ?? '');
+
+  React.useEffect(() => {
+    setCodigoManual(vinculo?.classificacao ?? '');
+  }, [vinculo?.classificacao]);
+
+  const inputMonoClass = contabil
+    ? 'flex-1 min-w-[120px] px-2 py-1.5 bg-white border border-brand-border text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-brand-border'
+    : 'flex-1 min-w-[120px] bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-xs font-mono';
+
+  const vinculoSalvoClass = contabil
+    ? 'text-[10px] font-mono font-bold text-green-800 bg-green-50 border border-green-800/30 px-2 py-1'
+    : 'text-[10px] text-emerald-300/90 font-mono';
+
+  const listClass = contabil
+    ? 'max-h-28 overflow-y-auto border border-brand-border bg-white divide-y divide-brand-border/30'
+    : 'max-h-28 overflow-y-auto custom-scrollbar rounded border border-slate-700 divide-y divide-slate-800';
+
+  const listBtnClass = contabil
+    ? 'w-full text-left px-2 py-1.5 text-[10px] font-mono transition-colors hover:bg-brand-border hover:text-brand-bg'
+    : 'w-full text-left px-2 py-1.5 hover:bg-violet-950/40 text-[10px]';
+
+  const btnSecondary = contabil
+    ? 'technical-button text-[10px] py-1 px-2'
+    : 'px-2 py-1 rounded-lg border border-slate-600 text-slate-400 text-[10px] uppercase';
+
+  const btnApply = contabil
+    ? 'technical-button-primary text-[10px] py-1 px-3'
+    : 'px-2 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-bold uppercase';
+
+  const showResults = buscaGlobal.trim().length > 0 && resultadosBusca.length > 0;
+
+  const aplicarCodigo = () => {
+    const t = codigoManual.trim();
+    if (!t) {
+      if (vinculo) onClear();
+      return;
+    }
+    if (t === (vinculo?.classificacao ?? '').trim()) return;
+    onApplyCodigo(t);
+  };
+
+  return (
+    <div
+      className={
+        contabil
+          ? 'border border-brand-border/40 bg-white p-3 space-y-2'
+          : 'rounded-lg border border-slate-700/80 bg-slate-950/40 p-2.5 space-y-2'
+      }
+    >
+      <div>
+        <p className={contabil ? 'text-[9px] font-black uppercase' : 'text-[10px] font-bold text-violet-200'}>
+          {titulo}
+        </p>
+        <p className={contabil ? 'text-[9px] font-bold uppercase opacity-50 leading-snug' : 'text-[10px] text-slate-500 leading-snug'}>
+          {hint}
+        </p>
+      </div>
+      {vinculo?.classificacao && (
+        <p className={vinculoSalvoClass}>
+          {vinculo.classificacao}
+          {vinculo.nome ? ` — ${vinculo.nome}` : ''}
+        </p>
+      )}
+      {showResults && (
+        <ul className={listClass}>
+          {resultadosBusca.map((p) => (
+            <li key={`unica-${p.codigo}`}>
+              <button type="button" className={listBtnClass} onClick={() => onSelectPlano(p)}>
+                <span className="font-bold">{p.codigo}</span>
+                {p.codigoReduzido && <span className="opacity-60 ml-1">({p.codigoReduzido})</span>}
+                <span className="ml-1">— {p.nome}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap gap-2 items-end">
+        <div className="flex-1 min-w-[140px]">
+          <input
+            type="text"
+            value={codigoManual}
+            onChange={(e) => setCodigoManual(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                aplicarCodigo();
+              }
+            }}
+            placeholder="Código / classificação"
+            className={inputMonoClass}
+            aria-label={titulo}
+          />
+        </div>
+        <button type="button" onClick={aplicarCodigo} className={btnApply}>
+          Aplicar
+        </button>
+        {vinculo && (
+          <button type="button" onClick={onClear} className={btnSecondary}>
             Limpar
           </button>
         )}
@@ -185,7 +321,9 @@ function PapelEditor({
   config,
   planoRows,
   onChange,
+  onApply,
   contabil,
+  applyFeedback,
 }: {
   papel: AutomacaoContaPapel;
   titulo: string;
@@ -196,10 +334,23 @@ function PapelEditor({
   config?: AutomacaoContaPapelConfig;
   planoRows: VisionPlanoRow[];
   onChange: (p: AutomacaoContaPapel, cfg: AutomacaoContaPapelConfig | undefined) => void;
+  onApply: (p: AutomacaoContaPapel) => void;
   contabil: boolean;
+  applyFeedback?: string | null;
 }) {
   const [busca, setBusca] = useState('');
   const [infoOpen, setInfoOpen] = useState(false);
+  const [pctDraft, setPctDraft] = useState(() =>
+    config?.porcentagemCusto != null ? String(config.porcentagemCusto) : '',
+  );
+
+  React.useEffect(() => {
+    setPctDraft(config?.porcentagemCusto != null ? String(config.porcentagemCusto) : '');
+  }, [config?.porcentagemCusto]);
+
+  const btnApplySection = contabil
+    ? 'technical-button-primary text-[10px] px-4 py-1.5'
+    : 'px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-black uppercase';
 
   const resultados = useMemo(
     () => buscarContasNoPlano(planoRows, busca, 20),
@@ -246,6 +397,50 @@ function PapelEditor({
       return;
     }
     patch(lado === 'debito' ? { debito: v } : { credito: v });
+  };
+
+  const aplicarPorcentagem = () => {
+    const raw = pctDraft.trim().replace(',', '.');
+    const next: AutomacaoContaPapelConfig = { ...(config ?? {}) };
+    if (!raw) {
+      delete next.porcentagemCusto;
+    } else {
+      const n = parseFloat(raw);
+      if (!Number.isFinite(n) || n <= 0) return;
+      next.porcentagemCusto = Math.min(100, n);
+    }
+    delete next.classificacao;
+    delete next.codigo;
+    delete next.nome;
+    if (
+      !next.debito?.classificacao &&
+      !next.credito?.classificacao &&
+      !next.porcentagemCusto &&
+      !next.contaFaturamento
+    ) {
+      onChange(papel, undefined);
+      return;
+    }
+    onChange(papel, next);
+  };
+
+  const setFaturamento = (v: AutomacaoContaVinculo | undefined) => {
+    const next: AutomacaoContaPapelConfig = { ...(config ?? {}) };
+    if (!v) delete next.contaFaturamento;
+    else next.contaFaturamento = v;
+    delete next.classificacao;
+    delete next.codigo;
+    delete next.nome;
+    if (
+      !next.debito?.classificacao &&
+      !next.credito?.classificacao &&
+      !next.porcentagemCusto &&
+      !next.contaFaturamento
+    ) {
+      onChange(papel, undefined);
+      return;
+    }
+    onChange(papel, next);
   };
 
   return (
@@ -328,6 +523,84 @@ function PapelEditor({
       {busca.trim() && resultados.length === 0 && (
         <p className="text-[9px] opacity-50">Nenhuma conta encontrada para &quot;{busca}&quot;.</p>
       )}
+
+      {papel === 'custos' && (
+        <div
+          className={
+            contabil
+              ? 'space-y-3 pt-1 border-t border-brand-border/20'
+              : 'space-y-3 pt-1 border-t border-slate-700/50'
+          }
+        >
+          <p className={labelHint}>
+            Cálculo automático: custo = faturamento × porcentagem. Informe D, C, % e conta de faturamento.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div
+              className={
+                contabil
+                  ? 'border border-brand-border/40 bg-white p-3 space-y-2'
+                  : 'rounded-lg border border-slate-700/80 bg-slate-950/40 p-2.5 space-y-2'
+              }
+            >
+              <label className={contabil ? 'block text-[9px] font-bold uppercase opacity-50' : 'text-[10px] text-slate-400'}>
+                Porcentagem do custo (%)
+              </label>
+              <div className="flex flex-wrap gap-2 items-end">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={pctDraft}
+                  onChange={(e) => setPctDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      aplicarPorcentagem();
+                    }
+                  }}
+                  placeholder="Ex.: 65"
+                  className={inputClass}
+                  aria-label="Porcentagem do custo"
+                />
+                <button type="button" onClick={aplicarPorcentagem} className={btnApplySection}>
+                  Aplicar
+                </button>
+              </div>
+              {config?.porcentagemCusto != null && config.porcentagemCusto > 0 && (
+                <p className="text-[10px] font-mono text-green-800">{config.porcentagemCusto}% salvo</p>
+              )}
+            </div>
+            <ContaUnicaField
+              titulo="Conta de faturamento"
+              hint="Receita usada como base (créditos − débitos do mês)"
+              vinculo={config?.contaFaturamento}
+              planoRows={planoRows}
+              buscaGlobal={busca}
+              resultadosBusca={resultados}
+              onSelectPlano={(p) => {
+                setFaturamento(vinculoFromPlano(p));
+                setBusca('');
+              }}
+              onApplyCodigo={(cod) => {
+                const t = cod.trim();
+                if (!t) setFaturamento(undefined);
+                else setFaturamento(vinculoFromCodigoManual(t, planoRows));
+              }}
+              onClear={() => setFaturamento(undefined)}
+              contabil={contabil}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <button type="button" onClick={() => onApply(papel)} className={btnApplySection}>
+          Aplicar bloco
+        </button>
+        {applyFeedback && (
+          <span className="text-[10px] font-bold text-green-800">{applyFeedback}</span>
+        )}
+      </div>
 
       {infoOpen && (
         <div
@@ -540,9 +813,11 @@ export function AutomatizacaoContaConfigModal({
   const [draft, setDraft] = useState<AutomacaoContaConfig>(() =>
     readAutomatizacaoContaConfig(empresaNome),
   );
+  const [applyFeedback, setApplyFeedback] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     setDraft(readAutomatizacaoContaConfig(empresaNome));
+    setApplyFeedback(null);
   }, [empresaNome]);
 
   React.useEffect(() => {
@@ -603,6 +878,40 @@ export function AutomatizacaoContaConfigModal({
 
   const setDataModo = (modo: AutomacaoDataModo) => {
     setDraft((prev) => ({ ...prev, dataModo: modo }));
+  };
+
+  const aplicarPapel = (papel: AutomacaoContaPapel) => {
+    const cfg = draft[papel];
+    const saved = savePapelAutomatizacaoContaConfig(empresaNome, papel, cfg);
+    setDraft(saved);
+    onSaved?.(saved);
+    const titulo = PAPEIS_AUTOMACAO_UI.find((p) => p.id === papel)?.titulo ?? papel;
+    setApplyFeedback(`${titulo} aplicado`);
+    window.setTimeout(() => setApplyFeedback(null), 2500);
+  };
+
+  const aplicarDataModo = () => {
+    const current = readAutomatizacaoContaConfig(empresaNome);
+    const next = {
+      ...current,
+      dataModo: draft.dataModo,
+      dataFixa: draft.dataFixa,
+    };
+    saveAutomatizacaoContaConfig(empresaNome, next);
+    setDraft(next);
+    onSaved?.(next);
+    setApplyFeedback('Data dos lançamentos aplicada');
+    window.setTimeout(() => setApplyFeedback(null), 2500);
+  };
+
+  const aplicarColigadas = () => {
+    const current = readAutomatizacaoContaConfig(empresaNome);
+    const next = { ...current, emprestimoColigadas: draft.emprestimoColigadas };
+    saveAutomatizacaoContaConfig(empresaNome, next);
+    setDraft(next);
+    onSaved?.(next);
+    setApplyFeedback('Empréstimo entre coligadas aplicado');
+    window.setTimeout(() => setApplyFeedback(null), 2500);
   };
 
   const salvar = () => {
@@ -739,6 +1048,19 @@ export function AutomatizacaoContaConfigModal({
                 />
               )}
             </div>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={aplicarDataModo}
+                className={
+                  contabil
+                    ? 'technical-button-primary text-[10px] px-4 py-1.5'
+                    : 'px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-black uppercase'
+                }
+              >
+                Aplicar
+              </button>
+            </div>
           </div>
 
           {PAPEIS_AUTOMACAO_UI.map((p) => (
@@ -753,7 +1075,9 @@ export function AutomatizacaoContaConfigModal({
               config={draft[p.id]}
               planoRows={planoRows}
               onChange={setPapel}
+              onApply={aplicarPapel}
               contabil={contabil}
+              applyFeedback={applyFeedback?.startsWith(p.titulo) ? applyFeedback : null}
             />
           ))}
 
@@ -798,6 +1122,25 @@ export function AutomatizacaoContaConfigModal({
                 onRemove={() => removeColigada(item.id)}
               />
             ))}
+
+            {coligadas.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={aplicarColigadas}
+                  className={
+                    contabil
+                      ? 'technical-button-primary text-[10px] px-4 py-1.5'
+                      : 'px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-black uppercase'
+                  }
+                >
+                  Aplicar bloco
+                </button>
+                {applyFeedback === 'Empréstimo entre coligadas aplicado' && (
+                  <span className="text-[10px] font-bold text-green-800">{applyFeedback}</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <div className={footerClass}>

@@ -62,7 +62,10 @@ import {
   isSameCompanyScope,
   requireCompanyScope,
 } from '../logic/companyWorkspace';
-import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
+import {
+  flushAllEyeVisionPersistence,
+  flushPersistenceAfterCriticalWrite,
+} from '../logic/eyeVisionPersistenceFlush';
 import PlanoContasVirtualTable from './PlanoContasVirtualTable';
 import ExtratoLancamentosVirtualTable from './ExtratoLancamentosVirtualTable';
 import ExtratoSemNotaModal from './ExtratoSemNotaModal';
@@ -802,10 +805,30 @@ export default function ManagerModule({
     void flushPersistenceAfterCriticalWrite();
   };
 
-  const saveExtrato = (list: BankStatement[]) => {
-    setExtratoLancamentos(list);
-    writeManagerDataNow(selectedCompany, 'extrato', list);
-    void flushPersistenceAfterCriticalWrite();
+  const handleLimparExtratos = async () => {
+    const company = requireCompanyScope(selectedCompany);
+
+    // Atualiza estado e ref juntos para impedir que um cleanup grave novamente a lista antiga.
+    extratoLancamentosRef.current = [];
+    setExtratoLancamentos([]);
+    setSaldoAnteriorExtrato(0);
+    saldoAnteriorExtratoRef.current = 0;
+    setExtratoConciliacao(null);
+    setPendingSemNotaRows([]);
+    setSemNotaModalOpen(false);
+    setShowAddExtrato(false);
+
+    writeManagerDataNow(company, 'extrato', []);
+    writeSaldoAnteriorExtrato(company, 0);
+
+    try {
+      await flushAllEyeVisionPersistence();
+    } catch (error) {
+      console.error('Falha ao salvar a limpeza dos extratos:', error);
+      window.alert(
+        'Os extratos foram limpos neste dispositivo, mas não foi possível confirmar o salvamento na nuvem. Verifique a conexão.',
+      );
+    }
   };
 
   const saveFolha = (list: PayrollRecord[]) => {
@@ -1670,7 +1693,7 @@ export default function ManagerModule({
                       {extratoLancamentos.length > 0 && (
                         <button 
                           type="button"
-                          onClick={() => saveExtrato([])}
+                          onClick={() => void handleLimparExtratos()}
                           className="technical-button border-red-800 text-red-800 hover:bg-red-800 hover:text-white text-xs"
                         >
                           LIMPAR EXTRATOS

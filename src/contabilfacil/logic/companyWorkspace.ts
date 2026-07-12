@@ -773,9 +773,12 @@ export function readManagerData<T>(companyName: string, suffix: keyof typeof LEG
   const cached = managerMemoryCache.get(key);
   if (cached) return cached as T[];
 
+  const canonicalRaw = safeLocalStorageGetItem(key);
   let list = readManagerRowsFromStorageKey<T>(key, suffix);
 
-  if (list.length === 0) {
+  // Uma lista canônica explicitamente salva como [] representa exclusão intencional.
+  // Só consulta a chave alias quando a chave canônica realmente não existe.
+  if (list.length === 0 && canonicalRaw == null) {
     const rawSlug = companyStorageSlug(norm);
     const canonical = canonicalCompanyStorageSlug(norm);
     if (rawSlug && rawSlug !== canonical) {
@@ -791,9 +794,7 @@ export function readManagerData<T>(companyName: string, suffix: keyof typeof LEG
     }
   }
 
-  if (list.length > 0) {
-    managerMemoryCache.set(key, list);
-  }
+  managerMemoryCache.set(key, list);
   return list;
 }
 
