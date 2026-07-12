@@ -243,8 +243,11 @@ export function normalizeAiRows(raw, options = {}) {
 
       if (RE_DATA_BR.test(datePart)) {
         lastValidDate = datePart;
-      } else if (lastValidDate && isDatePlaceholder(datePart)) {
+      } else if (lastValidDate) {
+        // Fallback: se a data não estiver no padrão mas temos uma data válida anterior,
+        // reaproveitamos — isso evita descartar lançamentos com data borrada ou omitida.
         dataRaw = lastValidDate;
+        datePart = lastValidDate;
       }
 
       let row = {
@@ -290,11 +293,17 @@ export function normalizeAiRows(raw, options = {}) {
 
       return row;
     })
-    .filter((r) => r.data || r.descricao || r.valorMisto || r.valorCredito || r.valorDebito)
+    .filter((r) => r.descricao || r.valorMisto || r.valorCredito || r.valorDebito)
     .filter((r) => !isAiNoiseRow(r))
-    .filter((r) => rowOperationalValue(r) >= 0.01)
+    .filter((r) => {
+      // Mantém lançamentos com valor zero desde que tenham descrição clara (ex: tarifas, estornos zerados)
+      const val = rowOperationalValue(r);
+      const hasDesc = String(r.descricao ?? '').trim().length > 2;
+      return val >= 0.01 || hasDesc;
+    })
     .filter((r) => {
       const d = r.data?.split(/\s/)[0] ?? '';
+      // Aceita somente lançamentos cuja data final esteja no formato DD/MM/AAAA
       return RE_DATA_BR.test(d);
     });
 
