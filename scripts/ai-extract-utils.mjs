@@ -201,16 +201,37 @@ function cleanHistoricoPix(desc) {
     .trim();
 }
 
+function isDatePlaceholder(s) {
+  const t = String(s ?? '').trim();
+  if (!t) return true;
+  const compact = t.replace(/\s+/g, '');
+  if (/^[-–—_./\\|]+$/.test(compact)) return true;
+  if (/^(n\/?a|null|vazio|s\/d|nd|n\.?d\.?)$/i.test(compact)) return true;
+  if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(compact)) return true;
+  return false;
+}
+
 export function normalizeAiRows(raw, options = {}) {
   const statementYear = options.statementYear ?? new Date().getFullYear();
   const bankHint = options.bankHint ?? null;
 
   if (!Array.isArray(raw)) return [];
 
+  let lastValidDate = '';
+
   const mapped = raw
     .map((r) => {
+      let dataRaw = normalizeDateBr(r?.data, statementYear);
+      let datePart = dataRaw.split(/\s/)[0] ?? '';
+
+      if (RE_DATA_BR.test(datePart)) {
+        lastValidDate = datePart;
+      } else if (lastValidDate && isDatePlaceholder(datePart)) {
+        dataRaw = lastValidDate;
+      }
+
       let row = {
-        data: normalizeDateBr(r?.data, statementYear),
+        data: dataRaw,
         descricao: cleanHistoricoPix(String(r?.descricao ?? r?.historico ?? '').trim()),
         valorCredito: String(r?.valorCredito ?? '').trim(),
         valorDebito: String(r?.valorDebito ?? '').trim(),

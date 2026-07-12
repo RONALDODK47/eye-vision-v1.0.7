@@ -109,7 +109,7 @@ export function buildExtratoAiExtractSystem(bankHint) {
     '7. Valide: saldoAnterior + Σcréditos − Σdébitos = saldoFinal (tolerância R$ 0,10).',
     '8. Se não fechar, devolva mesmo assim os lançamentos encontrados — corrija rows faltantes/erradas; NÃO altere saldoAnterior para forçar conciliação.',
     '9. Descrições multilinha (SISPAG + nome, TED + favorecido) = UM único lançamento.',
-    '10. Datas sempre DD/MM/AAAA (complete o ano se o PDF só mostrar DD/MM).',
+    '10. Datas sempre DD/MM/AAAA (complete o ano se o PDF só mostrar DD/MM). Repita a data em TODOS os lançamentos, mesmo se no extrato a data estiver em branco/omitida (repita a última data válida).',
     '11. Inclua TED, PIX, SISPAG, tarifas, IOF, rendimentos, estornos, bloqueios.',
     '12. JSON compacto — sem markdown, sem texto antes/depois do objeto.',
     bankRulesAppendix(bankHint),
@@ -128,7 +128,7 @@ export const EXTRATO_AI_FILL_MISSING_SYSTEM = [
   'Inclua APENAS lançamentos operacionais que FALTAM (não repita os já listados).',
   'Procure no OCR/imagem: PIX, TED, SISPAG, tarifas, IOF, rendimentos omitidos.',
   'BB: se a linha tem valor C/D + saldo trailing, extraia só o valor do lançamento.',
-  'Valores formato BR. Um valor por linha (crédito OU débito).',
+  'Valores formato BR. Um valor por linha (crédito OU débito). Datas sempre DD/MM/AAAA. Repita a data em todos os lançamentos, mesmo se omitida no PDF (use a data do dia correspondente).',
 ].join('\n');
 
 export const EXTRATO_AI_REPAIR_SYSTEM = [
@@ -145,7 +145,7 @@ export const EXTRATO_AI_REPAIR_SYSTEM = [
   'Corrija: duplicatas, lançamentos faltando, valores trocados, crédito/débito invertido,',
   'saldo trailing confundido com lançamento (comum no BB), datas erradas, SISPAG fragmentado.',
   'saldoAnterior + Σcréditos − Σdébitos deve igualar saldoFinal (±R$ 0,10).',
-  'Não inclua linhas só de saldo informativo.',
+  'Não inclua linhas só de saldo informativo. Datas sempre DD/MM/AAAA. Repita a data em todos os lançamentos, mesmo se omitida no PDF (use a data do dia correspondente).',
 ].join('\n');
 
 export const EXTRATO_AI_REFINE_SYSTEM = [
@@ -160,6 +160,7 @@ export const EXTRATO_AI_REFINE_SYSTEM = [
   '- BB: valor do lançamento = par monetário+C/D antes do saldo trailing',
   '- Remova ruído de cabeçalho/rodapé',
   '- Mantenha valores formato BR; preserve ordem cronológica',
+  '- Repita a data em todos os lançamentos, mesmo se estiver em branco/omitida no PDF (use a data do dia correspondente)',
 ].join('\n');
 
 export function buildPlanoAiExtractSystem() {

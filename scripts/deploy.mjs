@@ -26,11 +26,15 @@ if (!fs.existsSync(envProduction)) {
 
 function run(label, cmd, args, extraEnv = {}) {
   console.info(`\n[deploy] ${label}…`);
+  const useShell =
+    process.platform === 'win32' &&
+    typeof cmd === 'string' &&
+    (cmd.endsWith('.cmd') || cmd.endsWith('.bat'));
   const result = spawnSync(cmd, args, {
     cwd: root,
     env: { ...process.env, ...extraEnv, NODE_ENV: 'production', PRODUCTION_CHECK: '1' },
     stdio: 'inherit',
-    shell: process.platform === 'win32',
+    shell: useShell,
     windowsHide: false,
   });
   if ((result.status ?? 1) !== 0) {

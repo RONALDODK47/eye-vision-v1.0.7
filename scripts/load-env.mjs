@@ -14,5 +14,15 @@ for (const file of [
   `.env.${mode}`,
   `.env.${mode}.local`,
 ]) {
-  config({ path: path.join(root, file), quiet: true, override: false });
+  const isProductionFile = file.includes('.production');
+  config({
+    path: path.join(root, file),
+    quiet: true,
+    override: mode === 'production' && isProductionFile,
+  });
+}
+
+if (mode === 'production') {
+  delete process.env.SUPABASE_DATABASE_URL;
+  delete process.env.SUPABASE_SYNC_OFFICE_TOKEN;
 }

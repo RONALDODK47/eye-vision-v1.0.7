@@ -30,7 +30,9 @@ if (backend !== 'supabase') {
 }
 
 req('DATABASE_URL');
-req('GEMINI_API_KEY');
+if (!isGeminiConfigured()) {
+  errors.push('GEMINI_API_KEY inválida ou ausente');
+}
 req('CORS_ALLOWED_ORIGIN');
 
 const cors = String(process.env.CORS_ALLOWED_ORIGIN || '').trim();
@@ -40,10 +42,6 @@ if (!cors) {
   errors.push('CORS_ALLOWED_ORIGIN não pode ser * em produção');
 } else if (!/^https:\/\//i.test(cors)) {
   warnings.push('CORS_ALLOWED_ORIGIN deveria usar HTTPS');
-}
-
-if (!isGeminiConfigured()) {
-  errors.push('GEMINI_API_KEY inválida ou ausente');
 }
 
 for (const key of Object.keys(process.env)) {
