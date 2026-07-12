@@ -1900,6 +1900,7 @@ export default function DataIngestionBox({
           companyName={selectedCompany}
           planoContaOptions={extratoPlanoOptions}
           initialExtractEngine="ai"
+          extratoScannerPureAi
           onCancel={() => {
             setPendingOcrFile(null);
             setExtratoDocumentKind(null);

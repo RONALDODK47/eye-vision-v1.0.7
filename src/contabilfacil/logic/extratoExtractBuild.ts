@@ -1,5 +1,8 @@
 /** Identificador visível no F12/UI — confirma que o bundle atual carregou. */
-export const EXTRATO_EXTRACT_BUILD_ID = '2026-06-17-ocr-scale-fallback';
+export const EXTRATO_EXTRACT_BUILD_ID = '2026-07-12-scanner-ia-pura';
+
+/** Build exibido no banner do modal scanner/imagem (somente IA, sem fallback). */
+export const EXTRATO_SCANNER_PURE_AI_BUILD_ID = EXTRATO_EXTRACT_BUILD_ID;
 
 export function logExtratoExtractBuild(motor?: string): void {
   if (typeof console === 'undefined') return;

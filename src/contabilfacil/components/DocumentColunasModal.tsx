@@ -139,7 +139,7 @@ import {
 } from '../logic/extratoOcrLayoutFaixa';
 import { buildExtratoReviewPackage } from '../logic/extratoEscalationPipeline';
 import { filterSkippedPagesForExtratoReview } from '../logic/extratoReviewIssues';
-import { EXTRATO_EXTRACT_BUILD_ID, logExtratoExtractBuild } from '../logic/extratoExtractBuild';
+import { EXTRATO_EXTRACT_BUILD_ID, EXTRATO_SCANNER_PURE_AI_BUILD_ID, logExtratoExtractBuild } from '../logic/extratoExtractBuild';
 
 /** OCR em segundo plano com resolução automática (Full HD). */
 
@@ -183,6 +183,8 @@ type Props = {
    * Sobrescreve a preferência salva na aba IA.
    */
   initialExtractEngine?: AiExtractEngine;
+  /** Extrato scanner/imagem: somente IA visão — sem OCR posicional, escala fallback nem linhas literais. */
+  extratoScannerPureAi?: boolean;
 };
 
 const FAIXA_INICIO_ID = '__delimitacao_inicio__';
@@ -423,6 +425,7 @@ export function DocumentColunasModal({
   companyName = '',
   planoContaOptions = [],
   initialExtractEngine,
+  extratoScannerPureAi = false,
 }: Props) {
   useEffect(() => {
     notifyDebugModuleLoaded();
@@ -540,6 +543,7 @@ export function DocumentColunasModal({
   /** Extrato: recorte fiel do PDF em colunas (sem inferência/reconstrução automática). */
   const extratoRecorteLiteral = isExtratoOcr;
   const showExtractEngine = supportsValorModo || supportsExtractEngine;
+  const scannerPureAi = Boolean(extratoScannerPureAi && supportsValorModo);
   const isPlanoOcr =
     supportsExtractEngine && !isParcelamentoExtract && dataColIds.includes('codigoClassificacao');
   const ocrPreviewOptions = supportsValorModo ? OCR_EXTRATO_OCR_OPTIONS : undefined;
@@ -623,8 +627,8 @@ export function DocumentColunasModal({
   /** Carrega motor de extração IA (aba Contábil → IA). Scanner/imagem força 'ai'. */
   useEffect(() => {
     if (!isExtratoOcr) return;
-    if (initialExtractEngine) {
-      setAiExtractEngine(normalizeExtractEngine(initialExtractEngine));
+    if (scannerPureAi || initialExtractEngine) {
+      setAiExtractEngine('ai');
       return;
     }
     void fetchAiConfig().then((cfg) => {
@@ -632,7 +636,7 @@ export function DocumentColunasModal({
         setAiExtractEngine(normalizeExtractEngine(cfg.config.extractEngine));
       }
     });
-  }, [isExtratoOcr, initialExtractEngine]);
+  }, [isExtratoOcr, initialExtractEngine, scannerPureAi]);
 
   /** Auto-detecta Itaú na página 1 e aplica perfil (ignore words + OCR extrato). */
   useEffect(() => {
@@ -1867,6 +1871,21 @@ export function DocumentColunasModal({
       if (opts?.forExtract) {
         const pageProxy = await pdfDoc.getPage(pageNum);
         const primaryScale = resolvePdfRenderScale(pageProxy, ocrPdfLoadOptions);
+        if (scannerPureAi) {
+          const preview = await renderPdfPagePreview(pdfDoc, pageNum, onProgress, {
+            ...ocrPdfLoadOptions,
+            pdfRenderScale: primaryScale,
+            deferOcr: true,
+            useCache: false,
+          });
+          return {
+            ...preview,
+            items: [],
+            itemCount: 0,
+            ocrFullText: '',
+            ocrSource: 'ocr' as const,
+          };
+        }
         return completePdfPageOcrWithExtratoScaleFallback(
           pdfDoc,
           pageNum,
@@ -1894,7 +1913,7 @@ export function DocumentColunasModal({
         opts?.forExtract ? ocrExtractOptions : ocrOpts,
       );
     },
-    [doc?.pdfDoc, ocrBulkPreviewOptions, ocrExtractOptions, ocrPdfLoadOptions],
+    [doc?.pdfDoc, ocrBulkPreviewOptions, ocrExtractOptions, ocrPdfLoadOptions, scannerPureAi],
   );
 
   const forwardPageOcrProgress = useCallback((pageNum: number, msg: string) => {
@@ -2407,7 +2426,7 @@ export function DocumentColunasModal({
         if (supportsValorModo && onConfirm) {
           let finalRows = baseRows;
           let finalMeta = meta;
-          if (isExtratoOcr && !extratoRecorteLiteral) {
+          if (isExtratoOcr && !extratoRecorteLiteral && !scannerPureAi) {
             const aiCfg = await fetchAiConfig();
             const stmtYear =
               extractStatementYear(ocrText || doc.ocrFullText || '') ||
@@ -2459,14 +2478,14 @@ export function DocumentColunasModal({
               finalRows = rows;
             }
           }
-          // Evita regressão de contagem no fim da extração: se o pós-processamento reduzir linhas, mantém o conjunto bruto.
-          if (finalRows.length < baseRows.length) {
+          // Evita regressão de contagem no fim da extração (modo com OCR posicional).
+          if (!scannerPureAi && finalRows.length < baseRows.length) {
             reportExtract(
               `Ajuste anti-perda: mantendo ${baseRows.length} lançamento(s) detectado(s) (pós-processamento gerou ${finalRows.length}).`,
             );
             finalRows = baseRows;
           }
-          if (finalRows.length === 0 && baseRows.length > 0) {
+          if (!scannerPureAi && finalRows.length === 0 && baseRows.length > 0) {
             finalRows = baseRows;
           }
           if (extratoRecorteLiteral) {
@@ -2481,7 +2500,13 @@ export function DocumentColunasModal({
                 extractStatementYear(ocrText || doc.ocrFullText || '') ||
                   String(new Date().getFullYear()),
               );
-          const fallbackRowsFromOcr = withDates.length === 0 ? buildLiteralFallbackRowsFromOcr(ocrText) : [];
+          if (scannerPureAi && withDates.length === 0) {
+            throw new Error(
+              'A IA não retornou lançamentos. Verifique a chave API em Contábil → IA ou use imagem/PDF mais nítido.',
+            );
+          }
+          const fallbackRowsFromOcr =
+            !scannerPureAi && withDates.length === 0 ? buildLiteralFallbackRowsFromOcr(ocrText) : [];
           const reviewRows = withDates.length > 0 ? withDates : fallbackRowsFromOcr;
           onConfirm(
             reviewRows.map((r) => ({
@@ -2682,27 +2707,20 @@ export function DocumentColunasModal({
         for (let p = 1; p <= maxPages; p++) {
           reportExtract(`Preparando página ${p} de ${maxPages} para IA…`, { page: p, total: maxPages });
           let pageUrl = p === currentPage ? (previewUrl ?? doc.previewUrl) : null;
-          let pageOcrText = '';
 
           if (doc.pdfDoc) {
-            if (p === currentPage) {
-              pageUrl = previewUrl ?? doc.previewUrl;
-              pageOcrText = doc.ocrFullText ?? doc.items.map((i) => i.str).join('\n');
-            } else {
-              const preview = await renderPdfPagePreview(
-                doc.pdfDoc,
-                p,
-                (m) => reportExtract(m, { page: p, total: maxPages }),
-                { pdfRenderScale, deferOcr: true, useCache: true },
-              );
-              pageUrl = preview.previewUrl ?? pageUrl;
-              pageOcrText = preview.ocrFullText ?? preview.items.map((i) => i.str).join('\n');
+            const preview = await renderPdfPagePreview(
+              doc.pdfDoc,
+              p,
+              (m) => reportExtract(m, { page: p, total: maxPages }),
+              { pdfRenderScale, deferOcr: true, useCache: true },
+            );
+            pageUrl = preview.previewUrl ?? pageUrl;
+            if (!scannerPureAi) {
+              const pageOcrText = preview.ocrFullText ?? preview.items.map((i) => i.str).join('\n');
+              if (pageOcrText.trim()) ocrTextParts.push(pageOcrText.trim());
             }
-          } else if (p === currentPage) {
-            pageOcrText = doc.ocrFullText ?? doc.items.map((i) => i.str).join('\n');
           }
-
-          if (pageOcrText.trim()) ocrTextParts.push(pageOcrText.trim());
 
           if (pageUrl) {
             const img = await previewUrlToBase64(pageUrl, 2400);
@@ -2710,17 +2728,17 @@ export function DocumentColunasModal({
           }
         }
 
-        const ocrTextAgg = ocrTextParts.join('\n\n');
-        if (images.length === 0 && !ocrTextAgg.trim()) {
+        const ocrTextAgg = scannerPureAi ? '' : ocrTextParts.join('\n\n');
+        if (images.length === 0) {
           throw new Error(
-            'Não foi possível enviar imagem nem texto à IA. Aguarde a prévia carregar e tente de novo.',
+            'Não foi possível enviar a imagem à IA. Aguarde a prévia carregar e tente de novo.',
           );
         }
 
         reportExtract(
           images.length > 1
-            ? `Extraindo com IA (${images.length} páginas, uma por vez)…`
-            : 'Extraindo lançamentos com IA (visão)…',
+            ? `Extraindo com IA pura (${images.length} páginas, uma por vez)…`
+            : 'Extraindo lançamentos com IA pura (visão)…',
         );
         const stmtYearAi =
           extractStatementYear(
@@ -2728,7 +2746,7 @@ export function DocumentColunasModal({
           ) || String(new Date().getFullYear());
         const aiCfg = await fetchAiConfig();
         const aiResult = await extractExtratoWithAi({
-          ocrText: ocrTextAgg || doc.ocrFullText || undefined,
+          ocrText: scannerPureAi ? undefined : ocrTextAgg || doc.ocrFullText || undefined,
           images: images.filter(Boolean) as NonNullable<(typeof images)[number]>[],
           statementYear: stmtYearAi,
           fileName: file.name,
@@ -2793,7 +2811,7 @@ export function DocumentColunasModal({
         return {
           dataColIds,
           headerKeywords,
-          allowFaixaFallback: true,
+          allowFaixaFallback: !scannerPureAi,
           extratoPositional: true,
           extratoPreserveSegmentRows: true,
           statementYear: stmtYear,
@@ -2835,8 +2853,13 @@ export function DocumentColunasModal({
       };
 
       /** Modo IA: sempre extração por visão (colunas servem só de referência visual). */
-      if (showExtractEngine && activeEngine === 'ai') {
+      if (scannerPureAi || (showExtractEngine && activeEngine === 'ai')) {
         try {
+          reportExtract(
+            scannerPureAi
+              ? `IA pura (visão) · build ${EXTRATO_SCANNER_PURE_AI_BUILD_ID}`
+              : `Motor: ${EXTRACT_ENGINE_BANNER_LABELS[activeEngine]} · build ${EXTRATO_EXTRACT_BUILD_ID}`,
+          );
           if (isPlanoOcr) {
             await finishAiPlanoVisionExtract();
           } else if (supportsValorModo) {
@@ -2855,7 +2878,7 @@ export function DocumentColunasModal({
         return;
       }
 
-      if (supportsValorModo && fileIsPdf && !hasMappedColumnsForExtract) {
+      if (supportsValorModo && fileIsPdf && !hasMappedColumnsForExtract && !scannerPureAi) {
         const autoRows = await tryAutoExtratoPdf();
         if (autoRows?.length) {
           const ocrText = autoRows.map((r) => String(r._linhaOcr ?? r.descricao ?? '')).join('\n');
@@ -4321,9 +4344,9 @@ export function DocumentColunasModal({
       {showExtractEngine && (
         <div className="px-6 py-2 border-b border-brand-border bg-emerald-50/80 shrink-0 space-y-2">
           <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-900">
-            Encaixe na tabela: {EXTRACT_ENGINE_BANNER_LABELS.ai}
+            Encaixe na tabela: {scannerPureAi ? 'IA pura (sem fallback)' : EXTRACT_ENGINE_BANNER_LABELS.ai}
             <span className="ml-2 font-mono text-[9px] opacity-60 normal-case">
-              build {EXTRATO_EXTRACT_BUILD_ID}
+              build {scannerPureAi ? EXTRATO_SCANNER_PURE_AI_BUILD_ID : EXTRATO_EXTRACT_BUILD_ID}
             </span>
             {ocrDeferredUntilExtract && !extracting && !ocrLoading
               ? ` — aguardando «${confirmLabel}»`
@@ -4342,7 +4365,9 @@ export function DocumentColunasModal({
                 <span className="normal-case tracking-normal font-mono opacity-100">
                   ·{' '}
                   {ocrDeferredUntilExtract && doc.itemCount === 0
-                    ? 'OCR ao colar na tabela'
+                    ? scannerPureAi
+                      ? 'IA pura ao colar na tabela'
+                      : 'OCR ao colar na tabela'
                     : `${doc.itemCount} trechos OCR`}
                 </span>
               )}
