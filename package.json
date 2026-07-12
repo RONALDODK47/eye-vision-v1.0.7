@@ -36,7 +36,7 @@
     "production:setup": "node scripts/production-setup.mjs",
     "production:guard": "node scripts/production-start-guard.mjs",
     "storage:migrate:supabase": "node scripts/storage/migrate-supabase.mjs",
-    "deploy": "node scripts/deploy.mjs",
+    "deploy": "node scripts/ensure-production-env.mjs && node scripts/deploy.mjs",
     "deploy:git": "node scripts/deploy-git.mjs"
   },
   "dependencies": {

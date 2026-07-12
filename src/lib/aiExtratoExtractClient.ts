@@ -8,8 +8,17 @@ const AGENT_BASE =
     ? import.meta.env.VITE_AGENT_API_URL.replace(/\/$/, '')
     : '/api/agent';
 
-/** Alinhado ao servidor — extração IA por página pode levar vários minutos. */
-const EXTRACT_REQUEST_TIMEOUT_MS = 300_000;
+/** Alinhado ao servidor — extração IA por página pode levar vários minutos.
+ * Pode ser sobrescrito em tempo de build com a variável `VITE_EXTRACT_REQUEST_TIMEOUT_MS` (ms).
+ */
+const EXTRACT_REQUEST_TIMEOUT_MS = (() => {
+  try {
+    const v = (import.meta as any).env?.VITE_EXTRACT_REQUEST_TIMEOUT_MS;
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  } catch {}
+  return 300_000;
+})();
 
 export type AiExtractImage = {
   base64: string;
