@@ -136,12 +136,25 @@ export function mergeAiExtratoRows(base, extra) {
 
 function normalizeDateBr(raw, statementYear) {
   const t = String(raw ?? '').trim().split(/\s/)[0] ?? '';
-  const m = t.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
-  if (!m) return t;
-  let year = m[3];
-  if (year.length === 2) year = `20${year}`;
-  if (year.length !== 4) year = String(statementYear ?? new Date().getFullYear());
-  return `${m[1]}/${m[2]}/${year}`;
+  const clean = t.replace(/[-.]/g, '/');
+  
+  // Caso 1: DD/MM/AAAA ou DD/MM/AA
+  const m3 = clean.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m3) {
+    let year = m3[3];
+    if (year.length === 2) year = `20${year}`;
+    if (year.length !== 4) year = String(statementYear ?? new Date().getFullYear());
+    return `${m3[1].padStart(2, '0')}/${m3[2].padStart(2, '0')}/${year}`;
+  }
+  
+  // Caso 2: DD/MM
+  const m2 = clean.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m2) {
+    const year = String(statementYear ?? new Date().getFullYear());
+    return `${m2[1].padStart(2, '0')}/${m2[2].padStart(2, '0')}/${year}`;
+  }
+  
+  return clean;
 }
 
 /** Valor com sinal negativo sem sufixo C/D (comum em extratos escaneados). */
