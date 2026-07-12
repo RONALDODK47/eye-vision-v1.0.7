@@ -1,7 +1,7 @@
 /** Identificador visível no F12/UI — confirma que o bundle atual carregou. */
-export const EXTRATO_EXTRACT_BUILD_ID = '2026-07-12-scanner-ia-pura';
+export const EXTRATO_EXTRACT_BUILD_ID = '2026-07-11-scanner-ia-direto';
 
-/** Build exibido no banner do modal scanner/imagem (somente IA, sem fallback). */
+/** Build da extração scanner/imagem — IA pura, sem interface de colunas. */
 export const EXTRATO_SCANNER_PURE_AI_BUILD_ID = EXTRATO_EXTRACT_BUILD_ID;
 
 export function logExtratoExtractBuild(motor?: string): void {

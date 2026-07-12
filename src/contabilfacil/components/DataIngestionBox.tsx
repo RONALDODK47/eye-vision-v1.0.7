@@ -101,10 +101,8 @@ const ExtratoLeitorRecortadorModal = lazy(() =>
 const LeitorRecortadorModal = lazy(() =>
   import('./LeitorRecortadorModal').then((m) => ({ default: m.LeitorRecortadorModal })),
 );
-const DocumentColunasModal = lazy(() =>
-  import('./DocumentColunasModal').then((m) => ({ default: m.DocumentColunasModal })),
-);
 import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
+import { importExtratoScannerPureAi } from '../logic/extratoScannerPureAiImport';
 import {
   classifyExtratoDocument,
   type ExtratoDocumentKind,
@@ -855,6 +853,28 @@ export default function DataIngestionBox({
     onExtratoSkippedLog?.(entries);
   };
 
+  const runExtratoScannerAiDirect = async (file: File) => {
+    setPendingOcrFile(file);
+    setExtratoDocumentKind('scanned_or_image');
+    setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    setImportedLogs([]);
+    publishExtratoSkippedLog([]);
+    try {
+      const { rows, meta } = await importExtratoScannerPureAi(file, setLoadingStep);
+      handleOcrConfirm(rows, meta);
+    } catch (e) {
+      setPendingOcrFile(null);
+      setExtratoDocumentKind(null);
+      const msg = e instanceof Error ? e.message : 'Falha na extração com IA.';
+      setErrorMsg(msg);
+      notifyValidationIssue('ocr', msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleOcrConfirm = (
     rows: GenericOcrRow[],
     meta?: import('../../lib/aiExtratoExtractClient').OcrConfirmMeta,
@@ -1046,12 +1066,12 @@ export default function DataIngestionBox({
           if (dataType === 'extrato') {
             const presetKind = extratoImportModeRef.current ?? 'native_text';
             extratoImportModeRef.current = null;
+            if (presetKind === 'scanned_or_image') {
+              await runExtratoScannerAiDirect(file);
+              return;
+            }
             setExtratoDocumentKind(presetKind);
-            setLoadingStep(
-              presetKind === 'scanned_or_image'
-                ? 'Abrindo extração com IA (scanner/imagem)…'
-                : 'Abrindo extrato com texto…',
-            );
+            setLoadingStep('Abrindo extrato com texto…');
           } else {
             setLoadingStep('Abrindo documento para recorte...');
           }
@@ -1094,13 +1114,13 @@ export default function DataIngestionBox({
         if (dataType === 'extrato') {
           const presetKind = extratoImportModeRef.current;
           extratoImportModeRef.current = null;
+          if (presetKind === 'scanned_or_image') {
+            await runExtratoScannerAiDirect(file);
+            return;
+          }
           if (presetKind) {
             setExtratoDocumentKind(presetKind);
-            setLoadingStep(
-              presetKind === 'scanned_or_image'
-                ? 'Abrindo extração com IA (scanner/imagem)…'
-                : 'Abrindo extrato com texto…',
-            );
+            setLoadingStep('Abrindo extrato com texto…');
             setPendingOcrFile(file);
             setLoading(false);
             return;
@@ -1109,16 +1129,19 @@ export default function DataIngestionBox({
           setLoading(true);
           try {
             const kind = await classifyExtratoDocument(file);
+            if (kind === 'scanned_or_image') {
+              setLoading(false);
+              await runExtratoScannerAiDirect(file);
+              return;
+            }
             setExtratoDocumentKind(kind);
-            setLoadingStep(
-              kind === 'scanned_or_image'
-                ? 'Abrindo extração com IA (scanner/imagem)…'
-                : 'Abrindo extrato para recorte…',
-            );
+            setLoadingStep('Abrindo extrato para recorte…');
             setPendingOcrFile(file);
           } catch {
             setExtratoDocumentKind('scanned_or_image');
-            setPendingOcrFile(file);
+            setLoading(false);
+            await runExtratoScannerAiDirect(file);
+            return;
           } finally {
             setLoading(false);
           }
@@ -1884,31 +1907,6 @@ export default function DataIngestionBox({
           </div>
         </div>
       )}
-
-      {pendingOcrFile && dataType === 'extrato' && extratoDocumentKind === 'scanned_or_image' ? (
-        <Suspense fallback={null}>
-          <DocumentColunasModal
-          file={pendingOcrFile}
-          title="Extração com IA — extrato (scanner/imagem)"
-          confirmLabel={ocrConfig.confirmLabel}
-          campoDefs={ocrConfig.campos}
-          dataColIds={ocrConfig.dataColIds}
-          headerKeywords={ocrConfig.headerKeywords}
-          supportsValorModo={ocrConfig.supportsValorModo}
-          supportsExtractEngine
-          extractMode="generic"
-          companyName={selectedCompany}
-          planoContaOptions={extratoPlanoOptions}
-          initialExtractEngine="ai"
-          extratoScannerPureAi
-          onCancel={() => {
-            setPendingOcrFile(null);
-            setExtratoDocumentKind(null);
-          }}
-          onConfirm={handleOcrConfirm}
-        />
-        </Suspense>
-      ) : null}
 
       {pendingOcrFile && dataType === 'extrato' && extratoDocumentKind !== 'scanned_or_image' ? (
         <Suspense fallback={null}>
