@@ -151,12 +151,9 @@ export default function AiScannerPreviewPanel({
       setHasExtracted(true);
     } catch (err: any) {
       const raw = err?.message || 'Falha na extração.';
-      const msg =
-        /429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(raw)
-          ? 'Limite de uso do Gemini atingido. Aguarde cerca de 1 minuto e tente novamente.'
-          : raw.includes('aborted') || raw.includes('timeout')
-            ? 'Tempo esgotado. O documento tem muitas páginas ou a conexão está lenta. Tente novamente.'
-            : raw;
+      const msg = raw.includes('aborted') || raw.includes('timeout')
+        ? 'Tempo esgotado. O documento tem muitas páginas ou a conexão está lenta. Tente novamente.'
+        : raw;
       setError(msg);
     } finally {
       setIsProcessing(false);

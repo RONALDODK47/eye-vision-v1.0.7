@@ -117,6 +117,7 @@ function parseGeminiError(status, errText) {
     if (status === 429 && /limit:\s*0/i.test(msg)) {
       return {
         retryable: true,
+        switchModel: true,
         userHint: 'Modelo sem cota gratuita — trocando para outro modelo free tier…',
         raw: msg,
         noFreeQuota: true,
@@ -125,24 +126,149 @@ function parseGeminiError(status, errText) {
     if (status === 429) {
       return {
         retryable: true,
+        switchModel: true,
         userHint: 'Limite temporário do Gemini — tentando modelo alternativo free tier…',
         raw: msg,
       };
     }
     if (status === 404) {
-      return { retryable: true, userHint: 'Modelo indisponível nesta chave.', raw: msg };
+      return { retryable: true, switchModel: true, userHint: 'Modelo indisponível nesta chave.', raw: msg };
     }
     if (status === 400 && /API key/i.test(msg)) {
       return {
         retryable: false,
+        switchModel: false,
         userHint: 'Chave GEMINI_API_KEY inválida — gere uma nova em aistudio.google.com/apikey',
         raw: msg,
       };
     }
-    return { retryable: status >= 500, userHint: msg, raw: msg };
+    return { retryable: status >= 500, switchModel: status >= 500, userHint: msg, raw: msg };
   } catch {
-    return { retryable: status >= 500, userHint: errText.slice(0, 300), raw: errText };
+    return { retryable: status >= 500, switchModel: false, userHint: errText.slice(0, 300), raw: errText };
   }
+}
+
+/**
+ * Extrai status/mensagem de erros do SDK @google/genai ou JSON em string.
+ * @param {unknown} error
+ */
+export function extractGeminiErrorFields(error) {
+  const directStatus = Number(error?.status || error?.statusCode || 0) || 0;
+  let raw =
+    typeof error === 'string'
+      ? error
+      : error instanceof Error
+        ? error.message
+        : JSON.stringify(error);
+
+  /** @type {{ message: string, status: number, retryDelaySec?: number }} */
+  const fields = { message: raw, status: directStatus };
+
+  if (error && typeof error === 'object' && error.error?.message) {
+    fields.message = String(error.error.message);
+    fields.status = Number(error.error.code || error.error.status || directStatus) || directStatus;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.error?.message) {
+      fields.message = String(parsed.error.message);
+      fields.status = Number(parsed.error.code || parsed.error.status || fields.status) || fields.status;
+    }
+  } catch {
+    const jsonStart = raw.indexOf('{"error"');
+    if (jsonStart >= 0) {
+      try {
+        const parsed = JSON.parse(raw.slice(jsonStart));
+        if (parsed?.error?.message) {
+          fields.message = String(parsed.error.message);
+          fields.status = Number(parsed.error.code || parsed.error.status || fields.status) || fields.status;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const delayMatch = `${raw}\n${fields.message}`.match(
+    /retry(?:Delay|In)?["']?\s*[:=]\s*"?(\d+(?:\.\d+)?)s"?/i,
+  );
+  if (delayMatch) fields.retryDelaySec = Number(delayMatch[1]);
+
+  return fields;
+}
+
+/**
+ * Classifica erro Gemini para mensagem correta (evita falso "cota esgotada").
+ * @param {unknown} error
+ */
+export function classifyGeminiError(error) {
+  const { message, status, retryDelaySec } = extractGeminiErrorFields(error);
+  const msg = message;
+
+  if (status === 400 && /API key/i.test(msg)) {
+    return {
+      kind: 'invalid_key',
+      userMessage:
+        'Chave GEMINI_API_KEY inválida — gere uma nova em aistudio.google.com/apikey e salve em Contábil → IA.',
+      retryable: false,
+      switchModel: false,
+    };
+  }
+  if (status === 404 || /not found|is not supported/i.test(msg)) {
+    return {
+      kind: 'model_not_found',
+      userMessage: 'Modelo de IA indisponível nesta chave. Troque para gemini-2.5-flash em Contábil → IA.',
+      retryable: true,
+      switchModel: true,
+    };
+  }
+  if (status === 429 && /limit:\s*0/i.test(msg)) {
+    return {
+      kind: 'model_no_free_quota',
+      userMessage:
+        'O modelo selecionado não tem cota gratuita (limit: 0). Troque para gemini-2.5-flash em Contábil → IA.',
+      retryable: true,
+      switchModel: true,
+    };
+  }
+  if (status === 429 || /RESOURCE_EXHAUSTED/i.test(msg)) {
+    const waitHint = retryDelaySec
+      ? ` Aguarde ~${Math.ceil(retryDelaySec)}s e tente novamente.`
+      : ' Aguarde cerca de 1 minuto e tente novamente.';
+    return {
+      kind: 'rate_limit',
+      userMessage: `Limite temporário de requisições do Gemini.${waitHint}`,
+      retryable: true,
+      switchModel: true,
+    };
+  }
+  if (status === 503 || /UNAVAILABLE|high demand/i.test(msg)) {
+    return {
+      kind: 'unavailable',
+      userMessage: 'Gemini temporariamente indisponível — tentando novamente…',
+      retryable: true,
+      switchModel: true,
+    };
+  }
+
+  const trimmed = msg.length > 320 ? `${msg.slice(0, 320)}…` : msg;
+  return {
+    kind: 'other',
+    userMessage: trimmed || 'Falha na chamada ao Gemini.',
+    retryable: status >= 500,
+    switchModel: false,
+  };
+}
+
+/** Mensagem amigável — só fala em "cota" quando o erro é realmente 429/RESOURCE_EXHAUSTED. */
+export function formatGeminiErrorMessage(error) {
+  return classifyGeminiError(error).userMessage;
+}
+
+/** Modelos free tier a tentar, em ordem. */
+export function geminiModelsToTry(preferred) {
+  return modelsToTry(sanitizeGeminiModel(preferred), FREE_TIER_MODEL_CHAIN);
 }
 
 async function callGeminiOnce(model, key, params, signal) {
