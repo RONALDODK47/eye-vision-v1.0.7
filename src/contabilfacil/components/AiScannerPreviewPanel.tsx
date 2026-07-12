@@ -24,6 +24,10 @@ import {
   History,
   ArrowRight,
 } from 'lucide-react';
+import { extractExtratoWithAi } from '../../lib/aiExtratoExtractClient';
+import { fetchAiConfig } from '../ai/aiSettingsClient';
+import { detectExtratoBankHint } from '../../lib/extratoBankHint';
+
 
 /* ── Tipos ─────────────────────────────────────────────────────────────── */
 
@@ -134,15 +138,21 @@ export default function AiScannerPreviewPanel({
 
       setProcessingStep('IA analisando o documento linha a linha…');
 
-      const res = await fetch('/api/ai-extract-extrato', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images, fileName: file.name, statementYear, perPage: false }),
-        signal: AbortSignal.timeout(120_000),
+      const bankHint = detectExtratoBankHint(file.name, '');
+      const aiCfg = await fetchAiConfig();
+
+      const json = await extractExtratoWithAi({
+        images,
+        statementYear,
+        fileName: file.name,
+        providerId: aiCfg?.config?.providerId,
+        model: aiCfg?.config?.model,
+        perPage: images.length >= 2,
+        bankHint: bankHint ?? undefined,
       });
 
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.detail || json.reason || 'Erro na extração pela IA.');
+      if (!json.ok) throw new Error(json.detail || json.reason || 'Erro na extração pela IA.');
+
 
       const rows: AiScannerTransaction[] = (json.rows ?? []).map((r: any, idx: number) => {
         const credRaw = parseFloat(String(r.valorCredito ?? '').replace(/\./g, '').replace(',', '.')) || 0;
