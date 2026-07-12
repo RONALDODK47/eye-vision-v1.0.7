@@ -19,8 +19,6 @@ export const NUBANK_EXCLUSION_RULES = [
   'SALDO FINAL',
   'SALDO INICIAL',
   'SALDO FINAL DO PERÍODO',
-  'TOTAL DE ENTRADAS',
-  'TOTAL DE SAÍDAS',
   'RENDIMENTO LÍQUIDO',
   'VALORES EM R$',
   'MOVIMENTAÇÕES',
@@ -262,26 +260,19 @@ function inZoneValue(item: PDFTextItem, geo: NubankGeometry): boolean {
   return item.x >= geo.valueMinX - 4;
 }
 
-function findDateInRow(items: PDFTextItem[], geo: NubankGeometry): string {
-  const tok = items.find(
-    (it) => inZoneDate(it, geo) && RE_NUBANK_DATE.test(it.text.trim()),
-  );
-  return tok?.text.trim() ?? '';
-}
-
 function detectFlowFromRow(blob: string): NubankFlowSign | null {
   if (/TOTAL DE ENTRADAS/i.test(blob)) return 'entrada';
   if (/TOTAL DE SAÍDAS/i.test(blob)) return 'saida';
   return null;
 }
 
-function isDayHeaderRow(blob: string, items: PDFTextItem[], geo: NubankGeometry): boolean {
-  const hasDate = findDateInRow(items, geo).length > 0;
-  return hasDate && /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/.test(blob);
-}
-
-function isSectionHeaderRow(blob: string): boolean {
-  return /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/i.test(blob);
+function isFlowTotalRow(blob: string, items: PDFTextItem[], geo: NubankGeometry): boolean {
+  if (!detectFlowFromRow(blob)) return false;
+  return items.some(
+    (it) =>
+      inZoneHist(it, geo) &&
+      /^TOTAL DE ENTRADAS$|^TOTAL DE SAÍDAS$/i.test(it.text.trim()),
+  );
 }
 
 function shouldSkipNubankRow(
@@ -299,9 +290,7 @@ function shouldSkipNubankRow(
   if (/^\d{1,2}\s+DE\s+[A-Z]+\s+DE\s+\d{4}\s+A\s/i.test(blob)) return true;
   if (/^R\$/.test(blob) && /TOTAL DE ENTRADAS|SALDO FINAL/.test(blob)) return true;
 
-  if (isDayHeaderRow(blob, items, geo)) return true;
-
-  if (isSectionHeaderRow(blob)) return true;
+  if (isFlowTotalRow(blob, items, geo) && rowHasTransactionValue(items, geo)) return false;
 
   if (
     /SALDO INICIAL|RENDIMENTO LÍQUIDO|SALDO FINAL DO PERÍODO|SALDO DO DIA|VALORES EM R\$|^MOVIMENTAÇÕES$/i.test(
@@ -495,6 +484,21 @@ export function detectNubankTransactionRows(
     if (flowHit && rowCenterY >= flowZoneMinY && rowCenterY <= geo.faixaEnd + medianH) {
       currentFlow = flowHit;
       flush();
+      if (isFlowTotalRow(blob, row.items, geo) && rowHasTransactionValue(row.items, geo)) {
+        const dateAnchor =
+          findDateAnchorOnPage(textItems, geo, currentDate) ??
+          (currentDateY > 0
+            ? { text: currentDate, y: currentDateY, h: currentDateH }
+            : null);
+        out.push({
+          y: row.y,
+          height: row.height,
+          anchorDate: currentDate,
+          anchorDateY: dateAnchor?.y ?? currentDateY,
+          anchorDateH: dateAnchor?.h ?? currentDateH,
+          flowSign: flowHit,
+        });
+      }
       continue;
     }
 

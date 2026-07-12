@@ -200,6 +200,23 @@ function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber 
     if (flowHit && rowCenterY >= flowZoneMinY && rowCenterY <= geo.faixaEnd + geo.medianH) {
       currentFlow = flowHit;
       flush();
+      const isFlowTotal =
+        /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/i.test(blob) &&
+        row.items.some(
+          (it) =>
+            inZoneHist(it, geo) &&
+            /^TOTAL DE ENTRADAS$|^TOTAL DE SAÍDAS$/i.test(it.text.trim()),
+        );
+      const hasVal = row.items.some((it) => inZoneValue(it, geo) && isValueToken(it.text));
+      if (isFlowTotal && hasVal) {
+        out.push({
+          y: row.y,
+          height: row.height,
+          anchorDate: currentDate,
+          flowSign: flowHit,
+          blob,
+        });
+      }
       continue;
     }
 
@@ -211,11 +228,7 @@ function detectNubankTransactionRows(textItems, imgWidth, imgHeight, pageNumber 
       flush();
       continue;
     }
-    if (/SALDO INICIAL|RENDIMENTO|TOTAL DE ENTRADAS|TOTAL DE SAÍDAS|SALDO FINAL|SALDO DO DIA|MOVIMENTAÇÕES|TEM ALGUMA|EXTRATO GERADO|OUVIDORIA/i.test(blob)) {
-      flush();
-      continue;
-    }
-    if (anchor && /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/.test(blob)) {
+    if (/SALDO INICIAL|RENDIMENTO|SALDO FINAL|SALDO DO DIA|MOVIMENTAÇÕES|TEM ALGUMA|EXTRATO GERADO|OUVIDORIA/i.test(blob)) {
       flush();
       continue;
     }
@@ -316,14 +329,21 @@ for (let p = 1; p <= doc.numPages; p++) {
 }
 
 console.log('\n=== RESULTADO ===');
-console.log('Esperados:', expected.length, '| Detectados:', allRows.length);
-if (allRows.length !== expected.length) {
-  console.error('FALHA: quantidade de lançamentos incorreta');
+console.log('Esperados transações:', expected.length, '| Detectados total:', allRows.length);
+const totalRows = allRows.filter((r) => /TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/i.test(r.hist || r.blob || ''));
+console.log('Totais entradas/saídas:', totalRows.length, '(esperado 6)');
+if (totalRows.length !== 6) {
+  console.error('FALHA: quantidade de totais incorreta');
+  process.exit(1);
+}
+const txRows = allRows.filter((r) => !/TOTAL DE ENTRADAS|TOTAL DE SAÍDAS/i.test(r.hist || r.blob || ''));
+if (txRows.length !== expected.length) {
+  console.error('FALHA: quantidade de lançamentos incorreta', txRows.length);
   process.exit(1);
 }
 for (let i = 0; i < expected.length; i++) {
   const exp = expected[i];
-  const got = allRows[i];
+  const got = txRows[i];
   if (!got || !got.hist.toUpperCase().includes(exp.hint.toUpperCase())) {
     console.error('FALHA linha', i + 1, exp, got);
     process.exit(1);
@@ -338,4 +358,4 @@ for (let i = 0; i < expected.length; i++) {
     process.exit(1);
   }
 }
-console.log('OK —', allRows.length, 'lançamentos com datas e sinais corretos');
+console.log('OK —', txRows.length, 'lançamentos +', totalRows.length, 'totais com datas e sinais corretos');
