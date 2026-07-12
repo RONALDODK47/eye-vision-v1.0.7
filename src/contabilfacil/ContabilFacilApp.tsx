@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { AnimatePresence, motion } from 'motion/react';
 import type { ActiveTab } from './types';
 import TabLoadingFallback from './components/TabLoadingFallback';
@@ -15,12 +16,12 @@ import {
 import { resolveDebugContextFromActiveTab, setDebugContext } from './agent/debugContext';
 import { notifyDebugModuleLoaded } from './agent/browserConsoleBridge';
 
-const ManagerModule = lazy(() => import('./components/ManagerModule'));
-const PricingModule = lazy(() => import('./components/PricingModule'));
-const GestaoContabilModule = lazy(() => import('../gestaoContabil/GestaoContabilModule'));
-const AdminModule = lazy(() => import('./components/AdminModule'));
-const DebugModule = lazy(() => import('./components/DebugModule'));
-const EyeVisionAdminLoginGate = lazy(() => import('./components/EyeVisionAdminLoginGate'));
+const ManagerModule = lazyWithRetry(() => import('./components/ManagerModule'));
+const PricingModule = lazyWithRetry(() => import('./components/PricingModule'));
+const GestaoContabilModule = lazyWithRetry(() => import('../gestaoContabil/GestaoContabilModule'));
+const AdminModule = lazyWithRetry(() => import('./components/AdminModule'));
+const DebugModule = lazyWithRetry(() => import('./components/DebugModule'));
+const EyeVisionAdminLoginGate = lazyWithRetry(() => import('./components/EyeVisionAdminLoginGate'));
 
 type AppView = 'launcher' | 'module';
 

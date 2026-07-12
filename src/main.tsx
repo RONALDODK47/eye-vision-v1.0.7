@@ -5,9 +5,11 @@ import { AppErrorBoundary } from './components/AppErrorBoundary';
 import './index.css';
 import { deferIdle } from './contabilfacil/lib/deferIdle';
 import { installBrowserOperationalStorageGuard } from './contabilfacil/logic/localFolderAutoSave';
+import { installChunkLoadRecovery } from './lib/chunkLoadRecovery';
 
 /** Antes de qualquer leitura/gravação: dados operacionais só em memória + pasta + Docker. */
 installBrowserOperationalStorageGuard();
+installChunkLoadRecovery();
 
 export const DATA_HYDRATED_EVENT = 'contabilfacil:data-hydrated';
 

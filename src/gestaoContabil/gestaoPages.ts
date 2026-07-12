@@ -1,4 +1,5 @@
-import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
+import { type ComponentType, type LazyExoticComponent } from 'react';
+import { lazyWithRetry } from '../lib/lazyWithRetry';
 import type { LucideIcon } from 'lucide-react';
 import {
   Bell,
@@ -44,7 +45,7 @@ export const GESTAO_PAGES: GestaoPageDef[] = [
     route: 'Dashboard',
     label: 'Dashboard',
     icon: LayoutDashboard,
-    Component: lazy(() => import('@gestao/pages/Dashboard')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Dashboard')),
   },
   {
     id: 'Companies',
@@ -52,7 +53,7 @@ export const GESTAO_PAGES: GestaoPageDef[] = [
     label: 'Empresas',
     icon: Building2,
     shared: true,
-    Component: lazy(() => import('@gestao/pages/Companies')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Companies')),
   },
   {
     id: 'CalendarManagement',
@@ -60,14 +61,14 @@ export const GESTAO_PAGES: GestaoPageDef[] = [
     label: 'Calendário',
     icon: Calendar,
     shared: true,
-    Component: lazy(() => import('@gestao/pages/CalendarManagement')),
+    Component: lazyWithRetry(() => import('@gestao/pages/CalendarManagement')),
   },
   {
     id: 'Exits',
     route: 'Exits',
     label: 'Baixa e Saída',
     icon: LogOut,
-    Component: lazy(() => import('@gestao/pages/Exits')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Exits')),
   },
   {
     id: 'Chat',
@@ -75,28 +76,28 @@ export const GESTAO_PAGES: GestaoPageDef[] = [
     label: 'Chat',
     icon: MessagesSquare,
     shared: true,
-    Component: lazy(() => import('@gestao/pages/Chat')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Chat')),
   },
   {
     id: 'Notices',
     route: 'Notices',
     label: 'Recados',
     icon: MessageSquare,
-    Component: lazy(() => import('@gestao/pages/Notices')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Notices')),
   },
   {
     id: 'UsefulSites',
     route: 'UsefulSites',
     label: 'Links Úteis',
     icon: Globe,
-    Component: lazy(() => import('@gestao/pages/UsefulSites')),
+    Component: lazyWithRetry(() => import('@gestao/pages/UsefulSites')),
   },
   {
     id: 'Trash',
     route: 'Trash',
     label: 'Lixeira',
     icon: Trash2,
-    Component: lazy(() => import('@gestao/pages/Trash')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Trash')),
   },
   {
     id: 'AppSettings',
@@ -104,20 +105,20 @@ export const GESTAO_PAGES: GestaoPageDef[] = [
     label: 'Configurações',
     icon: Settings2,
     shared: true,
-    Component: lazy(() => import('@gestao/pages/AppSettings')),
+    Component: lazyWithRetry(() => import('@gestao/pages/AppSettings')),
   },
   {
     id: 'Profile',
     route: 'Profile',
     label: 'Perfil',
     icon: UserRound,
-    Component: lazy(() => import('@gestao/pages/Profile')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Profile')),
   },
   {
     id: 'Novidades',
     route: 'Novidades',
     label: 'Novidades',
     icon: Bell,
-    Component: lazy(() => import('@gestao/pages/Novidades')),
+    Component: lazyWithRetry(() => import('@gestao/pages/Novidades')),
   },
 ];

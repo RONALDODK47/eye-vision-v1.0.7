@@ -43,11 +43,20 @@ jobs:
 
       - name: Organizar pastas para GitHub Pages (/v1.0.49/)
         run: |
-          mkdir -p dist/v1.0.49
-          for item in index.html assets data _redirects; do
-            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/v1.0.49/"; fi
+          VERSION_DIR="v1.0.49"
+          mkdir -p "dist/$VERSION_DIR/assets"
+          # Mantém chunks antigos da mesma versão — evita 404 após redeploy com cache do browser.
+          if [ -d "gh-pages-prev/$VERSION_DIR/assets" ]; then
+            cp -r "gh-pages-prev/$VERSION_DIR/assets/." "dist/$VERSION_DIR/assets/"
+          fi
+          if [ -d "dist/assets" ]; then
+            cp -r "dist/assets/." "dist/$VERSION_DIR/assets/"
+            rm -rf dist/assets
+          fi
+          for item in index.html data _redirects; do
+            if [ -e "dist/$item" ]; then mv "dist/$item" "dist/$VERSION_DIR/"; fi
           done
-          cp "dist/v1.0.49/index.html" "dist/v1.0.49/404.html"
+          cp "dist/$VERSION_DIR/index.html" "dist/$VERSION_DIR/404.html"
           if [ -d gh-pages-prev ]; then
             for dir in gh-pages-prev/v1.0.*; do
               ver=$(basename "$dir")

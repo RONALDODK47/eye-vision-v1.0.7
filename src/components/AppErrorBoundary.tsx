@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { reportBrowserConsoleError } from '../contabilfacil/agent/browserConsoleBridge';
+import { isChunkLoadError } from '../lib/chunkLoadRecovery';
 
 type AppErrorBoundaryProps = {
   children: React.ReactNode;
@@ -20,6 +21,9 @@ export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, App
   componentDidCatch(error: unknown, errorInfo: React.ErrorInfo): void {
     reportBrowserConsoleError('react', error, errorInfo.componentStack ?? '');
     console.error('Erro não tratado na árvore React:', error, errorInfo);
+    if (isChunkLoadError(error)) {
+      window.setTimeout(() => window.location.reload(), 120);
+    }
   }
 
   private handleReload = (): void => {
