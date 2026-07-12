@@ -107,6 +107,8 @@ import {
   classifyExtratoDocument,
   type ExtratoDocumentKind,
 } from '../../lib/extratoPdfClassifier';
+import AiScannerPreviewPanel, { type AiScannerTransaction } from './AiScannerPreviewPanel';
+
 
 type ExtratoImportItemLike = {
   id: string;
@@ -336,6 +338,9 @@ export default function DataIngestionBox({
   const extratoImportModeRef = useRef<ExtratoDocumentKind | null>(null);
   /** Extrato: native_text → recorte; scanned_or_image → extração IA. */
   const [extratoDocumentKind, setExtratoDocumentKind] = useState<ExtratoDocumentKind | null>(null);
+  /** Controla exibição do painel de preview do scanner IA (erp.contabil UI). */
+  const [showScannerPreviewPanel, setShowScannerPreviewPanel] = useState(false);
+
   const [pendingOfxFile, setPendingOfxFile] = useState<File | null>(null);
   const [ofxBancoNome, setOfxBancoNome] = useState('');
   const [ofxContaBanco, setOfxContaBanco] = useState('');
@@ -622,8 +627,10 @@ export default function DataIngestionBox({
     setDominioPdfKind(null);
     extratoImportModeRef.current = 'scanned_or_image';
     setExtratoDocumentKind('scanned_or_image');
-    fileInputRefPdf.current?.click();
+    // Mostra o painel de prévia com upload+tabela (interface erp.contabil)
+    setShowScannerPreviewPanel(true);
   };
+
 
   const handleDominioPdfUpload = (kind: 'plano' | 'balancete') => {
     dominioPdfTargetRef.current = kind;
@@ -1952,6 +1959,70 @@ export default function DataIngestionBox({
         />
         </Suspense>
       ) : null}
+
+      {showScannerPreviewPanel && (
+        <div className="fixed inset-0 z-[120] bg-zinc-950 text-white flex flex-col overflow-y-auto">
+          <header className="border-b border-zinc-800 bg-zinc-900 px-6 py-4 flex items-center justify-between shrink-0">
+            <div>
+              <p className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Scanner e Imagem IA</p>
+              <h2 className="text-sm font-black uppercase text-white">Importador Inteligente</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowScannerPreviewPanel(false);
+                setExtratoDocumentKind(null);
+              }}
+              className="px-4 py-2 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-black uppercase tracking-widest transition-colors"
+            >
+              Fechar
+            </button>
+          </header>
+          <div className="flex-1 p-6 max-w-6xl mx-auto w-full">
+            <AiScannerPreviewPanel
+              statementYear={String(new Date().getFullYear())}
+              onConfirm={(transactions, saldoAnterior) => {
+                setShowScannerPreviewPanel(false);
+                setExtratoDocumentKind(null);
+                
+                // Mapeia AiScannerTransaction[] para GenericOcrRow[]
+                const rows: GenericOcrRow[] = transactions.map(t => {
+                  let dateStr = '';
+                  if (t.date) {
+                    const parts = t.date.split('-');
+                    if (parts.length === 3) {
+                      dateStr = `${parts[2]}/${parts[1]}/${parts[0]}`;
+                    } else {
+                      dateStr = t.date;
+                    }
+                  }
+                  
+                  const isCredit = t.type === 'CREDIT';
+                  const valorCredito = isCredit ? Math.abs(t.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+                  const valorDebito  = !isCredit ? Math.abs(t.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+                  
+                  return {
+                    data: dateStr,
+                    descricao: t.description,
+                    valorCredito,
+                    valorDebito,
+                    valorMisto: '',
+                    _linhaOcr: `${t.date || ''} ${t.description || ''} ${t.amount || ''}`.trim()
+                  };
+                });
+                
+                // Passa as linhas e o saldo anterior para o fluxo de conciliação
+                handleOcrConfirm(rows, { saldoAnterior });
+              }}
+              onCancel={() => {
+                setShowScannerPreviewPanel(false);
+                setExtratoDocumentKind(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
