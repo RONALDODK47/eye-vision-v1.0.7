@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, KeyRound, UserRound, Trash2 } from 'lucide-react';
+import { Copy, KeyRound, Settings2, UserRound, Trash2 } from 'lucide-react';
 import { ModulePageHeader } from '../ModulePageHeader';
 import {
   CF_FIELD_COL,
@@ -14,11 +14,22 @@ import {
   type EyeVisionModuleKey,
   type EyeVisionStaffUser,
 } from '../../logic/eyeVisionAdmin';
+import OfficePermissoesModal from './OfficePermissoesModal';
 
 function copyText(text: string) {
   void navigator.clipboard?.writeText(text).catch(() => {
     /* ignore */
   });
+}
+
+function formatUserModules(user: EyeVisionStaffUser): string {
+  const parts = (Object.keys(EYE_VISION_MODULE_LABELS) as EyeVisionModuleKey[])
+    .filter((k) => user.effectiveModuleAccess[k])
+    .map((k) => EYE_VISION_MODULE_LABELS[k]);
+  if (!parts.length) return 'Sem módulos';
+  let text = parts.join(' · ');
+  if (user.canEditModuleAccess) text += ' · pode editar abas';
+  return text;
 }
 
 function UserCard({ user }: { user: EyeVisionStaffUser }) {
@@ -28,20 +39,22 @@ function UserCard({ user }: { user: EyeVisionStaffUser }) {
       <div className="min-w-0 flex-1">
         <p className="text-xs font-black uppercase truncate">{user.displayName}</p>
         <p className="text-[9px] font-mono opacity-50 truncate">{user.email}</p>
-        <p className="text-[8px] font-bold uppercase opacity-45 mt-1">
-          {user.effectiveModuleAccess.manager ? 'Gerencial' : ''}
-          {user.effectiveModuleAccess.manager && user.effectiveModuleAccess.pricing ? ' · ' : ''}
-          {user.effectiveModuleAccess.pricing ? 'Precificação' : ''}
-          {!user.effectiveModuleAccess.manager && !user.effectiveModuleAccess.pricing
-            ? 'Sem módulos'
-            : ''}
-        </p>
+        <p className="text-[8px] font-bold uppercase opacity-45 mt-1">{formatUserModules(user)}</p>
       </div>
       {!user.isActive ? (
         <span className="text-[8px] font-black uppercase text-red-700 shrink-0">Inativo</span>
       ) : null}
     </div>
   );
+}
+
+function officeModulesSummary(
+  moduleAccess: { manager: boolean; pricing: boolean; gestao: boolean },
+): string {
+  const parts = (Object.keys(EYE_VISION_MODULE_LABELS) as EyeVisionModuleKey[])
+    .filter((k) => moduleAccess[k])
+    .map((k) => EYE_VISION_MODULE_LABELS[k]);
+  return parts.length ? parts.join(' · ') : 'Nenhum software ativo';
 }
 
 export default function AdminEmpresasPanel() {
@@ -53,13 +66,16 @@ export default function AdminEmpresasPanel() {
     regenerateToken,
     isRegeneratingToken,
     patchOfficeModules,
+    patchUserModules,
     isPatchingOffice,
+    isPatchingUser,
     deleteOffice,
     isDeletingOffice,
   } = useEyeVisionAdmin();
 
   const [newOfficeName, setNewOfficeName] = useState('');
   const [selectedToken, setSelectedToken] = useState<string | null>(null);
+  const [permissoesOpen, setPermissoesOpen] = useState(false);
 
   const activeOffice = offices.find((o) => o.token === selectedToken) ?? offices[0] ?? null;
   const activeToken = activeOffice?.token ?? null;
@@ -104,22 +120,10 @@ export default function AdminEmpresasPanel() {
     try {
       await deleteOffice({ token: activeOffice.token });
       setSelectedToken(null);
+      setPermissoesOpen(false);
       window.alert('Empresa excluída com sucesso.');
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Não foi possível excluir a empresa.');
-    }
-  };
-
-  const toggleOfficeModule = async (key: EyeVisionModuleKey) => {
-    if (!activeOffice) return;
-    const next = {
-      ...activeOffice.moduleAccess,
-      [key]: !activeOffice.moduleAccess[key],
-    };
-    try {
-      await patchOfficeModules({ token: activeOffice.token, moduleAccess: next });
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : 'Não foi possível atualizar a empresa.');
     }
   };
 
@@ -165,7 +169,10 @@ export default function AdminEmpresasPanel() {
                 <button
                   key={office.token}
                   type="button"
-                  onClick={() => setSelectedToken(office.token)}
+                  onClick={() => {
+                    setSelectedToken(office.token);
+                    setPermissoesOpen(false);
+                  }}
                   className={cn(
                     'w-full text-left px-3 py-2 border border-transparent text-[10px] font-black uppercase transition-colors',
                     activeToken === office.token
@@ -218,29 +225,25 @@ export default function AdminEmpresasPanel() {
             </div>
 
             <div className="border border-brand-border bg-brand-sidebar/15 p-4 space-y-3">
-              <div>
-                <p className="text-[10px] font-black uppercase">Módulos da empresa</p>
-                <p className="text-[9px] opacity-60 mt-1 leading-relaxed">
-                  Define quais abas aparecem para <strong>todos</strong> os utilizadores com este
-                  token no login.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-4">
-                {(Object.keys(EYE_VISION_MODULE_LABELS) as EyeVisionModuleKey[]).map((key) => (
-                  <label
-                    key={key}
-                    className="flex items-center gap-2 text-[10px] font-black uppercase cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      className="accent-brand-border"
-                      checked={activeOffice.moduleAccess[key]}
-                      disabled={isPatchingOffice}
-                      onChange={() => void toggleOfficeModule(key)}
-                    />
-                    {EYE_VISION_MODULE_LABELS[key]}
-                  </label>
-                ))}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase">Módulos da empresa</p>
+                  <p className="text-[9px] opacity-60 mt-1 leading-relaxed">
+                    Define quais softwares e abas do Gestão Empresarial ficam disponíveis para este
+                    token. Também escolha quem pode editar estas configurações.
+                  </p>
+                  <p className="text-[9px] font-mono opacity-50 mt-2">
+                    {officeModulesSummary(activeOffice.moduleAccess)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPermissoesOpen(true)}
+                  className="technical-button-primary flex items-center gap-2 text-[10px] shrink-0"
+                >
+                  <Settings2 size={14} />
+                  Gerir abas e permissões
+                </button>
               </div>
             </div>
 
@@ -261,6 +264,29 @@ export default function AdminEmpresasPanel() {
                 </div>
               )}
             </div>
+
+            <OfficePermissoesModal
+              open={permissoesOpen}
+              office={activeOffice}
+              users={officeUsers}
+              isSaving={isPatchingOffice || isPatchingUser}
+              onClose={() => setPermissoesOpen(false)}
+              onSaveOffice={async ({ moduleAccess, gestaoTabAccess }) => {
+                await patchOfficeModules({
+                  token: activeOffice.token,
+                  moduleAccess,
+                  gestaoTabAccess,
+                });
+              }}
+              onSaveUser={async ({ email, moduleAccess, gestaoTabAccess, canEditModuleAccess }) => {
+                await patchUserModules({
+                  email,
+                  moduleAccess,
+                  gestaoTabAccess,
+                  canEditModuleAccess,
+                });
+              }}
+            />
           </div>
         ) : (
           <div className="technical-panel p-6 flex items-center justify-center text-[10px] opacity-60">

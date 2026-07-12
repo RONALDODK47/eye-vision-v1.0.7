@@ -1,17 +1,50 @@
 import type { ActiveTab } from '../types';
 import { INOV_OFFICE_TOKEN, LEGACY_DEV_OFFICE_TOKEN } from '../../gestaoContabil/authContextFallback';
 
-export type EyeVisionModuleKey = 'manager' | 'pricing';
+export type EyeVisionModuleKey = 'manager' | 'pricing' | 'gestao';
 
 export interface EyeVisionModuleAccess {
   manager: boolean;
   pricing: boolean;
+  gestao: boolean;
 }
+
+/** Abas internas do módulo Gestão Empresarial (sem importar gestaoPages — evita bundle pesado no worker). */
+export type GestaoPageId =
+  | 'Dashboard'
+  | 'Companies'
+  | 'CalendarManagement'
+  | 'Exits'
+  | 'Chat'
+  | 'Notices'
+  | 'UsefulSites'
+  | 'Trash'
+  | 'AppSettings'
+  | 'Profile'
+  | 'Novidades';
+
+/** Abas internas do módulo Gestão Empresarial. */
+export type GestaoTabAccess = Partial<Record<GestaoPageId, boolean>>;
+
+export const GESTAO_PAGE_IDS: GestaoPageId[] = [
+  'Dashboard',
+  'Companies',
+  'CalendarManagement',
+  'Exits',
+  'Chat',
+  'Notices',
+  'UsefulSites',
+  'Trash',
+  'AppSettings',
+  'Profile',
+  'Novidades',
+];
 
 export interface EyeVisionOfficeRecord {
   name: string;
   created_at: string;
   module_access?: EyeVisionModuleAccess;
+  gestao_tab_access?: GestaoTabAccess;
 }
 
 export type EyeVisionOfficesMap = Record<string, EyeVisionOfficeRecord>;
@@ -19,12 +52,52 @@ export type EyeVisionOfficesMap = Record<string, EyeVisionOfficeRecord>;
 export const EYE_VISION_MODULE_LABELS: Record<EyeVisionModuleKey, string> = {
   manager: 'Gerencial',
   pricing: 'Precificação',
+  gestao: 'Gestão Empresarial',
 };
 
 export const DEFAULT_EYE_VISION_MODULE_ACCESS: EyeVisionModuleAccess = {
   manager: true,
   pricing: true,
+  gestao: true,
 };
+
+export function defaultGestaoTabAccess(): GestaoTabAccess {
+  const out: GestaoTabAccess = {};
+  for (const id of GESTAO_PAGE_IDS) out[id] = true;
+  return out;
+}
+
+export function normalizeGestaoTabAccess(raw: unknown): GestaoTabAccess {
+  const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const out: GestaoTabAccess = {};
+  for (const id of GESTAO_PAGE_IDS) {
+    out[id] = id in src ? Boolean(src[id]) : true;
+  }
+  return out;
+}
+
+export function getOfficeGestaoTabAccess(
+  offices: EyeVisionOfficesMap,
+  token: string,
+): GestaoTabAccess {
+  const tok = String(token || '').trim();
+  if (!tok) return defaultGestaoTabAccess();
+  return normalizeGestaoTabAccess(offices[tok]?.gestao_tab_access);
+}
+
+/** Permissão efetiva das abas Gestão: empresa ∩ utilizador (utilizador só restringe). */
+export function resolveEffectiveGestaoTabAccess(
+  officeAccess: GestaoTabAccess,
+  userAccess?: GestaoTabAccess | null,
+): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const id of GESTAO_PAGE_IDS) {
+    const officeOk = officeAccess[id] !== false;
+    const userOk = userAccess ? userAccess[id] !== false : true;
+    if (!officeOk || !userOk) out[id] = false;
+  }
+  return out;
+}
 
 export function normalizeEyeVisionModuleAccess(raw: unknown): EyeVisionModuleAccess {
   const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
@@ -33,6 +106,8 @@ export function normalizeEyeVisionModuleAccess(raw: unknown): EyeVisionModuleAcc
       'manager' in src ? Boolean(src.manager) : DEFAULT_EYE_VISION_MODULE_ACCESS.manager,
     pricing:
       'pricing' in src ? Boolean(src.pricing) : DEFAULT_EYE_VISION_MODULE_ACCESS.pricing,
+    gestao:
+      'gestao' in src ? Boolean(src.gestao) : DEFAULT_EYE_VISION_MODULE_ACCESS.gestao,
   };
 }
 
@@ -45,6 +120,7 @@ export function resolveEffectiveModuleAccess(
   return {
     manager: officeAccess.manager && userAccess.manager,
     pricing: officeAccess.pricing && userAccess.pricing,
+    gestao: officeAccess.gestao && userAccess.gestao,
   };
 }
 
@@ -67,6 +143,7 @@ export function canAccessEyeVisionModule(
     return access.manager;
   }
   if (tab === 'pricing') return access.pricing;
+  if (tab === 'gestao') return access.gestao;
   if (tab === 'admin') return isAdmin;
   return true;
 }
@@ -84,6 +161,7 @@ export function parseEyeVisionOffices(raw: unknown): EyeVisionOfficesMap {
       name: name || tok,
       created_at: created_at || new Date(0).toISOString(),
       module_access: normalizeEyeVisionModuleAccess(record.module_access),
+      gestao_tab_access: normalizeGestaoTabAccess(record.gestao_tab_access),
     };
   }
   return out;
@@ -105,6 +183,7 @@ export interface EyeVisionOfficeView {
   name: string;
   created_at: string;
   moduleAccess: EyeVisionModuleAccess;
+  gestaoTabAccess: GestaoTabAccess;
 }
 
 export function buildOfficeViews(
@@ -126,6 +205,7 @@ export function buildOfficeViews(
         name: meta?.name || fallback || token,
         created_at: meta?.created_at || '',
         moduleAccess: getOfficeModuleAccess(offices, token),
+        gestaoTabAccess: getOfficeGestaoTabAccess(offices, token),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
@@ -138,6 +218,9 @@ export interface EyeVisionStaffUser {
   isActive: boolean;
   moduleAccess: EyeVisionModuleAccess;
   effectiveModuleAccess: EyeVisionModuleAccess;
+  gestaoTabAccess: GestaoTabAccess;
+  effectiveGestaoTabAccess: Record<string, boolean>;
+  canEditModuleAccess: boolean;
 }
 
 export function isInternalStaffClient(entry: Record<string, unknown> | null | undefined): boolean {

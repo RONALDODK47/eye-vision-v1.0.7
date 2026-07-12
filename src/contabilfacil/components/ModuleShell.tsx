@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
-import { ArrowLeft, LogOut } from 'lucide-react';
+import { ArrowLeft, Database, LogOut } from 'lucide-react';
 import { launcherEntry } from '../tabLauncher/tabLauncherCatalog';
 import type { ActiveTab } from '../types';
 import ApiStatusBar from './ApiStatusBar';
 import PersistenceStatusBar from './PersistenceStatusBar';
 import AdminOfficeTokenSwitcher from './AdminOfficeTokenSwitcher';
 import WorkspaceOfflineBanner from './WorkspaceOfflineBanner';
+import { resolveStorageBackendMode, storageBackendLabel } from '../../lib/storageBackend';
+import { useCloudAccess } from '../../gestaoContabil/useCloudAccessFallback';
 // @ts-expect-error módulo JSX da gestão contábil
 import { useAuth } from '../../gestaoContabil/gestaoAuth';
 
@@ -18,6 +20,10 @@ export interface ModuleShellProps {
 export function ModuleShell({ activeTab, onBack, children }: ModuleShellProps) {
   const meta = launcherEntry(activeTab);
   const { user, logout } = useAuth();
+  const { isAdminEmail } = useCloudAccess();
+  const adminMode = activeTab === 'admin' && isAdminEmail;
+  const storageMode = resolveStorageBackendMode();
+  const storageLabel = storageBackendLabel(storageMode);
 
   return (
     <div className="h-screen bg-brand-bg text-brand-text font-sans flex flex-col overflow-hidden">
@@ -41,7 +47,22 @@ export function ModuleShell({ activeTab, onBack, children }: ModuleShellProps) {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <AdminOfficeTokenSwitcher />
+            {adminMode ? (
+              <>
+                <span
+                  className="hidden sm:inline-flex items-center gap-1.5 text-[9px] font-mono uppercase opacity-60 border border-brand-border/40 px-2 py-1"
+                  title={
+                    storageMode === 'docker'
+                      ? 'Dados no Docker local (PostgreSQL + MinIO)'
+                      : 'Dados no Supabase via API (Render)'
+                  }
+                >
+                  <Database size={12} aria-hidden="true" />
+                  {storageLabel}
+                </span>
+                <AdminOfficeTokenSwitcher adminMode />
+              </>
+            ) : null}
             {user ? (
               <button
                 type="button"

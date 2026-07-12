@@ -1,5 +1,5 @@
 /**
- * Seletor de token de empresa — visível apenas para o administrador.
+ * Seletor de token de empresa — visível apenas no módulo Administrador (modo adm).
  */
 import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, Loader2 } from 'lucide-react';
@@ -27,7 +27,7 @@ function readActiveToken(): string {
   return stored || LEGACY_DEV_OFFICE_TOKEN;
 }
 
-export default function AdminOfficeTokenSwitcher() {
+export default function AdminOfficeTokenSwitcher({ adminMode = false }: { adminMode?: boolean }) {
   const { isAdminEmail, companyToken, config } = useCloudAccess();
   const { offices } = useEyeVisionAdmin();
   const [busy, setBusy] = useState(false);
@@ -88,7 +88,7 @@ export default function AdminOfficeTokenSwitcher() {
     return () => window.removeEventListener('gc-company-token-changed', sync);
   }, []);
 
-  if (!isAdminEmail) return null;
+  if (!isAdminEmail || !adminMode) return null;
 
   const selectValue = options.some((o) => o.token === selectedToken)
     ? selectedToken

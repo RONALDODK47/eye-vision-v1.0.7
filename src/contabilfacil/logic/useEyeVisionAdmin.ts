@@ -6,12 +6,18 @@ import { dbClient } from '../../gestaoContabil/dbClientFallback';
 import { useCloudAccess } from '../../gestaoContabil/useCloudAccessFallback';
 import {
   buildOfficeViews,
+  defaultGestaoTabAccess,
   getOfficeModuleAccess,
+  getOfficeGestaoTabAccess,
   isInternalStaffClient,
   normalizeEyeVisionModuleAccess,
+  normalizeGestaoTabAccess,
   parseEyeVisionOffices,
+  resolveEffectiveGestaoTabAccess,
   resolveEffectiveModuleAccess,
   staffDisplayName,
+  type EyeVisionModuleAccess,
+  type GestaoTabAccess,
   type EyeVisionStaffUser,
 } from './eyeVisionAdmin';
 
@@ -75,7 +81,11 @@ export function useEyeVisionAdmin() {
       if (!assignedToken) continue;
 
       const officeAccess = getOfficeModuleAccess(officesMap, assignedToken);
+      const officeGestaoTabs = getOfficeGestaoTabAccess(officesMap, assignedToken);
       const userAccess = normalizeEyeVisionModuleAccess(row.eye_vision_module_access);
+      const userGestaoTabs = normalizeGestaoTabAccess(row.tab_access);
+      const hasUserModuleOverride = 'eye_vision_module_access' in row;
+      const hasUserTabOverride = 'tab_access' in row;
 
       const profile = (profiles as Record<string, unknown>[]).find(
         (p) => String(p.email || '').trim().toLowerCase() === email,
@@ -88,8 +98,17 @@ export function useEyeVisionAdmin() {
           String(profile?.display_name || profile?.gc_login_username || email),
         assignedToken,
         isActive: row.is_active !== false,
-        moduleAccess: userAccess,
-        effectiveModuleAccess: resolveEffectiveModuleAccess(officeAccess, userAccess),
+        moduleAccess: hasUserModuleOverride ? userAccess : officeAccess,
+        effectiveModuleAccess: resolveEffectiveModuleAccess(
+          officeAccess,
+          hasUserModuleOverride ? userAccess : null,
+        ),
+        gestaoTabAccess: hasUserTabOverride ? userGestaoTabs : officeGestaoTabs,
+        effectiveGestaoTabAccess: resolveEffectiveGestaoTabAccess(
+          officeGestaoTabs,
+          hasUserTabOverride ? userGestaoTabs : null,
+        ),
+        canEditModuleAccess: row.can_edit_office_module_access === true,
       };
 
       const list = grouped.get(assignedToken) ?? [];
@@ -123,7 +142,8 @@ export function useEyeVisionAdmin() {
       offices[newToken] = {
         name: officeName,
         created_at: new Date().toISOString(),
-        module_access: { manager: true, pricing: true },
+        module_access: { manager: true, pricing: true, gestao: true },
+        gestao_tab_access: defaultGestaoTabAccess(),
       };
 
       await dbClient.entities.CloudAccessControl.updateConfig({
@@ -159,7 +179,8 @@ export function useEyeVisionAdmin() {
       const meta = offices[oldToken] ?? {
         name,
         created_at: new Date().toISOString(),
-        module_access: { manager: true, pricing: true },
+        module_access: { manager: true, pricing: true, gestao: true },
+        gestao_tab_access: defaultGestaoTabAccess(),
       };
       delete offices[oldToken];
       offices[newToken] = { ...meta, name: meta.name || name };
@@ -197,9 +218,11 @@ export function useEyeVisionAdmin() {
     mutationFn: async ({
       token,
       moduleAccess,
+      gestaoTabAccess,
     }: {
       token: string;
-      moduleAccess: { manager: boolean; pricing: boolean };
+      moduleAccess: EyeVisionModuleAccess;
+      gestaoTabAccess?: GestaoTabAccess;
     }) => {
       const tok = String(token || '').trim();
       if (!tok) throw new Error('Token inválido.');
@@ -210,11 +233,13 @@ export function useEyeVisionAdmin() {
       const current = offices[tok] ?? {
         name: tok,
         created_at: new Date().toISOString(),
-        module_access: { manager: true, pricing: true },
+        module_access: { manager: true, pricing: true, gestao: true },
+        gestao_tab_access: defaultGestaoTabAccess(),
       };
       offices[tok] = {
         ...current,
         module_access: moduleAccess,
+        ...(gestaoTabAccess ? { gestao_tab_access: gestaoTabAccess } : {}),
       };
 
       await dbClient.entities.CloudAccessControl.updateConfig({
@@ -229,15 +254,26 @@ export function useEyeVisionAdmin() {
     mutationFn: async ({
       email,
       moduleAccess,
+      gestaoTabAccess,
+      canEditModuleAccess,
     }: {
       email: string;
-      moduleAccess: { manager: boolean; pricing: boolean };
+      moduleAccess: EyeVisionModuleAccess;
+      gestaoTabAccess?: GestaoTabAccess;
+      canEditModuleAccess?: boolean;
     }) => {
       if (!adminUid) throw new Error('Sessão em falta.');
+      const patch: Record<string, unknown> = {
+        eye_vision_module_access: moduleAccess,
+      };
+      if (gestaoTabAccess) patch.tab_access = gestaoTabAccess;
+      if (typeof canEditModuleAccess === 'boolean') {
+        patch.can_edit_office_module_access = canEditModuleAccess;
+      }
       await dbClient.entities.CloudAccessControl.upsertClient({
         adminUid,
         email,
-        patch: { eye_vision_module_access: moduleAccess },
+        patch,
       });
     },
     onSuccess: refresh,

@@ -135,6 +135,7 @@ export default defineConfig(() => ({
         '@/lib/AuthContext': GESTAO_AUTH_CONTEXT,
         '@/lib/authContextCore': GESTAO_AUTH_CORE,
         '@/lib/useCloudAccess': path.resolve(__dirname, 'src/gestaoContabil/useCloudAccessBridge.ts'),
+        '@/api/dbClient': path.resolve(GESTAO_SRC, 'api/dbClient.js'),
         '@tanstack/react-query': REACT_QUERY_PKG,
         firebase: path.resolve(__dirname, 'node_modules/firebase'),
       },
@@ -173,6 +174,7 @@ export default defineConfig(() => ({
     },
     worker: {
       format: 'es',
+      plugins: () => [gestaoAtAlias()],
     },
     build: {
       rollupOptions: {

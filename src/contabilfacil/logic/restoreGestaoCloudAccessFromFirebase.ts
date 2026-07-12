@@ -59,14 +59,14 @@ function buildConfigPatch(config: GenericRecord): GenericRecord {
     offices[LEGACY_DEV_OFFICE_TOKEN] = {
       name: 'INOV / Legado Firebase',
       created_at: new Date().toISOString(),
-      module_access: { manager: true, pricing: true },
+      module_access: { manager: true, pricing: true, gestao: true },
     };
   }
   if (!offices[INOV_OFFICE_TOKEN]) {
     offices[INOV_OFFICE_TOKEN] = {
       name: 'INOV',
       created_at: new Date().toISOString(),
-      module_access: { manager: true, pricing: true },
+      module_access: { manager: true, pricing: true, gestao: true },
     };
   }
   patch.eye_vision_offices = offices;

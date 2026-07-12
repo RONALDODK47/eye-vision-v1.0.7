@@ -20,10 +20,10 @@ import { enrichNaturezaSaldoImportado } from './naturezaContabil';
 import { filtrarRazaoPorPeriodo, montarBalanceteComPeriodo } from './razaoContabil';
 import { parseBrDateToTime } from './dateBounds';
 import {
-  loadCompaniesRegistry,
+  loadCompaniesRegistryLite,
   normalizeCompanyName,
-  readManagerData,
-} from '../../contabilfacil/logic/companyWorkspace';
+  readManagerDataLite,
+} from './coligadaWorkspaceLite';
 import {
   isContaColigadaNome,
   listAiColigadasParaIa,
@@ -64,7 +64,7 @@ function parTransferencia(
 
 function empresaExisteNoSistema(nome: string): boolean {
   const alvo = normalizeCompanyName(nome);
-  return loadCompaniesRegistry().some((c) => c.name === alvo);
+  return loadCompaniesRegistryLite().some((c) => c.name === alvo);
 }
 
 function coligadaConhecidaNaIa(empresaAtual: string, nomeColigada: string): boolean {
@@ -173,7 +173,7 @@ function buscarNoExtrato(
 ): EspelhoColigada | null {
   let rows: ExtratoRowLite[] = [];
   try {
-    rows = readManagerData<ExtratoRowLite>(empresa, 'extrato');
+    rows = readManagerDataLite<ExtratoRowLite>(empresa, 'extrato');
   } catch {
     return null;
   }
@@ -243,7 +243,7 @@ function resolverEspelhoColigada(params: {
   let coligExtrato: EspelhoColigada | null = null;
   if (empresaExisteNoSistema(empresaColigada)) {
     try {
-      const razaoColig = readManagerData<VisionBalanceteRow>(empresaColigada, 'razao');
+      const razaoColig = readManagerDataLite<VisionBalanceteRow>(empresaColigada, 'razao');
       const razaoColigPeriodo = filtrarRazaoPorPeriodo(razaoColig, periodo.de, periodo.ate);
       coligRazao = buscarNoRazao(razaoColigPeriodo, clsDeb, clsCred, 'razao_coligada');
     } catch {

@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Database, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { ActiveTab } from '../types';
-import {
-  resolveStorageBackendMode,
-  storageBackendLabel,
-} from '../../lib/storageBackend';
 import {
   TAB_LAUNCHER_CATALOG,
   type TabLauncherEntry,
@@ -16,7 +12,6 @@ import {
 } from '../agent/browserConsoleBridge';
 // @ts-expect-error módulo JSX da gestão contábil
 import { useAuth } from '../../gestaoContabil/gestaoAuth';
-import AdminOfficeTokenSwitcher from './AdminOfficeTokenSwitcher';
 import { useEyeVisionModuleAccess } from '../logic/useEyeVisionModuleAccess';
 import { canAccessEyeVisionModule } from '../logic/eyeVisionAdmin';
 
@@ -69,8 +64,6 @@ export function TabLauncher({ onOpenModule }: TabLauncherProps) {
   const [debugIssueCount, setDebugIssueCount] = useState(0);
   const { user, logout } = useAuth();
   const { isAdminEmail, moduleAccess } = useEyeVisionModuleAccess();
-  const storageMode = resolveStorageBackendMode();
-  const storageLabel = storageBackendLabel(storageMode);
 
   useEffect(() => {
     let throttle: ReturnType<typeof setTimeout> | null = null;
@@ -100,30 +93,16 @@ export function TabLauncher({ onOpenModule }: TabLauncherProps) {
       <header className="h-14 border-b border-brand-border px-6 flex items-center justify-between shrink-0">
         <div className="font-black text-xl tracking-tighter">EYE VISION</div>
         <div className="flex items-center gap-2">
-          <span
-            className="hidden sm:inline-flex items-center gap-1.5 text-[9px] font-mono uppercase opacity-60 border border-brand-border/40 px-2 py-1"
-            title={
-              storageMode === 'docker'
-                ? 'Dados no Docker local (PostgreSQL + MinIO)'
-                : 'Dados no Supabase via API (Render)'
-            }
-          >
-            <Database size={12} aria-hidden="true" />
-            {storageLabel}
-          </span>
           {user ? (
-            <>
-              <AdminOfficeTokenSwitcher />
-              <button
-                type="button"
-                onClick={() => void logout()}
-                className="technical-button flex items-center gap-2 text-[10px]"
-                title="Sair"
-              >
-                <LogOut size={14} />
-                Sair
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="technical-button flex items-center gap-2 text-[10px]"
+              title="Sair"
+            >
+              <LogOut size={14} />
+              Sair
+            </button>
           ) : null}
         </div>
       </header>
@@ -135,9 +114,6 @@ export function TabLauncher({ onOpenModule }: TabLauncherProps) {
             <h1 className="text-2xl font-black uppercase tracking-tighter mt-1">Escolha o software</h1>
             <p className="text-[11px] font-mono opacity-60 mt-2 max-w-xl">
               Cada aba roda sozinha — só o módulo escolhido carrega na memória. Use a seta para voltar aqui.
-              {' '}
-              Dados salvos automaticamente em <strong className="opacity-80">{storageLabel}</strong> — sem pasta
-              local no navegador.
             </p>
           </div>
 

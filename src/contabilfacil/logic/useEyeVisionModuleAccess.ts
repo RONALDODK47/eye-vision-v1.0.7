@@ -17,7 +17,7 @@ export function useEyeVisionModuleAccess(): {
 
   const moduleAccess = useMemo(() => {
     if (isAdminEmail) {
-      return { manager: true, pricing: true };
+      return { manager: true, pricing: true, gestao: true };
     }
 
     const offices = parseEyeVisionOffices(config?.eye_vision_offices);

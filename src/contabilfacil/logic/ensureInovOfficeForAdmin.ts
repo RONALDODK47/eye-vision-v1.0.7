@@ -52,7 +52,7 @@ export async function ensureInovOfficeForAdmin(adminUid: string): Promise<void> 
     offices[INOV_OFFICE_TOKEN] = {
       name: 'INOV',
       created_at: new Date().toISOString(),
-      module_access: { manager: true, pricing: true },
+      module_access: { manager: true, pricing: true, gestao: true },
     };
     configChanged = true;
   }
