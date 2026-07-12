@@ -46,6 +46,16 @@ function pickValue(source, key, fallback = '') {
   return value || fallback;
 }
 
+function isValidUrl(value) {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function applyDefault(targetObj, sourceObj) {
   for (const [key, fallback] of Object.entries(sourceObj)) {
     if (targetObj[key] === undefined || looksLikePlaceholder(targetObj[key])) {
@@ -126,7 +136,9 @@ if (!targetEnv.DATABASE_URL || looksLikePlaceholder(targetEnv.DATABASE_URL)) {
   errors.push('DATABASE_URL');
 }
 
-const hasMinioS3 = Boolean(targetEnv.MINIO_S3_ENDPOINT && !looksLikePlaceholder(targetEnv.MINIO_S3_ENDPOINT));
+const hasMinioS3 = Boolean(
+  targetEnv.MINIO_S3_ENDPOINT && !looksLikePlaceholder(targetEnv.MINIO_S3_ENDPOINT) && isValidUrl(targetEnv.MINIO_S3_ENDPOINT),
+);
 const hasMinioParts = Boolean(
   targetEnv.MINIO_ENDPOINT &&
   targetEnv.MINIO_ACCESS_KEY &&
@@ -134,15 +146,15 @@ const hasMinioParts = Boolean(
   !looksLikePlaceholder(targetEnv.MINIO_ACCESS_KEY),
 );
 if (!hasMinioS3 && !hasMinioParts) {
-  warnings.push('MINIO_S3_ENDPOINT ou MINIO_ENDPOINT + MINIO_ACCESS_KEY + MINIO_SECRET_KEY');
+  errors.push('MINIO_S3_ENDPOINT válido ou MINIO_ENDPOINT + MINIO_ACCESS_KEY + MINIO_SECRET_KEY');
 }
 
 if (!targetEnv.GEMINI_API_KEY || looksLikePlaceholder(targetEnv.GEMINI_API_KEY)) {
-  warnings.push('GEMINI_API_KEY');
+  errors.push('GEMINI_API_KEY');
 }
 
-if (!targetEnv.VITE_AGENT_API_URL || looksLikePlaceholder(targetEnv.VITE_AGENT_API_URL)) {
-  warnings.push('VITE_AGENT_API_URL');
+if (!targetEnv.VITE_AGENT_API_URL || looksLikePlaceholder(targetEnv.VITE_AGENT_API_URL) || !isValidUrl(targetEnv.VITE_AGENT_API_URL)) {
+  errors.push('VITE_AGENT_API_URL válido');
 }
 
 if (errors.length) {
