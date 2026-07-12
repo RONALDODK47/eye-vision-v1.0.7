@@ -111,7 +111,8 @@ export function buildExtratoAiExtractSystem(bankHint) {
     '9. Descrições multilinha (SISPAG + nome, TED + favorecido) = UM único lançamento.',
     '10. Datas sempre DD/MM/AAAA (complete o ano se o PDF só mostrar DD/MM). Repita a data em TODOS os lançamentos, mesmo se no extrato a data estiver em branco/omitida (repita a última data válida).',
     '11. Inclua TED, PIX, SISPAG, tarifas, IOF, rendimentos, estornos, bloqueios.',
-    '12. JSON compacto — sem markdown, sem texto antes/depois do objeto.',
+    '12. ANOTAÇÕES ESCRITAS À MÃO (CANETA/LÁPIS): O extrato pode conter anotações manuais próximas às transações. Identifique-as e incorpore-as de forma limpa na descrição do lançamento (ex: "PAGAMENTO PIX (Advogado)" ou "RECEBIMENTO TED (Aluguel)"). Se uma transação não possuir anotações, extraia-a normalmente.',
+    '13. JSON compacto — sem markdown, sem texto antes/depois do objeto.',
     bankRulesAppendix(bankHint),
   ]
     .filter(Boolean)

@@ -166,6 +166,7 @@ async function callGeminiOnce(model, key, params, signal) {
       temperature: params.temperature ?? 0.15,
       maxOutputTokens: params.maxOutputTokens ?? 8192,
       ...(params.jsonMode ? { responseMimeType: 'application/json' } : {}),
+      ...(params.responseSchema ? { responseSchema: params.responseSchema } : {}),
     },
   };
 

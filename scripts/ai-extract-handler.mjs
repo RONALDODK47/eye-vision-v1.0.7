@@ -24,7 +24,7 @@ import {
   parseAiSaldoFields,
 } from './ai-extract-utils.mjs';
 
-async function callGeminiExtract({ model, systemInstruction, userParts, images, temperature = 0.05 }) {
+async function callGeminiExtract({ model, systemInstruction, userParts, images, temperature = 0.05, responseSchema }) {
   const extractOpts = {
     model,
     systemInstruction,
@@ -32,6 +32,7 @@ async function callGeminiExtract({ model, systemInstruction, userParts, images, 
     jsonMode: true,
     maxOutputTokens: EXTRACT_MAX_OUTPUT_TOKENS,
     timeoutMs: EXTRACT_REQUEST_TIMEOUT_MS,
+    responseSchema,
   };
   if (images?.length > 0) {
     return callGeminiVision({
@@ -84,12 +85,36 @@ async function extractPlanoWithGemini({ model, ocrText, images, fileName }) {
   const systemInstruction = buildPlanoAiExtractSystem();
   const userParts = buildPlanoExtractUserParts({ fileName, ocrText });
 
+  const responseSchema = {
+    type: 'OBJECT',
+    properties: {
+      rows: {
+        type: 'ARRAY',
+        description: 'Lista completa de contas do plano de contas.',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            codigoReduzido: { type: 'STRING', description: 'Código reduzido da conta' },
+            codigoClassificacao: { type: 'STRING', description: 'Classificação estruturada (ex: 1.1.1.01.001)' },
+            descricao: { type: 'STRING', description: 'Nome/descrição da conta contábil' },
+            tipo: { type: 'STRING', description: 'Tipo da conta contábil', enum: ['S', 'A'] },
+            nivel: { type: 'STRING', description: 'Nível da conta na hierarquia (ex: 1, 2, 3, 4, 5)' },
+            _linhaOcr: { type: 'STRING', description: 'Texto bruto original correspondente' },
+          },
+          required: ['codigoClassificacao', 'descricao'],
+        },
+      },
+    },
+    required: ['rows'],
+  };
+
   const out = await callGeminiExtract({
     model,
     systemInstruction,
     userParts,
     images,
     temperature: 0.05,
+    responseSchema,
   });
 
   let parsed = parseGeminiJson(out.text);
@@ -629,12 +654,38 @@ async function extractWithGemini({ model, ocrText, images, statementYear, fileNa
   const systemInstruction = buildExtratoAiExtractSystem(bankHint);
   const userParts = buildExtractUserParts({ statementYear, fileName, ocrText, bankHint });
 
+  const responseSchema = {
+    type: 'OBJECT',
+    properties: {
+      rows: {
+        type: 'ARRAY',
+        description: 'Lista completa de lançamentos operacionais de forma exaustiva.',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            data: { type: 'STRING', description: 'Data (DD/MM/AAAA ou DD/MM)' },
+            descricao: { type: 'STRING', description: 'Histórico/descrição limpa do lançamento' },
+            valorCredito: { type: 'STRING', description: 'Valor de crédito/entrada (ex: 123,45 ou vazio)' },
+            valorDebito: { type: 'STRING', description: 'Valor de débito/saída (ex: 123,45 ou vazio)' },
+            valorMisto: { type: 'STRING', description: 'Valor em coluna única com sufixo C/D ou sinal' },
+            _linhaOcr: { type: 'STRING', description: 'Texto bruto original correspondente' },
+          },
+          required: ['data', 'descricao'],
+        },
+      },
+      saldoAnterior: { type: 'NUMBER', description: 'Saldo anterior do período' },
+      saldoFinal: { type: 'NUMBER', description: 'Saldo final do período' },
+    },
+    required: ['rows'],
+  };
+
   const out = await callGeminiExtract({
     model,
     systemInstruction,
     userParts,
     images,
     temperature: 0.05,
+    responseSchema,
   });
 
   let parsed = parseGeminiJson(out.text);
