@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
-import { pingBcbApi } from '../../services/bcbService';
+import { getAgentApiOrigin } from '../../lib/agentApiBase';
+import { FISCAL_API_BASE } from '../../services/fiscalApiBase';
 import { fetchGeminiApiHealth, geminiStatusTitle } from '../../services/geminiApi';
 import { notifyDebugAppHealthy } from '../agent/browserConsoleBridge';
 import { deferIdle } from '../lib/deferIdle';
@@ -28,6 +29,17 @@ function statusLabel(status: ApiStatusValue): string {
   return '…';
 }
 
+function entryPortLabel(entry: ApiStatusEntry): string | undefined {
+  if (entry.id === 'gemini') {
+    return getAgentApiOrigin() ? 'nuvem' : import.meta.env.DEV ? 'local' : 'nuvem';
+  }
+  if (entry.id === 'receita-federal' || entry.id === 'sefaz-icms' || entry.id === 'sped') {
+    if (FISCAL_API_BASE.startsWith('http')) return 'nuvem';
+    if (import.meta.env.DEV) return '8780';
+  }
+  return entry.port;
+}
+
 function ApiStatusItem({
   entry,
   status,
@@ -37,9 +49,10 @@ function ApiStatusItem({
   status: ApiStatusValue;
   titleOverride?: string;
 }) {
+  const portLabel = entryPortLabel(entry);
   const title =
     titleOverride ??
-    `${entry.label}${entry.port ? ` (${entry.port})` : ''}: ${
+    `${entry.label}${portLabel ? ` (${portLabel})` : ''}: ${
       status === 'online' ? 'disponível' : status === 'offline' ? 'indisponível' : 'verificando…'
     }`;
 
@@ -53,7 +66,7 @@ function ApiStatusItem({
       <div className={cn('w-2 h-2 rounded-full shrink-0', statusDotClass(status))} />
       <span className="text-[9px] font-mono font-bold whitespace-nowrap">
         {entry.label}
-        {entry.port ? ` :${entry.port}` : ''}: {statusLabel(status)}
+        {portLabel ? ` :${portLabel}` : ''}: {statusLabel(status)}
       </span>
     </div>
   );
@@ -122,7 +135,7 @@ export default function ApiStatusBar({ activeTab }: { activeTab: ActiveTab }) {
           type="button"
           onClick={() => void refresh(true)}
           className="text-[8px] font-mono font-bold uppercase opacity-50 hover:opacity-100 underline shrink-0 whitespace-nowrap"
-          title="Atualizar status (Gemini faz ping real na Google). Fiscal :8780 OFF? Rode npm run dev."
+          title="Atualizar status. Local: npm run dev. Nuvem: 1ª carga do Render pode levar ~30s — clique de novo."
         >
           Atualizar
         </button>

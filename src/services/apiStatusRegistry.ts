@@ -8,6 +8,7 @@ import { pingSpedReceitaApi } from './spedReceitaApi';
 import { pingGeminiApi } from './geminiApi';
 
 const PING_TIMEOUT_MS = 2_500;
+const REMOTE_PING_TIMEOUT_MS = 15_000;
 
 async function pingWithTimeout(ping: () => Promise<boolean>, timeoutMs = PING_TIMEOUT_MS): Promise<boolean> {
   try {
@@ -20,6 +21,22 @@ async function pingWithTimeout(ping: () => Promise<boolean>, timeoutMs = PING_TI
   } catch {
     return false;
   }
+}
+
+/** Render free tier pode demorar na 1ª requisição — tenta de novo uma vez. */
+async function pingWithRetry(
+  ping: () => Promise<boolean>,
+  timeoutMs = PING_TIMEOUT_MS,
+  retries = 0,
+): Promise<boolean> {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const ok = await pingWithTimeout(ping, timeoutMs);
+    if (ok) return true;
+    if (attempt < retries) {
+      await new Promise((r) => setTimeout(r, 2_500));
+    }
+  }
+  return false;
 }
 
 export type ApiStatusValue = 'checking' | 'online' | 'offline';
@@ -123,7 +140,10 @@ export async function probeAllApiStatuses(
 ): Promise<ApiStatusMap> {
   const results = await Promise.all(
     registry.map(async (entry) => {
-      const ok = await pingWithTimeout(() => entry.ping(), entry.timeoutMs ?? PING_TIMEOUT_MS);
+      const remote = entry.id === 'gemini' || entry.port === '8780' || entry.port === 'remoto';
+      const timeout = entry.timeoutMs ?? (remote && !import.meta.env.DEV ? REMOTE_PING_TIMEOUT_MS : PING_TIMEOUT_MS);
+      const retries = remote && !import.meta.env.DEV ? 1 : 0;
+      const ok = await pingWithRetry(() => entry.ping(), timeout, retries);
       return [entry.id, ok ? 'online' : 'offline'] as const;
     }),
   );

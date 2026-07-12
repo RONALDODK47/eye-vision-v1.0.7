@@ -4,7 +4,9 @@ export function getAgentApiBase(): string {
   if (typeof raw === 'string' && raw.trim()) {
     return raw.trim().replace(/\/$/, '');
   }
-  return '/api/agent';
+  if (import.meta.env.DEV) return '/api/agent';
+  /** Fallback quando o build não embutiu VITE_AGENT_API_URL (GitHub Pages). */
+  return 'https://contabil-erp-nova-versao-v1-0-8.onrender.com/api/agent';
 }
 
 /** Origem do serviço backend (ex.: https://eye-vision-agent-api.onrender.com). */

@@ -1,10 +1,7 @@
 /**
- * Ping da API Gemini (via Vite /api/agent/gemini).
+ * Ping da API Gemini (via Vite /api/agent/gemini ou Render em produção).
  */
-const AGENT_BASE =
-  typeof import.meta.env.VITE_AGENT_API_URL === 'string' && import.meta.env.VITE_AGENT_API_URL
-    ? import.meta.env.VITE_AGENT_API_URL.replace(/\/$/, '')
-    : '/api/agent';
+import { getAgentApiBase } from '../lib/agentApiBase';
 
 export interface GeminiApiHealth {
   ok: boolean;
@@ -17,7 +14,7 @@ export interface GeminiApiHealth {
 export async function fetchGeminiApiHealth(deep = false): Promise<GeminiApiHealth> {
   try {
     const qs = deep ? '?deep=1' : '';
-    const res = await fetch(`${AGENT_BASE}/gemini/health${qs}`, { method: 'GET', cache: 'no-store' });
+    const res = await fetch(`${getAgentApiBase()}/gemini/health${qs}`, { method: 'GET', cache: 'no-store' });
     if (!res.ok) return { ok: false, configured: false };
     return (await res.json()) as GeminiApiHealth;
   } catch {

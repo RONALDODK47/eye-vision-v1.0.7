@@ -1,5 +1,8 @@
 import { getAgentApiOrigin } from '../lib/agentApiBase';
 
+const RENDER_FISCAL_FALLBACK =
+  'https://contabil-erp-nova-versao-v1-0-8.onrender.com/api/fiscal-nfe';
+
 function resolveFiscalApiBase(): string | null {
   const explicit =
     (typeof import.meta.env.VITE_FISCAL_API_URL === 'string' && import.meta.env.VITE_FISCAL_API_URL) ||
@@ -11,19 +14,20 @@ function resolveFiscalApiBase(): string | null {
 
   if (import.meta.env.DEV) return '/api/fiscal-nfe';
 
-  /** GitHub Pages / Firebase Hosting — sem proxy fiscal local. */
-  return null;
+  /** GitHub Pages — stubs fiscais no agent-api Render. */
+  return RENDER_FISCAL_FALLBACK;
 }
 
-/** Base URL da API fiscal (Render ou proxy Vite em dev). Null = indisponível no host estático. */
-export const FISCAL_API_BASE: string | null = resolveFiscalApiBase();
+/** Base URL da API fiscal (Render ou proxy Vite em dev). */
+export const FISCAL_API_BASE: string = resolveFiscalApiBase();
 
 export function fiscalApiCandidateBases(): string[] {
   const bases: string[] = [];
   if (FISCAL_API_BASE) bases.push(FISCAL_API_BASE);
-  /** API fiscal local só existe em dev — evita Failed to fetch no app publicado. */
+  /** API fiscal local (dev) e stubs no agent-api (:8790). */
   if (import.meta.env.DEV) {
     bases.push('http://127.0.0.1:8780');
+    bases.push('http://127.0.0.1:8790/api/fiscal-nfe');
   }
   return [...new Set(bases.map((b) => b.replace(/\/$/, '')))];
 }
