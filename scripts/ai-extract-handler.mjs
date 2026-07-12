@@ -693,7 +693,8 @@ DIRETRIZES DE EXTRAÇÃO CRÍTICAS E EXAUSTIVAS:
 8. ANOTAÇÕES MANUAIS E CANETA: O documento contém importantes anotações feitas à mão com caneta ou lápis ao lado das transações (por exemplo: "Aluguel", "Advogado", "Secretaria", "Zelador", "faxina", "Contabilidade", "Psicologo", "Almoco", "Combustivel", "arraiá").
    - Você DEVE identificar essas anotações escritas à mão próximas às transações e incorporá-las de forma limpa na descrição (ex: "RECEBIMENTO PIX Kayke Bruno Carneiro (Aluguel)" ou "PAGAMENTO PIX BRUNO OLIVEIRA REGO (Advogado)").
    - Use as anotações para definir a categoria da transação da forma mais precisa possível.
-   - REGRA DE EXCLUSÃO CRÍTICA: Se uma transação NÃO tiver anotação feita à mão, você DEVE extraí-la normalmente do mesmo jeito! A ausência de anotações escritas à mão NÃO significa que o lançamento deva ser ignorado. O array final deve conter 100% de todos os lançamentos do documento, com ou sem anotações.`;
+   - REGRA DE EXCLUSÃO CRÍTICA: Se uma transação NÃO tiver anotação feita à mão, você DEVE extraí-la normalmente do mesmo jeito! A ausência de anotações escritas à mão NÃO significa que o lançamento deva ser ignorado. O array final deve conter 100% de todos os lançamentos do documento, com ou sem anotações.
+9. NUNCA DEIXE DE EXTRAIR: Extraia absolutamente todas as transações identificadas. Caso algum campo (como valor ou categoria) esteja ilegível ou seja difícil de deduzir, omita esse campo específico no objeto ou deixe-o em branco, mas NUNCA deixe de incluir a transação inteira no array.`;
 
   const responseSchema = {
     type: 'OBJECT',
@@ -710,7 +711,7 @@ DIRETRIZES DE EXTRAÇÃO CRÍTICAS E EXAUSTIVAS:
             type: { type: 'STRING', description: 'Tipo de transação bancária', enum: ['DEBIT', 'CREDIT'] },
             category: { type: 'STRING', description: 'Categoria financeira em português' }
           },
-          required: ['date', 'description', 'amount', 'type', 'category']
+          required: ['date', 'description']
         }
       },
       currency: { type: 'STRING', description: 'Moeda detectada (ex: BRL, USD, EUR)' },
