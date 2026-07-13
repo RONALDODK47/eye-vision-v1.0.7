@@ -762,7 +762,11 @@ export default memo(function ExtratoRegrasContasModal({
                   <button
                     type="button"
                     onClick={handleAdd}
-                    disabled={!draftDescricao.trim() || !draftConta.trim() || !selectedBanco.trim()}
+                    disabled={
+                      !draftDescricao.trim() ||
+                      !(toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta)) ||
+                      !selectedBanco.trim()
+                    }
                     className="technical-button-primary text-[9px] py-1 px-4 shrink-0 inline-flex items-center justify-center gap-1 disabled:opacity-40 min-h-[26px] w-full sm:w-auto"
                   >
                     <Plus size={12} aria-hidden="true" />

@@ -1,11 +1,31 @@
-import { loadPlanoCompletoForContaResolve } from './planoContasAiContext';
-import { assertSomenteCodigoReduzido } from './planoContasMapper';
+import { assertSomenteCodigoReduzido, sanitizeCodigoReduzido } from './planoContasMapper';
 import { readManagerData, writeManagerData } from './companyWorkspace';
 import {
   emptyFiscalContasImposto,
   FISCAL_IMPOSTOS,
   type FiscalContasImpostoConfig,
 } from './fiscalContasImposto';
+
+function loadPlanoCompletoForContaResolve(companyName: string): Array<{
+  code: string;
+  name: string;
+  codigoReduzido?: string;
+  tipo?: string;
+}> {
+  return readManagerData<{
+    code?: string;
+    name?: string;
+    codigoReduzido?: string;
+    tipo?: string;
+  }>(companyName, 'plano')
+    .map((r) => ({
+      code: String(r.code ?? '').trim(),
+      name: String(r.name ?? '').trim(),
+      codigoReduzido: sanitizeCodigoReduzido(r.codigoReduzido),
+      tipo: r.tipo,
+    }))
+    .filter((r) => r.code || r.codigoReduzido);
+}
 
 function normalizeContaCampo(raw: string, plano: ReturnType<typeof loadPlanoCompletoForContaResolve>): string {
   const v = String(raw ?? '').trim();

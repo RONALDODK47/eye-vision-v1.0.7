@@ -1,10 +1,30 @@
-import { loadPlanoCompletoForContaResolve } from './planoContasAiContext';
-import { assertSomenteCodigoReduzido } from './planoContasMapper';
+import { assertSomenteCodigoReduzido, sanitizeCodigoReduzido } from './planoContasMapper';
 import { readManagerData, writeManagerData } from './companyWorkspace';
 import {
   emptyHonorariosContasAutomacao,
   type HonorariosContasAutomacaoConfig,
 } from './honorariosContasAutomacao';
+
+function loadPlanoCompletoForContaResolve(companyName: string): Array<{
+  code: string;
+  name: string;
+  codigoReduzido?: string;
+  tipo?: string;
+}> {
+  return readManagerData<{
+    code?: string;
+    name?: string;
+    codigoReduzido?: string;
+    tipo?: string;
+  }>(companyName, 'plano')
+    .map((r) => ({
+      code: String(r.code ?? '').trim(),
+      name: String(r.name ?? '').trim(),
+      codigoReduzido: sanitizeCodigoReduzido(r.codigoReduzido),
+      tipo: r.tipo,
+    }))
+    .filter((r) => r.code || r.codigoReduzido);
+}
 
 export function loadHonorariosContasAutomacao(companyName: string): HonorariosContasAutomacaoConfig {
   const base = emptyHonorariosContasAutomacao();
