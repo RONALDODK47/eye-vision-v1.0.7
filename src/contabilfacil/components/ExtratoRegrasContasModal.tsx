@@ -772,14 +772,11 @@ export default memo(function ExtratoRegrasContasModal({
                     type="button"
                     onClick={handleAdd}
                     disabled={
-                      !draftDescricao.trim() ||
                       !selectedBanco.trim() ||
-                      !(toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta)) ||
                       (() => {
                         const contraRed = toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta);
-                        if (!contraRed) return true;
-                        const hit = allPlano.find((p) =>
-                          sameCodigoReduzido(p.codigoReduzido, contraRed) ||
+                        const hit = allPlano.find((p) => 
+                          (contraRed && sameCodigoReduzido(p.codigoReduzido, contraRed)) || 
                           p.code === draftConta
                         );
                         return hit && (hit.tipo === 'S' || !sanitizeCodigoReduzido(hit.codigoReduzido));
