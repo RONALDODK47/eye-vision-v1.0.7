@@ -460,7 +460,14 @@ export default memo(function ExtratoRegrasContasModal({
   const handleAdd = useCallback(() => {
     const descricao = normalizeExtratoRegraTexto(draftDescricao);
     const contraRed = toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta);
-    if (!descricao || !selectedBanco.trim()) return;
+    if (!selectedBanco.trim()) {
+      setAddError('Selecione uma conta banco primeiro!');
+      return;
+    }
+    if (!descricao) {
+      setAddError('Informe o histórico no extrato!');
+      return;
+    }
     if (!contraRed) {
       setAddError(
         isClassificacaoHierarquica(draftConta)
