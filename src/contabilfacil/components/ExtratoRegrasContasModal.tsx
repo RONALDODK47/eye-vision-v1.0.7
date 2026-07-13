@@ -17,6 +17,7 @@ import {
   isClassificacaoHierarquica,
   resolveCodigoReduzidoDoPlano,
   sanitizeCodigoReduzido,
+  sameCodigoReduzido,
 } from '../logic/planoContasMapper';
 import {
   findUncoveredExtratoRows,
@@ -397,7 +398,7 @@ export default memo(function ExtratoRegrasContasModal({
     }
     setReplicateMsg(
       `Replicadas ${result.added} regra(s) para ${target} — ${destLabel}` +
-        (result.skipped ? ` (${result.skipped} já existiam)` : ''),
+      (result.skipped ? ` (${result.skipped} já existiam)` : ''),
     );
     // Troca para o banco destino para as regras aparecerem na lista
     applyContaBanco(target);
@@ -754,7 +755,15 @@ export default memo(function ExtratoRegrasContasModal({
                       ariaLabel="Conta contrapartida (código reduzido)"
                       onChange={(code) => {
                         setDraftConta(code);
-                        setAddError('');
+                        const hit = allPlano.find((p) =>
+                          sameCodigoReduzido(p.codigoReduzido, code) ||
+                          p.code === code
+                        );
+                        if (hit && (hit.tipo === 'S' || (!sanitizeCodigoReduzido(hit.codigoReduzido)))) {
+                          setAddError('Conta sintética selecionada! Escolha uma conta analítica com código reduzido.');
+                        } else {
+                          setAddError('');
+                        }
                       }}
                     />
                   </div>
@@ -764,14 +773,37 @@ export default memo(function ExtratoRegrasContasModal({
                     onClick={handleAdd}
                     disabled={
                       !draftDescricao.trim() ||
+                      !selectedBanco.trim() ||
                       !(toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta)) ||
-                      !selectedBanco.trim()
+                      (() => {
+                        const contraRed = toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta);
+                        if (!contraRed) return true;
+                        const hit = allPlano.find((p) =>
+                          sameCodigoReduzido(p.codigoReduzido, contraRed) ||
+                          p.code === draftConta
+                        );
+                        return hit && (hit.tipo === 'S' || !sanitizeCodigoReduzido(hit.codigoReduzido));
+                      })()
                     }
                     className="technical-button-primary text-[9px] py-1 px-4 shrink-0 inline-flex items-center justify-center gap-1 disabled:opacity-40 min-h-[26px] w-full sm:w-auto"
                   >
                     <Plus size={12} aria-hidden="true" />
                     ADD
                   </button>
+                  {(() => {
+                    const hit = allPlano.find((p) =>
+                      sameCodigoReduzido(p.codigoReduzido, draftConta) ||
+                      p.code === draftConta
+                    );
+                    if (hit && (hit.tipo === 'S' || (!sanitizeCodigoReduzido(hit.codigoReduzido)))) {
+                      return (
+                        <p className="text-[9px] text-rose-700 font-bold uppercase w-full mt-1">
+                          Conta sintética selecionada! Escolha uma conta analítica com código reduzido.
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               </div>
             </div>
@@ -781,49 +813,49 @@ export default memo(function ExtratoRegrasContasModal({
               ref={regrasListRef}
               className="p-3 pt-0 space-y-2 scroll-mt-2 transition-shadow"
             >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
-                    Regras deste banco · {regrasDoBanco.length}
-                  </p>
-                  {regrasDoBanco.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={handleRemoveAllDoBanco}
-                      className="technical-button text-[8px] py-1 px-2 inline-flex items-center gap-1 shrink-0 text-rose-800 border-rose-300 hover:bg-rose-50"
-                      title="Remove todas as regras deste banco"
-                    >
-                      <Trash2 size={11} aria-hidden="true" />
-                      Remover todas
-                    </button>
-                  ) : null}
-                </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[9px] font-black uppercase tracking-widest text-brand-text/60">
+                  Regras deste banco · {regrasDoBanco.length}
+                </p>
                 {regrasDoBanco.length > 0 ? (
-                  <p className="text-[8px] text-brand-text/50 leading-snug">
-                    Edite descrição, natureza ou contrapartida diretamente em cada regra. As alterações
-                    são salvas ao sair do campo ou ao trocar a conta.
-                  </p>
+                  <button
+                    type="button"
+                    onClick={handleRemoveAllDoBanco}
+                    className="technical-button text-[8px] py-1 px-2 inline-flex items-center gap-1 shrink-0 text-rose-800 border-rose-300 hover:bg-rose-50"
+                    title="Remove todas as regras deste banco"
+                  >
+                    <Trash2 size={11} aria-hidden="true" />
+                    Remover todas
+                  </button>
                 ) : null}
-                {regrasDoBanco.length === 0 ? (
-                  <p className="text-[10px] text-brand-text/45 italic text-center py-8">
-                    Nenhuma regra para este banco. Cadastre manualmente abaixo ou puxe um histórico
-                    do extrato.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {regrasDoBanco.map((regra) => (
-                      <ExtratoRegraContaEditableRow
-                        key={regra.id}
-                        regra={regra}
-                        planoOptions={planoOptions}
-                        planoLookup={planoLookup}
-                        onUpdate={handleUpdateRegra}
-                        onRemove={handleRemove}
-                      />
-                    ))}
-                  </ul>
-                )}
               </div>
+              {regrasDoBanco.length > 0 ? (
+                <p className="text-[8px] text-brand-text/50 leading-snug">
+                  Edite descrição, natureza ou contrapartida diretamente em cada regra. As alterações
+                  são salvas ao sair do campo ou ao trocar a conta.
+                </p>
+              ) : null}
+              {regrasDoBanco.length === 0 ? (
+                <p className="text-[10px] text-brand-text/45 italic text-center py-8">
+                  Nenhuma regra para este banco. Cadastre manualmente abaixo ou puxe um histórico
+                  do extrato.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {regrasDoBanco.map((regra) => (
+                    <ExtratoRegraContaEditableRow
+                      key={regra.id}
+                      regra={regra}
+                      planoOptions={planoOptions}
+                      planoLookup={planoLookup}
+                      onUpdate={handleUpdateRegra}
+                      onRemove={handleRemove}
+                    />
+                  ))}
+                </ul>
+              )}
             </div>
+          </div>
         </div>
 
         <div className="p-3 border-t border-brand-border flex justify-end gap-2 shrink-0 bg-brand-bg">
