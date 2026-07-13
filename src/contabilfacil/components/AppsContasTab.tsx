@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Save } from 'lucide-react';
 import type { SavedAplicacao } from '../logic/aplicacaoStorage';
 import DominioDebitoCreditoBlock from './DominioDebitoCreditoBlock';
-import ModuloContasAiButton from './ModuloContasAiButton';
 import {
   CF_FIELD_COL,
   CF_FIELD_ROW,
@@ -181,27 +180,6 @@ export default function AppsContasTab({ selectedCompany, items, onSave }: AppsCo
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
-          <ModuloContasAiButton
-            company={selectedCompany}
-            modulo="aplicacao"
-            contasAtuais={{
-              accAplicacaoDebit: draft.accAplicacaoDebit ?? '',
-              accAplicacaoCredit: draft.accAplicacaoCredit ?? '',
-              accReceitaJurosDebit: draft.accReceitaJurosDebit ?? '',
-              accReceitaJurosCredit: draft.accReceitaJurosCredit ?? '',
-              accIRRFDebit: draft.accIRRFDebit ?? '',
-              accIRRFCredit: draft.accIRRFCredit ?? '',
-              accIOFDebit: draft.accIOFDebit ?? '',
-              accIOFCredit: draft.accIOFCredit ?? '',
-            }}
-            contexto={{
-              nomeAplicacao: draft.nomeAplicacao,
-              temReceitaJuros: !!draft.temReceitaJuros,
-              temIRRF: !!draft.temIRRF,
-              temIOF: !!draft.temIOF,
-            }}
-            onApply={(patch) => patchDraft(patch)}
-          />
           <button
             type="button"
             onClick={handleSave}

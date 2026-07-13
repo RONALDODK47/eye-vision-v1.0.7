@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_INPUT_ACCOUNT, CF_ACCOUNT_REDUCED_PLACEHOLDER } from '../lib/formFieldClasses';
-import ModuloContasAiButton from './ModuloContasAiButton';
 import {
   FOLHA_RUBRICA_LABELS,
   FOLHA_RUBRICAS,
@@ -9,7 +8,6 @@ import {
   type FolhaRubricaId,
 } from '../logic/folhaContasAutomacao';
 import { loadFolhaContasAutomacao, saveFolhaContasAutomacao } from '../logic/folhaContasAutomacaoStorage';
-import { applyFlatContasToNestedConfig } from '../logic/moduloContasAiSchemas';
 
 type Props = {
   selectedCompany: string;
@@ -51,21 +49,10 @@ export default function FolhaContasAutomacaoPanel({ selectedCompany, onChange }:
           <div>
             <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — folha</h3>
             <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5">
-              Débito e crédito por rubrica. Use a IA para sugerir contas do plano.
+              Débito e crédito por rubrica.
             </p>
           </div>
         </div>
-        <ModuloContasAiButton
-          company={selectedCompany}
-          modulo="folha"
-          contasAtuais={Object.fromEntries(
-            FOLHA_RUBRICAS.flatMap((id) => [
-              [`${id}.debito`, contas[id].debito],
-              [`${id}.credito`, contas[id].credito],
-            ]),
-          )}
-          onApply={(patch) => persist(applyFlatContasToNestedConfig(contas, patch))}
-        />
       </div>
       <div className="p-4 overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-[10px] font-mono">

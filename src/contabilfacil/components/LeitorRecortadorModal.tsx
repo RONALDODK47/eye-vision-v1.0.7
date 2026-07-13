@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Columns, FolderOpen, Save, Sliders, Trash2 } from 'lucide-react';
-import type { OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
+import type { OcrConfirmMeta } from '../../lib/leitorRecortador/types';
 import type { GenericOcrRow } from '../../lib/parcelamentoColunasExtract';
 import type { ParcelamentoPlanilhaImport } from '../../lib/parcelamentoPlanilha';
 import { readPersistedLocalStorageJson, writePersistedLocalStorageJson } from '../../lib/persistentLocalStorage';
@@ -932,7 +932,7 @@ export function LeitorRecortadorModal({
           <span className="text-[9px] border border-green-600 bg-green-50 text-green-800 px-2 py-1 font-bold uppercase">
             {isDominioNativePdf || (isPlano && docType === 'pdf') || (isBalancete && docType === 'pdf')
               ? 'Texto nativo do PDF — sem OCR'
-              : 'OCR / recorte manual'}
+              : 'Recorte manual — sem OCR'}
           </span>
           <button type="button" onClick={onCancel} className="technical-button px-3 py-1 text-[10px]">
             Fechar
@@ -942,9 +942,8 @@ export function LeitorRecortadorModal({
 
       {(error || success) && (
         <div
-          className={`mx-4 mt-2 border px-3 py-2 text-[10px] font-bold uppercase ${
-            error ? 'border-red-400 bg-red-50 text-red-900' : 'border-green-500 bg-green-50 text-green-900'
-          }`}
+          className={`mx-4 mt-2 border px-3 py-2 text-[10px] font-bold uppercase ${error ? 'border-red-400 bg-red-50 text-red-900' : 'border-green-500 bg-green-50 text-green-900'
+            }`}
         >
           {error || success}
         </div>
@@ -958,9 +957,8 @@ export function LeitorRecortadorModal({
             <button
               type="button"
               onClick={() => setActiveTab('align')}
-              className={`px-4 py-2 text-[10px] font-black uppercase border border-brand-border flex items-center gap-1.5 ${
-                activeTab === 'align' ? 'bg-brand-border text-white' : 'bg-white'
-              }`}
+              className={`px-4 py-2 text-[10px] font-black uppercase border border-brand-border flex items-center gap-1.5 ${activeTab === 'align' ? 'bg-brand-border text-white' : 'bg-white'
+                }`}
             >
               <Sliders size={12} />
               1. Alinhamento & colunas
@@ -968,9 +966,8 @@ export function LeitorRecortadorModal({
             <button
               type="button"
               onClick={() => setActiveTab('results')}
-              className={`px-4 py-2 text-[10px] font-black uppercase border border-brand-border border-l-0 flex items-center gap-1.5 ${
-                activeTab === 'results' ? 'bg-brand-border text-white' : 'bg-white'
-              }`}
+              className={`px-4 py-2 text-[10px] font-black uppercase border border-brand-border border-l-0 flex items-center gap-1.5 ${activeTab === 'results' ? 'bg-brand-border text-white' : 'bg-white'
+                }`}
             >
               <Columns size={12} />
               2. Tabela de recortes ({rows.length})

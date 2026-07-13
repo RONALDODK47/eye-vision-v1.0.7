@@ -1,8 +1,7 @@
-import { ensureOcrAiReady } from './aiAssistClient';
-import { refineOcrPlainText, type AiOcrDocumentType } from './aiOcrAssist';
+import type { AiOcrDocumentType } from './aiOcrAssist';
 
 export const OCR_LOCAL_REMOVED_MESSAGE =
-  'OCR local foi removido. Use texto nativo do PDF, leitor-recortador de extrato, planilha/TXT/OFX ou modo IA com chave API.';
+  'OCR foi removido do sistema. Use texto nativo do PDF, leitor-recortador sem OCR, planilha, TXT ou OFX.';
 
 export type OcrPositionedWord = {
   str: string;
@@ -471,9 +470,7 @@ function runSerializedOcr<T>(task: () => Promise<T>): Promise<T> {
 
 /** Pré-carrega assistente IA para OCR assistido. */
 export function warmupSharedOcrWorker(): void {
-  void ensureOcrAiReady().catch(() => {
-    /* IA sobe no primeiro OCR se ainda não estiver pronta */
-  });
+  /* noop: OCR removido do sistema */
 }
 
 /** OCR local é stateless no servidor — noop mantido para compatibilidade de API. */

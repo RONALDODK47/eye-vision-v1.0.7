@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_INPUT_ACCOUNT, CF_ACCOUNT_REDUCED_PLACEHOLDER } from '../lib/formFieldClasses';
-import ModuloContasAiButton from './ModuloContasAiButton';
 import type { HonorariosContasAutomacaoConfig } from '../logic/honorariosContasAutomacao';
 import {
   loadHonorariosContasAutomacao,
@@ -41,22 +40,10 @@ export default function HonorariosContasAutomacaoPanel({ selectedCompany, onChan
           <div>
             <h3 className="text-[10px] font-black uppercase tracking-widest">Contas — honorários</h3>
             <p className="text-[9px] font-bold uppercase opacity-50 mt-0.5">
-              Débito (despesa) e crédito (a pagar). Use a IA para sugerir contas do plano.
+              Débito (despesa) e crédito (a pagar).
             </p>
           </div>
         </div>
-        <ModuloContasAiButton
-          company={selectedCompany}
-          modulo="honorarios"
-          contasAtuais={{ debito: contas.debito, credito: contas.credito }}
-          onApply={(patch) =>
-            persist({
-              ...contas,
-              debito: patch.debito ?? contas.debito,
-              credito: patch.credito ?? contas.credito,
-            })
-          }
-        />
       </div>
       <div className="p-4">
         <table className="w-full min-w-[480px] text-left text-[10px] font-mono">

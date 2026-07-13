@@ -19,7 +19,15 @@ import {
   saveApiKeyForProvider,
   isProviderConfigured,
 } from './ai-secrets-store.mjs';
-import { handleAiExtractExtrato, handleAiExtractPlano, handleAiExtractColigadas, handleAiExtractSocios, handleAiRefineOcrRows } from './ai-extract-handler.mjs';
+import {
+  handleAiExtractExtrato,
+  handleAiExtractPlano,
+  handleAiExtractColigadas,
+  handleAiExtractSocios,
+  handleAiRefineOcrRows,
+  handleAiExtractLoanContract,
+  handleAiOcrOverlay,
+} from './ai-extract-handler.mjs';
 import { handleAiSuggestRegrasContas } from './ai-regras-contas-handler.mjs';
 import { handleAiSuggestModuloContas } from './ai-modulo-contas-handler.mjs';
 import { analyzeSystemProfile } from './ai-system-profile.mjs';
@@ -134,6 +142,11 @@ export function registerAgentRoutes(app) {
     res.status(out.status).json(out.body);
   });
 
+  app.post('/agent/ai/extract-loan-contract', async (req, res) => {
+    const out = await handleAiExtractLoanContract(req.body ?? {});
+    res.status(out.status).json(out.body);
+  });
+
   app.post('/agent/ai/extract-coligadas', async (req, res) => {
     const out = await handleAiExtractColigadas(req.body ?? {});
     res.status(out.status).json(out.body);
@@ -141,6 +154,11 @@ export function registerAgentRoutes(app) {
 
   app.post('/agent/ai/extract-socios', async (req, res) => {
     const out = await handleAiExtractSocios(req.body ?? {});
+    res.status(out.status).json(out.body);
+  });
+
+  app.post('/agent/ai/ocr-overlay', async (req, res) => {
+    const out = await handleAiOcrOverlay(req.body ?? {});
     res.status(out.status).json(out.body);
   });
 

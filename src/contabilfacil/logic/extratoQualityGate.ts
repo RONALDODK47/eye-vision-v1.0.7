@@ -8,7 +8,7 @@ import {
   type OcrExtratoRow,
 } from '../../lib/ocrExtratoPositional';
 import { resolveExtratoValorNatureza } from './ocrImportMapper';
-import type { OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
+import type { OcrConfirmMeta } from '../../lib/leitorRecortador/types';
 
 export const EXTRATO_CONCILIACAO_TOLERANCIA = 0.1;
 
@@ -61,7 +61,7 @@ export function estimateMinExtratoRows(totalPages: number): number {
 
 export function evaluateExtratoExtractQuality(params: {
   rows: GenericOcrRow[];
-  meta?: OcrConfirmMeta;
+  meta?: (OcrConfirmMeta & { conciliacaoRawRows?: unknown[] });
   ocrText?: string;
   totalPages?: number;
   escalationsApplied?: ExtratoEscalationKind[];

@@ -23,7 +23,7 @@ function yieldToMain(): Promise<void> {
 async function renderPdfPage(
   pdfDoc: pdfjsLib.PDFDocumentProxy,
   pageNumber: number,
-  scale = 1.5,
+  scale = 2.0,
 ): Promise<RenderedPDFPageWithNum> {
   const page = await pdfDoc.getPage(pageNumber);
   const viewport = page.getViewport({ scale });

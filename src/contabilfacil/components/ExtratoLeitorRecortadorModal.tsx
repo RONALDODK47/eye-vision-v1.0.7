@@ -12,10 +12,20 @@ import {
   Save,
   FolderOpen,
   Trash2,
+  RefreshCw,
+  Download,
+  FileText,
 } from 'lucide-react';
-import type { OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
 import type { GenericOcrRow } from '../../lib/parcelamentoColunasExtract';
-import { detectRowsFromText, clearExtractedRowPrunePrefs, extractDataFromCanvas, filterRowsInCropBand, loadExtractedRowPrunePrefs, pruneExtractedRows, propagateExtractedRowDates } from '../../lib/leitorRecortador/cropper';
+import {
+  detectRowsFromText,
+  clearExtractedRowPrunePrefs,
+  extractDataFromCanvas,
+  filterRowsInCropBand,
+  loadExtractedRowPrunePrefs,
+  pruneExtractedRows,
+  propagateExtractedRowDates,
+} from '../../lib/leitorRecortador/cropper';
 import { exportToCSV } from '../../lib/leitorRecortador/exporter';
 import {
   buildFaixaPorPagina,
@@ -36,7 +46,7 @@ import {
   pdfTextItemsToPosicionado,
   suggestNubankExtratoPageLayout,
 } from '../../lib/leitorRecortador/nubankExtratoLayout';
-import type { DocMetadata, DocumentColumns, ExtractedRow } from '../../lib/leitorRecortador/types';
+import type { DocMetadata, DocumentColumns, ExtractedRow, OcrConfirmMeta } from '../../lib/leitorRecortador/types';
 import { mapExtractedRowsToRecorteFielOcr } from '../logic/extratoRecorteFielImport';
 import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import { extractStatementYear } from '../../extratoVision/utils/parser';
@@ -69,7 +79,7 @@ type Props = {
   companyName?: string;
   planoContaOptions?: ExtratoPlanoContaOption[];
   onCancel: () => void;
-  onConfirm: (rows: GenericOcrRow[], meta?: OcrConfirmMeta) => void;
+  onConfirm: (rows: GenericOcrRow[], meta?: any) => void;
 };
 
 const DEFAULT_EXCLUSION_RULES = [
@@ -150,7 +160,28 @@ export function ExtratoLeitorRecortadorModal({
 
       if (!isNu) {
         const parsedRows = detectRowsFromText(page.textItems, 10);
-        setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
+        if (parsedRows.length > 0) {
+          setRowMode('auto');
+          setDetectedRows(parsedRows.map((r) => ({ y: r.y, height: r.height })));
+        } else {
+          // PDF digitalizado/foto detectado (sem texto nativo)
+          setRowMode('manual');
+          const startY = Math.round(page.height * 0.22);
+          const rowHeight = Math.round(page.height * 0.038) || 35;
+          const rowCount = 12;
+
+          setGridStartY(startY);
+          setGridRowHeight(rowHeight);
+          setGridRowCount(rowCount);
+
+          setDetectedRows(
+            Array.from({ length: rowCount }).map((_, i) => ({
+              y: startY + i * rowHeight,
+              height: rowHeight,
+            })),
+          );
+          setSuccessMessage('Aviso: PDF digitalizado/foto detectado! Grade manual ativada.');
+        }
         return;
       }
 
@@ -391,32 +422,32 @@ export function ExtratoLeitorRecortadorModal({
       }
       const nubankRows = isNubankLayoutRef.current
         ? filterRowsInCropBand(
-            detectNubankTransactionRows(
-              textItems,
-              activeCanvas.width,
-              activeCanvas.height,
-              currentPage,
-              nubankCarryDate,
-              nubankCarryFlow,
-              nubankCarryDateY,
-              nubankCarryDateH,
-            ),
-            startY,
-            endY,
-          )
+          detectNubankTransactionRows(
+            textItems,
+            activeCanvas.width,
+            activeCanvas.height,
+            currentPage,
+            nubankCarryDate,
+            nubankCarryFlow,
+            nubankCarryDateY,
+            nubankCarryDateH,
+          ),
+          startY,
+          endY,
+        )
         : null;
       const filteredForExtract = nubankRows ?? filteredRows;
       const extracted = applyPersistedPrune(
         propagateExtractedRowDates(
           isNubankLayoutRef.current && nubankRows
             ? extractNubankDataFromCanvas(
-                activeCanvas,
-                textItems,
-                columns,
-                nubankRows,
-                stmtYear,
-                currentPage,
-              )
+              activeCanvas,
+              textItems,
+              columns,
+              nubankRows,
+              stmtYear,
+              currentPage,
+            )
             : extractDataFromCanvas(activeCanvas, textItems, columns, filteredForExtract, true),
           stmtYear,
         ),
@@ -455,15 +486,15 @@ export function ExtratoLeitorRecortadorModal({
         if (rowMode === 'auto') {
           pageRows = pageIsNu
             ? detectNubankTransactionRows(
-                page.textItems,
-                page.width,
-                page.height,
-                p,
-                nubankCarryDate,
-                nubankCarryFlow,
-                nubankCarryDateY,
-                nubankCarryDateH,
-              )
+              page.textItems,
+              page.width,
+              page.height,
+              p,
+              nubankCarryDate,
+              nubankCarryFlow,
+              nubankCarryDateY,
+              nubankCarryDateH,
+            )
             : detectRowsFromText(page.textItems, 10).map((r) => ({ y: r.y, height: r.height }));
         } else {
           pageRows = Array.from({ length: gridRowCount }).map((_, i) => ({
@@ -478,15 +509,15 @@ export function ExtratoLeitorRecortadorModal({
           const stmtYearPage = resolveExtratoYearFromContext(page.textItems, file.name);
           const nubankPageRows = pageIsNu
             ? detectNubankTransactionRows(
-                page.textItems,
-                page.width,
-                page.height,
-                p,
-                nubankCarryDate,
-                nubankCarryFlow,
-                nubankCarryDateY,
-                nubankCarryDateH,
-              ).filter((r) => filterRowsInCropBand([r], startY, endY).length > 0)
+              page.textItems,
+              page.width,
+              page.height,
+              p,
+              nubankCarryDate,
+              nubankCarryFlow,
+              nubankCarryDateY,
+              nubankCarryDateH,
+            ).filter((r) => filterRowsInCropBand([r], startY, endY).length > 0)
             : null;
           if (pageIsNu) {
             nubankCarryDate =
@@ -503,13 +534,13 @@ export function ExtratoLeitorRecortadorModal({
           const extracted =
             pageIsNu && nubankPageRows
               ? extractNubankDataFromCanvas(
-                  page.canvas,
-                  page.textItems,
-                  columns,
-                  nubankPageRows,
-                  stmtYearPage,
-                  p,
-                )
+                page.canvas,
+                page.textItems,
+                columns,
+                nubankPageRows,
+                stmtYearPage,
+                p,
+              )
               : extractDataFromCanvas(page.canvas, page.textItems, columns, filteredRows, true);
           allExtractedRows = [...allExtractedRows, ...extracted];
         }
@@ -823,11 +854,10 @@ export function ExtratoLeitorRecortadorModal({
             <button
               type="button"
               onClick={() => setActiveTab('align')}
-              className={`px-6 py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
-                activeTab === 'align'
-                  ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
-                  : 'border-transparent text-brand-text/50 hover:text-brand-text/80 hover:bg-brand-sidebar/10'
-              }`}
+              className={`px-6 py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${activeTab === 'align'
+                ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
+                : 'border-transparent text-brand-text/50 hover:text-brand-text/80 hover:bg-brand-sidebar/10'
+                }`}
             >
               <Sliders className="w-4 h-4 text-brand-text" />
               1. Alinhamento & Colunas (Ver PDF)
@@ -835,11 +865,10 @@ export function ExtratoLeitorRecortadorModal({
             <button
               type="button"
               onClick={() => setActiveTab('results')}
-              className={`px-6 py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
-                activeTab === 'results'
-                  ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
-                  : 'border-transparent text-brand-text/50 hover:text-brand-text/80 hover:bg-brand-sidebar/10'
-              }`}
+              className={`px-6 py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${activeTab === 'results'
+                ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
+                : 'border-transparent text-brand-text/50 hover:text-brand-text/80 hover:bg-brand-sidebar/10'
+                }`}
             >
               <FileSpreadsheet className="w-4 h-4 text-brand-text" />
               2. Tabela de Resultados (Apenas Recortes)
@@ -877,11 +906,10 @@ export function ExtratoLeitorRecortadorModal({
                   <button
                     type="button"
                     onClick={() => setSideTab('config')}
-                    className={`flex-1 py-2.5 text-[9px] font-black uppercase tracking-wider border-b-2 transition-all ${
-                      sideTab === 'config'
-                        ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
-                        : 'border-transparent text-brand-text/50 hover:text-brand-text/80'
-                    }`}
+                    className={`flex-1 py-2.5 text-[9px] font-black uppercase tracking-wider border-b-2 transition-all ${sideTab === 'config'
+                      ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
+                      : 'border-transparent text-brand-text/50 hover:text-brand-text/80'
+                      }`}
                   >
                     Configuração
                   </button>
@@ -891,11 +919,10 @@ export function ExtratoLeitorRecortadorModal({
                       refreshSavedLayouts();
                       setSideTab('layouts');
                     }}
-                    className={`flex-1 py-2.5 text-[9px] font-black uppercase tracking-wider border-b-2 transition-all ${
-                      sideTab === 'layouts'
-                        ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
-                        : 'border-transparent text-brand-text/50 hover:text-brand-text/80'
-                    }`}
+                    className={`flex-1 py-2.5 text-[9px] font-black uppercase tracking-wider border-b-2 transition-all ${sideTab === 'layouts'
+                      ? 'border-brand-text text-brand-text bg-brand-sidebar/40'
+                      : 'border-transparent text-brand-text/50 hover:text-brand-text/80'
+                      }`}
                   >
                     Layouts salvos
                   </button>
@@ -981,22 +1008,20 @@ export function ExtratoLeitorRecortadorModal({
                             type="button"
                             disabled={metadata?.type === 'image' && textItems.length === 0}
                             onClick={() => setRowMode('auto')}
-                            className={`flex-1 py-1.5 text-xs font-semibold transition-all ${
-                              rowMode === 'auto'
-                                ? 'bg-brand-sidebar text-brand-text shadow-[2px_2px_0_0_#141414]'
-                                : 'text-brand-text/50 hover:text-brand-text/70'
-                            }`}
+                            className={`flex-1 py-1.5 text-xs font-semibold transition-all ${rowMode === 'auto'
+                              ? 'bg-brand-sidebar text-brand-text shadow-[2px_2px_0_0_#141414]'
+                              : 'text-brand-text/50 hover:text-brand-text/70'
+                              }`}
                           >
                             Automático (PDF)
                           </button>
                           <button
                             type="button"
                             onClick={() => setRowMode('manual')}
-                            className={`flex-1 py-1.5 text-xs font-semibold transition-all ${
-                              rowMode === 'manual'
-                                ? 'bg-brand-sidebar text-brand-text shadow-[2px_2px_0_0_#141414]'
-                                : 'text-brand-text/60 hover:text-brand-text/80'
-                            }`}
+                            className={`flex-1 py-1.5 text-xs font-semibold transition-all ${rowMode === 'manual'
+                              ? 'bg-brand-sidebar text-brand-text shadow-[2px_2px_0_0_#141414]'
+                              : 'text-brand-text/60 hover:text-brand-text/80'
+                              }`}
                           >
                             Manual (Grid)
                           </button>
@@ -1133,9 +1158,8 @@ export function ExtratoLeitorRecortadorModal({
                             return (
                               <div
                                 key={layout.id}
-                                className={`border border-brand-border p-3 space-y-1.5 ${
-                                  layoutEditId === layout.id || isActive ? 'bg-brand-sidebar/40' : 'bg-white'
-                                }`}
+                                className={`border border-brand-border p-3 space-y-1.5 ${layoutEditId === layout.id || isActive ? 'bg-brand-sidebar/40' : 'bg-white'
+                                  }`}
                               >
                                 <div className="flex items-start justify-between gap-2">
                                   <p className="text-[11px] font-black uppercase truncate text-brand-text">

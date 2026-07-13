@@ -61,7 +61,6 @@ import {
   OPERATIONAL_SAVE_DEBOUNCE_MS,
 } from './eyeVisionOperationalSave';
 import { reportAppFailure } from '../agent/browserConsoleBridge';
-import { restoreAiSettingsFromCloudStorage } from '../ai/aiCloudPersist';
 import { isHeavyUiWorkActive } from '../lib/uiFluidity';
 import { isRemoteWorkspaceRequired } from '../../gestaoContabil/dbClient';
 import {
@@ -450,6 +449,7 @@ function mergeCloudManagerRows(rows: ManagerCloudPayload[]): ManagerCloudPayload
     }
 
     const data = row.data || {};
+    cur.data = cur.data || {};
     for (const suffix of MANAGER_DATA_SUFFIXES) {
       const arr = data[suffix];
       if (!Array.isArray(arr) || arr.length === 0) continue;
@@ -486,12 +486,13 @@ function mergeManagerRowsFillMissing(
       continue;
     }
     const data = sup.data || {};
+    const curData = (cur.data = cur.data || {});
     for (const suffix of MANAGER_DATA_SUFFIXES) {
       const supArr = data[suffix];
       if (!Array.isArray(supArr) || supArr.length === 0) continue;
-      const curArr = cur.data[suffix];
+      const curArr = curData[suffix];
       if (!Array.isArray(curArr) || curArr.length === 0) {
-        cur.data[suffix] = supArr;
+        curData[suffix] = supArr;
       }
     }
   }
@@ -841,7 +842,6 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
       if (await isWorkspaceBackendReady()) {
         await flushEyeVisionCloudPush({ force: true });
       }
-      await restoreAiSettingsFromCloudStorage();
       setOperationalSavePhase('saved');
       dispatchHydrated();
       return true;
@@ -885,24 +885,24 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
     const localRegistry = loadCompaniesRegistry();
     const officeRegistry = Array.isArray(cloudOffice.companies_registry)
       ? filterOutDeletedCompanies(
-          (cloudOffice.companies_registry as CompanyRecord[]).filter(
-            (c) => c?.name && !isDemoTechnovaCompany(String(c.name)),
-          ),
-        )
+        (cloudOffice.companies_registry as CompanyRecord[]).filter(
+          (c) => c?.name && !isDemoTechnovaCompany(String(c.name)),
+        ),
+      )
       : [];
     const cloudRegistry =
       officeRegistry.length > 0
         ? officeRegistry
         : buildRegistryFromCloud(
-            cloudOffice as OfficeCloudPayload,
-            cloudManagers as ManagerCloudPayload[],
-          );
+          cloudOffice as OfficeCloudPayload,
+          cloudManagers as ManagerCloudPayload[],
+        );
     const mergedRegistry = localRegistry.length > 0 ? localRegistry : cloudRegistry;
     const cloudSelected = String((cloudOffice as OfficeCloudPayload)?.selected_company || '').trim();
     const selectedCompany =
       cloudSelected &&
-      !isDemoTechnovaCompany(cloudSelected) &&
-      mergedRegistry.some((c) => normalizeCompanyName(c.name) === normalizeCompanyName(cloudSelected))
+        !isDemoTechnovaCompany(cloudSelected) &&
+        mergedRegistry.some((c) => normalizeCompanyName(c.name) === normalizeCompanyName(cloudSelected))
         ? cloudSelected
         : mergedRegistry[0]?.name || '';
 
@@ -925,8 +925,6 @@ export async function hydrateEyeVisionFromCloud(officeToken: string, uid: string
       if (!slug || isCompanyDeleted(slug) || !isCompanySlugInAllowedSet(slug, repairedAllowedSlugs)) continue;
       applyManagerPayload(row);
     }
-
-    await restoreAiSettingsFromCloudStorage();
 
     writeSyncMeta({
       officeToken: token,

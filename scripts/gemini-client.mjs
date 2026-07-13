@@ -12,6 +12,7 @@ const DEFAULT_MODEL = 'gemini-2.5-flash';
  * Não incluir gemini-2.0-flash* — cota zero em chaves free tier novas.
  */
 export const FREE_TIER_MODEL_CHAIN = [
+  'gemini-1.5-flash',
   'gemini-2.5-flash',
   'gemini-3-flash-preview',
   'gemini-2.5-flash-lite',
@@ -33,7 +34,6 @@ const WEAK_GEMINI_PATTERNS = [/lite/i, /8b/i, /haiku/i, /instant/i];
 /** Padrões bloqueados — sem cota free ou indisponíveis na API v1beta. */
 const BLOCKED_MODEL_PATTERNS = [
   /^gemini-2\.0-flash/i,
-  /^gemini-1\.5/i,
   /-image/i,
   /-tts/i,
   /embedding/i,
@@ -289,7 +289,7 @@ async function callGeminiOnce(model, key, params, signal) {
       : {}),
     contents: [{ role: 'user', parts }],
     generationConfig: {
-      temperature: params.temperature ?? 0.15,
+      temperature: params.temperature ?? 0,
       maxOutputTokens: params.maxOutputTokens ?? 8192,
       ...(params.jsonMode ? { responseMimeType: 'application/json' } : {}),
       ...(params.responseSchema ? { responseSchema: params.responseSchema } : {}),

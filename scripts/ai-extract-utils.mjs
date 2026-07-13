@@ -238,20 +238,9 @@ export function normalizeAiRows(raw, options = {}) {
 
   const mapped = raw
     .map((r) => {
-      let dataRaw = normalizeDateBr(r?.data, statementYear);
-      let datePart = dataRaw.split(/\s/)[0] ?? '';
-
-      if (RE_DATA_BR.test(datePart)) {
-        lastValidDate = datePart;
-      } else if (lastValidDate) {
-        // Fallback: se a data não estiver no padrão mas temos uma data válida anterior,
-        // reaproveitamos — isso evita descartar lançamentos com data borrada ou omitida.
-        dataRaw = lastValidDate;
-        datePart = lastValidDate;
-      }
-
+      const rawDate = String(r?.data ?? '').trim();
       let row = {
-        data: dataRaw,
+        data: '',
         descricao: cleanHistoricoPix(String(r?.descricao ?? r?.historico ?? '').trim()),
         valorCredito: String(r?.valorCredito ?? '').trim(),
         valorDebito: String(r?.valorDebito ?? '').trim(),
@@ -262,6 +251,23 @@ export function normalizeAiRows(raw, options = {}) {
         ).trim(),
         _extratoAiExtract: '1',
       };
+
+      let dataRaw = normalizeDateBr(rawDate, statementYear);
+      let datePart = dataRaw.split(/\s/)[0] ?? '';
+      const rowSeemsOperational =
+        rowOperationalValue(row) >= 0.01 || String(row.descricao ?? '').trim().length > 4;
+
+      if (RE_DATA_BR.test(datePart)) {
+        lastValidDate = datePart;
+      } else if (lastValidDate && (isDatePlaceholder(rawDate) || rowSeemsOperational)) {
+        // Quando o banco repete a data só na primeira linha do dia, herdamos a última data válida.
+        dataRaw = lastValidDate;
+        datePart = lastValidDate;
+      } else {
+        dataRaw = '';
+        datePart = '';
+      }
+      row.data = dataRaw;
 
       const deb = parseMoneyBr(row.valorDebito);
       const cred = parseMoneyBr(row.valorCredito);
@@ -303,8 +309,12 @@ export function normalizeAiRows(raw, options = {}) {
     })
     .filter((r) => {
       const d = r.data?.split(/\s/)[0] ?? '';
-      // Aceita somente lançamentos cuja data final esteja no formato DD/MM/AAAA
-      return RE_DATA_BR.test(d);
+      if (RE_DATA_BR.test(d)) return true;
+      // Não descartamos linha operacional só porque a data veio borrada;
+      // a revisão/importação posterior ainda pode herdá-la da linha anterior.
+      const val = rowOperationalValue(r);
+      const hasDesc = String(r.descricao ?? '').trim().length > 4;
+      return val >= 0.01 && hasDesc;
     });
 
   return mapped;

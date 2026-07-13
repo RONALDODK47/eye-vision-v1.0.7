@@ -3,12 +3,11 @@
  * Usa exatamente isNegative/parsedValue do placar (Entradas/Saídas), sem reinterpretação OCR.
  */
 
-import type { OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
+import type { OcrConfirmMeta } from '../../lib/leitorRecortador/types';
 import type { GenericOcrRow } from '../../lib/parcelamentoColunasExtract';
 import type { ExtractedRow } from '../../lib/leitorRecortador/types';
 import { analyzeValueString, propagateExtractedRowDates } from '../../lib/leitorRecortador/cropper';
 import { parseExtratoDataOcrText } from '../../lib/ocrExtratoPositional';
-import { normalizeDateIso } from '../lib/utils';
 import { avaliarExtratoConciliacaoItau, type ExtratoConciliacaoResumo } from '../../lib/itauExtratoProfile';
 
 export const EXTRATO_RECORTE_FIEL_FLAG = '_recorteFiel';
@@ -96,6 +95,26 @@ export function rowsSaoRecorteFiel(rows: GenericOcrRow[]): boolean {
   return rows.length > 0 && rows.every(isRecorteFielRow);
 }
 
+function resolveRecorteFielDateIso(raw: unknown, lastDate: string): string {
+  const text = String(raw ?? '').trim();
+  if (!text) return lastDate;
+  const parsed = parseExtratoDataOcrText(text);
+  if (parsed) return parsed;
+
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  const br = text.match(/^(\d{1,2})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{2,4})$/);
+  if (br) {
+    const dd = br[1].padStart(2, '0');
+    const mm = br[2].padStart(2, '0');
+    const yyyy = br[3].length === 2 ? `20${br[3]}` : br[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return lastDate;
+}
+
 /**
  * Converte linhas do recorte em itens de importação 1:1 (mesma natureza/valor do placar).
  * Não aplica filtros OCR, dedupe, Itaú, etc.
@@ -128,8 +147,7 @@ export function mapRecorteFielRowsToImportItems(
         : 0;
     if (value <= 0.0001) continue;
 
-    let dateIso = normalizeDateIso(String(row.data ?? '').trim());
-    if (!dateIso && lastDate) dateIso = lastDate;
+    const dateIso = resolveRecorteFielDateIso(row.data, lastDate);
     if (dateIso) lastDate = dateIso;
 
     const description = String(row.descricao ?? '').trim() || 'LANÇAMENTO';

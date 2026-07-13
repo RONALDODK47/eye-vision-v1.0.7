@@ -13,6 +13,12 @@ import {
   EXTRATO_AI_REPAIR_SYSTEM,
   EXTRATO_AI_REFINE_SYSTEM,
   PLANO_AI_REFINE_SYSTEM,
+  EXTRATO_AI_SURGICAL_SYSTEM,
+  EXTRATO_AI_SURGICAL_SCHEMA,
+  LOAN_CONTRACT_AI_SYSTEM,
+  LOAN_CONTRACT_AI_SCHEMA,
+  EXTRATO_AI_OCR_OVERLAY_SYSTEM,
+  EXTRATO_AI_OCR_OVERLAY_SCHEMA,
 } from './ai-extract-prompts.mjs';
 import {
   computeConciliacaoAi,
@@ -25,7 +31,7 @@ import {
 } from './ai-extract-utils.mjs';
 import { convertExtrato, convertPlano, DEFAULT_GEMINI_MODEL, formatGeminiErrorMessage } from './erp-contabil/index.mjs';
 
-async function callGeminiExtract({ model, systemInstruction, userParts, images, temperature = 0.05, responseSchema }) {
+async function callGeminiExtract({ model, systemInstruction, userParts, images, temperature = 0, responseSchema }) {
   const extractOpts = {
     model,
     systemInstruction,
@@ -114,7 +120,7 @@ async function extractPlanoWithGemini({ model, ocrText, images, fileName }) {
     systemInstruction,
     userParts,
     images,
-    temperature: 0.05,
+    temperature: 0,
     responseSchema,
   });
 
@@ -305,6 +311,95 @@ async function extractPlanoWithAnthropic({ model, ocrText, images, fileName }) {
   return { ok: true, rows, provider: 'anthropic', model };
 }
 
+async function extractLoanContractWithGemini({ model, images, fileName }) {
+  if (!isGeminiConfigured()) {
+    return { ok: false, reason: 'gemini_not_configured', detail: 'Configure a chave Gemini na aba IA ou no .env' };
+  }
+
+  const systemInstruction = LOAN_CONTRACT_AI_SYSTEM;
+  const userParts = [
+    fileName ? `Arquivo: ${fileName}` : '',
+    '\nExtraia os dados do contrato de empréstimo/financiamento.',
+  ].filter(Boolean).join('\n');
+
+  const out = await callGeminiExtract({
+    model,
+    systemInstruction,
+    userParts,
+    images,
+    temperature: 0,
+    maxOutputTokens: 4096, // Contratos são JSONs pequenos
+    responseSchema: LOAN_CONTRACT_AI_SCHEMA,
+  });
+
+  const parsed = parseGeminiJson(out.text);
+  if (!parsed) {
+    return {
+      ok: false,
+      reason: 'parse_error',
+      detail: 'A IA respondeu em formato inválido para o contrato.',
+    };
+  }
+
+  return { ok: true, data: parsed, provider: 'gemini', model: out.model };
+}
+
+/** @param {object} body */
+export async function handleAiExtractLoanContract(body) {
+  const config = loadAiConfig();
+  const providerId = String(body?.providerId ?? config.providerId ?? 'gemini').trim();
+  const model = normalizeSelectedModel(providerId, body?.model ?? config.model);
+
+  if (!isProviderConfigured(providerId)) {
+    return {
+      status: 503,
+      body: { ok: false, reason: `${providerId}_not_configured`, detail: `Configure a chave API de ${providerId} na aba IA` },
+    };
+  }
+
+  const payload = {
+    model,
+    images: Array.isArray(body?.images) ? body.images : [],
+    fileName: String(body?.fileName ?? '').trim(),
+  };
+
+  try {
+    let result;
+    if (providerId === 'gemini') {
+      result = await extractLoanContractWithGemini(payload);
+    } else {
+      return {
+        status: 400,
+        body: { ok: false, reason: 'provider_not_supported', detail: 'Extração de contrato suportada apenas via Gemini Vision no momento.' },
+      };
+    }
+
+    if (!result.ok) {
+      return { status: 503, body: result };
+    }
+
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        data: result.data,
+        model: result.model,
+        provider: result.provider,
+        detail: 'Dados do contrato extraídos com sucesso.',
+      },
+    };
+  } catch (err) {
+    return {
+      status: 503,
+      body: {
+        ok: false,
+        reason: 'extract_error',
+        detail: err?.userHint ?? err?.message ?? String(err),
+      },
+    };
+  }
+}
+
 /** @param {object} body */
 export async function handleAiExtractPlano(body) {
   const config = loadAiConfig();
@@ -443,6 +538,7 @@ async function extractMissingRowsGemini({
   images,
   fileName,
   bankHint,
+  statementYear,
 }) {
   const userParts = [
     `Arquivo: ${fileName || 'extrato'}`,
@@ -466,7 +562,7 @@ async function extractMissingRowsGemini({
 
   const parsed = parseGeminiJson(out.text);
   return normalizeAiRows(parsed?.rows ?? [], {
-    statementYear: new Date().getFullYear(),
+    statementYear,
     bankHint,
   });
 }
@@ -537,9 +633,9 @@ async function finalizeAiExtratoResult({
   let sf = saldoFinal;
   let conciliacao = computeConciliacaoAi(outRows, sa, sf);
 
-  const skipSlowRepair = outRows.length >= 5;
+  const canRunSlowRepair = outRows.length > 0 && outRows.length <= 180;
 
-  if (!skipSlowRepair && needsConciliacaoRepair(conciliacao) && sf != null && isGeminiConfigured()) {
+  if (canRunSlowRepair && needsConciliacaoRepair(conciliacao) && sf != null && isGeminiConfigured()) {
     try {
       const extra = await extractMissingRowsGemini({
         model,
@@ -551,6 +647,7 @@ async function finalizeAiExtratoResult({
         images,
         fileName,
         bankHint,
+        statementYear,
       });
       if (extra.length > 0) {
         outRows = mergeAiExtratoRows(outRows, extra);
@@ -561,7 +658,7 @@ async function finalizeAiExtratoResult({
     }
   }
 
-  if (!skipSlowRepair && needsConciliacaoRepair(conciliacao) && sf != null && isGeminiConfigured()) {
+  if (canRunSlowRepair && needsConciliacaoRepair(conciliacao) && sf != null && isGeminiConfigured()) {
     try {
       const repaired = await repairExtractionGemini({
         model,
@@ -851,7 +948,7 @@ async function extractWithGemini({ model, ocrText, images, statementYear, fileNa
   }
 
   const bankHint = bankHintIn ?? detectBankHint(fileName, ocrText);
-  
+
   const systemInstruction = `Você é um auditor financeiro certificado e especialista em OCR de extratos bancários físicos escaneados. Sua missão é de PRECISÃO ABSOLUTA. Você vai ler o documento INTEIRO, linha por linha, página por página, sem pular absolutamente nada.
 
 REGRAS ABSOLUTAS E INVIOLÁVEIS:
@@ -917,7 +1014,7 @@ INSTRUÇÕES DETALHADAS DE EXTRAÇÃO (SIGA EXATAMENTE):
     systemInstruction,
     userParts,
     images,
-    temperature: 0.05,
+    temperature: 0,
     responseSchema,
   });
 
@@ -984,10 +1081,10 @@ INSTRUÇÕES DETALHADAS DE EXTRAÇÃO (SIGA EXATAMENTE):
 
   // Usa os campos saldo_anterior/saldo_final do novo schema, com fallback para parseAiSaldoFields
   const saldoAnteriorNew = typeof parsed?.saldo_anterior === 'number' ? parsed.saldo_anterior : null;
-  const saldoFinalNew    = typeof parsed?.saldo_final    === 'number' ? parsed.saldo_final    : null;
+  const saldoFinalNew = typeof parsed?.saldo_final === 'number' ? parsed.saldo_final : null;
   const { saldoAnterior: saldoAnteriorLegacy, saldoFinal: saldoFinalLegacy } = parseAiSaldoFields(parsed);
   const saldoAnterior = saldoAnteriorNew ?? saldoAnteriorLegacy;
-  const saldoFinal    = saldoFinalNew    ?? saldoFinalLegacy;
+  const saldoFinal = saldoFinalNew ?? saldoFinalLegacy;
 
 
   const finalized = await finalizeAiExtratoResult({
@@ -1150,11 +1247,89 @@ async function extractWithAnthropic({ model, ocrText, images, statementYear, fil
   });
 }
 
+async function extractExtratoSurgical({ model, images, fileName }) {
+  if (!isGeminiConfigured()) {
+    return { ok: false, reason: 'gemini_not_configured', detail: 'Configure a chave Gemini na aba IA ou no .env' };
+  }
+
+  const systemInstruction = EXTRATO_AI_SURGICAL_SYSTEM;
+  const userParts = `Por favor, extraia todas as transações das páginas do extrato bancário fornecidas (arquivo: ${fileName}) seguindo o formato do esquema JSON.`;
+  const responseSchema = EXTRATO_AI_SURGICAL_SCHEMA;
+
+  const out = await callGeminiExtract({
+    model,
+    systemInstruction,
+    userParts,
+    images,
+    temperature: 0,
+    responseSchema,
+  });
+
+  const parsed = parseGeminiJson(out.text);
+  if (!parsed || !Array.isArray(parsed.transactions)) {
+    return {
+      ok: false,
+      reason: 'parse_error',
+      detail: 'A IA respondeu em formato inválido — tente novamente.',
+    };
+  }
+
+  const rows = parsed.transactions.map(t => ({
+    data: t.dateText,
+    descricao: t.historyText,
+    valorMisto: t.valueText,
+    isNegative: t.isNegative,
+    parsedValue: t.parsedValue,
+    _linhaOcr: `${t.dateText} ${t.historyText} ${t.valueText}`.trim(),
+  }));
+
+  const saldoAnterior = typeof parsed.saldoAnterior === 'number' ? parsed.saldoAnterior : null;
+  const saldoFinal = typeof parsed.saldoFinal === 'number' ? parsed.saldoFinal : null;
+
+  return {
+    ok: true,
+    rows,
+    saldoAnterior,
+    saldoFinal,
+    provider: 'gemini',
+    model: out.model
+  };
+}
+
 /** @param {object} body */
 export async function handleAiExtractExtrato(body) {
   const config = loadAiConfig();
   const providerId = String(body?.providerId ?? config.providerId ?? 'gemini').trim();
   const model = normalizeSelectedModel(providerId, body?.model ?? config.model);
+  const mode = String(body?.mode ?? '').trim();
+
+  if (mode === 'surgical' && providerId === 'gemini') {
+    const payload = {
+      model,
+      images: Array.isArray(body?.images) ? body.images : [],
+      fileName: String(body?.fileName ?? '').trim(),
+    };
+    try {
+      const result = await extractExtratoSurgical(payload);
+      if (!result.ok) return { status: 503, body: result };
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          rows: result.rows,
+          saldoAnterior: result.saldoAnterior,
+          saldoFinal: result.saldoFinal,
+          model: result.model,
+          provider: result.provider,
+          rowCount: result.rows.length,
+          detail: `${result.rows.length} lançamento(s) extraído(s) via IA Cirúrgica.`,
+        },
+      };
+    } catch (err) {
+      return { status: 503, body: { ok: false, detail: err.message } };
+    }
+  }
+
   const modelEntry = findModelInCatalog(model);
 
   if (!isProviderConfigured(providerId)) {
@@ -1662,6 +1837,61 @@ export async function handleAiExtractSocios(body) {
         reason: 'extract_error',
         detail: err?.userHint ?? err?.message ?? String(err),
       },
+    };
+  }
+}
+
+/** @param {object} body */
+export async function handleAiOcrOverlay(body) {
+  const config = loadAiConfig();
+  const providerId = 'gemini'; // OCR Overlay suportado apenas via Gemini Vision
+  const model = normalizeSelectedModel(providerId, body?.model ?? config.model);
+
+  if (!isGeminiConfigured()) {
+    return {
+      status: 503,
+      body: { ok: false, reason: 'gemini_not_configured', detail: 'Configure a chave Gemini na aba IA ou no .env' },
+    };
+  }
+
+  const payload = {
+    model,
+    images: Array.isArray(body?.images) ? body.images : [],
+    fileName: String(body?.fileName ?? '').trim(),
+  };
+
+  try {
+    const out = await callGeminiExtract({
+      model: payload.model,
+      systemInstruction: EXTRATO_AI_OCR_OVERLAY_SYSTEM,
+      userParts: `Realize o OCR do documento: ${payload.fileName}`,
+      images: payload.images,
+      temperature: 0,
+      responseSchema: EXTRATO_AI_OCR_OVERLAY_SCHEMA,
+    });
+
+    const parsed = parseGeminiJson(out.text);
+    if (!parsed || !Array.isArray(parsed.blocks)) {
+      return {
+        status: 422,
+        body: { ok: false, reason: 'parse_error', detail: 'A IA não retornou blocos de texto válidos.' },
+      };
+    }
+
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        blocks: parsed.blocks,
+        model: out.model,
+        provider: 'gemini',
+        detail: `${parsed.blocks.length} blocos de texto reconhecidos.`,
+      },
+    };
+  } catch (err) {
+    return {
+      status: 503,
+      body: { ok: false, reason: 'extract_error', detail: err.message },
     };
   }
 }

@@ -2,7 +2,7 @@
  * Pipeline de escalação quando o quality gate detecta extração incompleta.
  */
 import type { GenericOcrRow, ExtractGenericOptions } from '../../lib/parcelamentoColunasExtract';
-import type { AiExtractImage, OcrConfirmMeta } from '../../lib/aiExtratoExtractClient';
+import type { OcrConfirmMeta } from '../../lib/leitorRecortador/types';
 import { extractExtratoWithAi, marcarRowsExtracaoAi, fileToBase64Payload } from '../../lib/aiExtratoExtractClient';
 import {
   extratoLinhasSaldoInformativoDoTextoOcr,

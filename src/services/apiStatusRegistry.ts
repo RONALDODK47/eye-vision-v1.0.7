@@ -5,7 +5,6 @@ import { getEmbeddedSerie11Count, hydrateBcbSeriesFromBundledAssets } from './bc
 import { pingReceitaFederalApi } from './receitaFederalApi';
 import { pingSefazIcmsApi } from './sefazIcmsApi';
 import { pingSpedReceitaApi } from './spedReceitaApi';
-import { pingGeminiApi } from './geminiApi';
 
 const PING_TIMEOUT_MS = 2_500;
 const REMOTE_PING_TIMEOUT_MS = 15_000;
@@ -89,12 +88,6 @@ export const API_STATUS_REGISTRY: ApiStatusEntry[] = [
     port: '8780',
     ping: pingSpedReceitaApi,
   },
-  {
-    id: 'gemini',
-    label: 'Gemini AI',
-    ping: pingGeminiApi,
-    timeoutMs: 8_000,
-  },
 ];
 
 /** Escopo lógico de APIs — uma aba do launcher pode mapear para o mesmo escopo. */
@@ -102,7 +95,7 @@ export type ApiStatusScope = 'manager' | 'pricing' | 'debug' | 'none';
 
 /** IDs de API visíveis por escopo (ordem preservada do registry). */
 export const API_IDS_BY_SCOPE: Record<Exclude<ApiStatusScope, 'none'>, readonly string[]> = {
-  manager: ['bcb', 'calendario', 'receita-federal', 'sped', 'gemini'],
+  manager: ['bcb', 'calendario', 'receita-federal', 'sped'],
   pricing: ['receita-federal', 'sefaz-icms'],
   debug: API_STATUS_REGISTRY.map((e) => e.id),
 };
@@ -140,7 +133,7 @@ export async function probeAllApiStatuses(
 ): Promise<ApiStatusMap> {
   const results = await Promise.all(
     registry.map(async (entry) => {
-      const remote = entry.id === 'gemini' || entry.port === '8780' || entry.port === 'remoto';
+      const remote = entry.port === '8780' || entry.port === 'remoto';
       const timeout = entry.timeoutMs ?? (remote && !import.meta.env.DEV ? REMOTE_PING_TIMEOUT_MS : PING_TIMEOUT_MS);
       const retries = remote && !import.meta.env.DEV ? 1 : 0;
       const ok = await pingWithRetry(() => entry.ping(), timeout, retries);

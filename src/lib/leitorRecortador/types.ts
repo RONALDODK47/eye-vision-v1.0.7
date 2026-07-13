@@ -70,3 +70,12 @@ export type RenderedPDFPage = {
   height: number;
   pageNumber: number;
 };
+
+export type OcrConfirmMeta = {
+  conciliacaoRawRows?: unknown[];
+  saldoAnterior?: number | null;
+  saldoFinalEsperado?: number | null;
+  extractDiagnostic?: unknown;
+  /** Texto OCR agregado — usado na revisão para achar lançamentos faltantes. */
+  ocrTextBlob?: string;
+};

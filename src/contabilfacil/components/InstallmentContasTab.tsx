@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Save } from 'lucide-react';
 import type { SavedParcelamento } from '../logic/parcelamentoStorage';
 import DominioDebitoCreditoBlock from './DominioDebitoCreditoBlock';
-import ModuloContasAiButton from './ModuloContasAiButton';
 import {
   CF_FIELD_COL,
   CF_FIELD_ROW,
@@ -142,29 +141,6 @@ export default function InstallmentContasTab({ selectedCompany, items, onSave }:
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
-          <ModuloContasAiButton
-            company={selectedCompany}
-            modulo="parcelamento"
-            contasAtuais={{
-              accEmprestimoDebit: draft.accEmprestimoDebit ?? '',
-              accEmprestimoCredit: draft.accEmprestimoCredit ?? '',
-              accParcelaDebit: draft.accParcelaDebit ?? '',
-              accParcelaCredit: draft.accParcelaCredit ?? '',
-              accPagamentoDebit: draft.accPagamentoDebit ?? '',
-              accPagamentoCredit: draft.accPagamentoCredit ?? '',
-              accJurosAproDebit: draft.accJurosAproDebit ?? '',
-              accJurosAproCredit: draft.accJurosAproCredit ?? '',
-              accApropriacaoDebit: draft.accApropriacaoDebit ?? '',
-              accApropriacaoCredit: draft.accApropriacaoCredit ?? '',
-              accTransferenciaDebit: draft.accTransferenciaDebit ?? '',
-              accTransferenciaCredit: draft.accTransferenciaCredit ?? '',
-            }}
-            contexto={{
-              clienteNome: selectedItem.clienteNome,
-              numeroParcelamento: selectedItem.numeroParcelamento,
-            }}
-            onApply={(patch) => patchDraft(patch)}
-          />
           <button
             type="button"
             onClick={handleSave}

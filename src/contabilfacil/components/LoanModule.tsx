@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState, useEffect } from 'react';
+import { lazy, Suspense, useMemo, useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import {
   Plus,
@@ -9,6 +9,9 @@ import {
   Folder,
   FolderOpen,
   Search,
+  Sparkles,
+  FileText,
+  Loader2,
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { FreeNumericInput } from './FreeNumericInput';
@@ -40,6 +43,12 @@ import { postEmprestimoNoRazao } from '../logic/loanBalanceteAutomation';
 import { flushPersistenceAfterCriticalWrite } from '../logic/eyeVisionPersistenceFlush';
 import { parseCurrency } from '../../lib/simTabFields';
 import {
+  extractLoanContractWithAi,
+  fileToBase64Payload,
+  previewUrlToBase64,
+} from '../../lib/aiExtratoExtractClient';
+import { loadPdfPagesProgressive, parseAndRenderImage } from '../../lib/leitorRecortador/pdfParser';
+import {
   SIM_VAR_MODE_OPTIONS,
   spreadIndexadorShortLabel,
   usesSpreadPlusIndexador,
@@ -66,6 +75,9 @@ export default function LoanModule({
   const [contractSearch, setContractSearch] = useState('');
   const [folderOpen, setFolderOpen] = useState(true);
   const [showImportBox, setShowImportBox] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const contractFileRef = useRef<HTMLInputElement>(null);
 
   const {
     contracts,
@@ -94,6 +106,76 @@ export default function LoanModule({
     handleExportForDeploy,
     bcbReadiness,
   } = useLoanModuleState({ selectedCompany, storageVersion });
+
+  const handleScanContractWithAi = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeContract) return;
+
+    setIsScanning(true);
+    setErrorMessage(null);
+
+    try {
+      let images: { base64: string; mimeType: string }[] = [];
+
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        // Para PDF, pegamos as primeiras páginas como imagem
+        const pages: { canvas: HTMLCanvasElement }[] = [];
+        await loadPdfPagesProgressive(file, {
+          onReady: (first) => pages.push(first),
+          onProgress: (all) => {
+            if (pages.length < 3) pages.push(all[all.length - 1]);
+          },
+        });
+
+        for (const page of pages.slice(0, 3)) {
+          const b64 = await previewUrlToBase64(page.canvas.toDataURL('image/jpeg', 0.8), 2048);
+          if (b64) images.push(b64);
+        }
+      } else {
+        const page = await parseAndRenderImage(file);
+        const b64 = await previewUrlToBase64(page.canvas.toDataURL('image/jpeg', 0.8), 2048);
+        if (b64) images.push(b64);
+      }
+
+      if (images.length === 0) throw new Error('Falha ao processar imagens do contrato.');
+
+      const result = await extractLoanContractWithAi({
+        images,
+        fileName: file.name,
+      });
+
+      if (!result.ok || !result.data) {
+        throw new Error(result.detail || 'Falha na extração via IA.');
+      }
+
+      const d = result.data;
+      const updates: Partial<LoanContract> = {};
+      if (d.contractNumber) updates.contractNumber = d.contractNumber;
+      if (d.bankName) updates.bankName = d.bankName;
+      if (d.principal) updates.principal = d.principal;
+      if (d.installments) updates.installments = d.installments;
+      if (d.startDate) updates.startDate = d.startDate;
+      if (d.gracePeriod != null) updates.gracePeriod = d.gracePeriod;
+      if (d.graceType) updates.graceType = d.graceType;
+      if (d.amortizationType) updates.type = d.amortizationType;
+      if (d.indexType) updates.indexType = d.indexType;
+      if (d.iof != null) updates.iof = d.iof;
+      if (d.costs != null) updates.costs = d.costs;
+
+      handleUpdate(updates);
+
+      if (d.interestRate != null) {
+        handleUpdateInterestRate(String(d.interestRate).replace('.', ','));
+      }
+
+      alert('Dados do contrato extraídos e preenchidos com sucesso!');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Falha ao ler contrato');
+    } finally {
+      setIsScanning(false);
+      if (contractFileRef.current) contractFileRef.current.value = '';
+    }
+  };
 
   const filteredContracts = useMemo(() => {
     const needle = contractSearch.trim().toLowerCase();
@@ -439,300 +521,321 @@ export default function LoanModule({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Left settings */}
-            <div className="lg:col-span-4 space-y-6 min-w-0">
-              {activeContract && (
-                <div className="technical-panel p-6 shadow-[4px_4px_0_0_#141414] space-y-6 min-w-0 overflow-hidden">
-                  <div className="flex items-center justify-between border-b border-brand-border/20 pb-2">
-                    <h3 className="text-xs font-black uppercase tracking-widest flex items-center gap-2">
-                      <div className="w-2 h-2 bg-brand-border animate-pulse"></div>
-                      CONTRATO ATIVO
-                    </h3>
-                    <div className="flex gap-1.5">
-                      <button 
-                        onClick={handleDuplicate}
-                        title="Duplicar"
-                        className="p-1 hover:bg-brand-base border border-transparent hover:border-brand-border transition-all"
-                      >
-                        <Copy size={12} />
-                      </button>
-                      <button 
-                        onClick={handleDelete}
-                        title="Excluir"
-                        className="p-1 text-red-600 hover:bg-red-50 border border-transparent transition-all"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className={CF_FORM_FIELDS}>
-                    <div className={CF_FIELD_COL}>
-                      <label className={CF_LABEL}>Empresa</label>
-                      <div className="max-w-[14rem] px-2 py-1 bg-brand-sidebar/10 border border-brand-border/40 font-bold text-[11px] uppercase truncate">
-                        {selectedCompany}
-                      </div>
-                    </div>
-
-                    <div className={CF_FIELD_COL_GROW}>
-                      <label className={CF_LABEL}>Número do Contrato</label>
-                      <input
-                        aria-label="Número do Contrato"
-                        type="text"
-                        value={activeContract.contractNumber}
-                        onChange={(e) => handleUpdate({ contractNumber: e.target.value })}
-                        className={CF_LOAN_INPUT_MED}
-                        placeholder="Nº CONTRATO"
-                      />
-                      <label className={`${CF_LABEL} mt-2`}>Nome do Banco</label>
-                      <input
-                        aria-label="Nome do Banco"
-                        type="text"
-                        value={activeContract.bankName}
-                        onChange={(e) => handleUpdate({ bankName: e.target.value })}
-                        className={CF_LOAN_INPUT_MED}
-                        placeholder="Ex.: Banco do Brasil"
-                      />
-                    </div>
-
-                    <div className={CF_FIELD_COL}>
-                      <label className={CF_LABEL}>Amortização</label>
-                      <div className="inline-flex border border-brand-border overflow-hidden">
-                        {['PRICE', 'SAC'].map(t => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => handleUpdate({ type: t as LoanContract['type'] })}
-                            className={`px-4 py-1.5 text-[9px] font-bold transition-all ${
-                              activeContract.type === t ? 'bg-brand-border text-brand-bg' : 'bg-transparent text-brand-text/60 hover:bg-brand-border/5'
-                            }`}
-                          >
-                            {t}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className={CF_FIELD_INLINE}>
-                      <div className={CF_FIELD_COL}>
-                        <label className={CF_LABEL}>Principal (R$)</label>
-                        <FreeNumericInput
-                          aria-label="Principal em reais"
-                          value={activeContract.principal}
-                          onChange={(principal) => handleUpdate({ principal })}
-                          className={CF_LOAN_INPUT_MONEY}
-                        />
-                      </div>
-                      <div className={CF_FIELD_COL}>
-                        <label className={CF_LABEL}>Parcelas</label>
-                        <FreeNumericInput
-                          inputMode="numeric"
-                          aria-label="Quantidade de parcelas"
-                          value={activeContract.installments}
-                          displayDecimals={0}
-                          onChange={(installments) => handleUpdate({ installments })}
-                          className={CF_LOAN_INPUT_NUM}
-                        />
-                      </div>
-                    </div>
-
-                    <div className={CF_LOAN_FIELD_FULL}>
-                      <label className={CF_LABEL}>Indexador</label>
-                      <select
-                        aria-label="Indexador do contrato"
-                        value={activeTab?.varMode ?? 'none'}
-                        disabled={!activeTab}
-                        onChange={(e) => {
-                          const varMode = e.target.value as SimVarMode;
-                          const patch: Partial<SimTabFields> = { varMode };
-                          if (varMode === 'pronampe') {
-                            if (activeTab?.graceInterestRoundingMode === 'none') {
-                              patch.graceInterestRoundingMode = 'halfAwayFromZero';
-                            }
-                            if (activeContract?.type === 'SAC') {
-                              patch.sacAmortizationBase = 'contractPrincipal';
-                            }
-                          }
-                          patchActiveSimTab(patch);
-                        }}
-                        className={CF_LOAN_SELECT}
-                      >
-                        {SIM_VAR_MODE_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {activeTab?.varMode === 'custom' && (
-                      <div className={CF_FIELD_COL}>
-                        <label className={CF_LABEL}>Taxa do indexador fixo % a.m.</label>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          aria-label="Taxa mensal do indexador fixo"
-                          value={activeTab.customVarRateStr}
-                          onChange={(e) =>
-                            patchActiveSimTab({ customVarRateStr: e.target.value })
-                          }
-                          placeholder="0,50"
-                          className={CF_LOAN_INPUT_PCT}
-                        />
-                      </div>
-                    )}
-
-                    <div className={CF_FIELD_COL}>
-                      <label className={CF_LABEL}>
-                        {activeTab && usesSpreadPlusIndexador(activeTab.varMode)
-                          ? `Spread Mensal Carência % (+ ${spreadIndexadorShortLabel(activeTab.varMode)})`
-                          : 'Taxa Mensal Carência %'}
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        aria-label="Spread ou taxa mensal na carência"
-                        value={graceInterestRateStr}
-                        onChange={(e) => handleUpdateGraceInterestRate(e.target.value)}
-                        placeholder={
-                          activeTab && usesSpreadPlusIndexador(activeTab.varMode) ? '0,30' : '1,02'
-                        }
-                        className={CF_LOAN_INPUT_PCT}
-                      />
-                    </div>
-                    <div className={CF_FIELD_COL}>
-                      <label className={CF_LABEL}>
-                        {activeTab && usesSpreadPlusIndexador(activeTab.varMode)
-                          ? `Spread Mensal s/ Carência % (+ ${spreadIndexadorShortLabel(activeTab.varMode)})`
-                          : 'Taxa Mensal s/ Carência %'}
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        aria-label="Spread ou taxa mensal sem carência"
-                        value={interestRateStr}
-                        onChange={(e) => handleUpdateInterestRate(e.target.value)}
-                        placeholder={
-                          activeTab && usesSpreadPlusIndexador(activeTab.varMode) ? '0,30' : '1,02'
-                        }
-                        className={CF_LOAN_INPUT_PCT}
-                      />
-                    </div>
-
-                    <div className={CF_FIELD_COL}>
-                        <label className={CF_LABEL}>Data do contrato</label>
-                        <input
-                          type="date"
-                          aria-label="Data do contrato"
-                          value={activeContract.startDate?.slice(0, 10) ?? ''}
-                          onChange={(e) => handleUpdate({ startDate: e.target.value })}
-                          className={CF_LOAN_INPUT_DATE}
-                        />
-                    </div>
-                    <div className={CF_FIELD_COL}>
-                        <label className={CF_LABEL}>Carência (Meses)</label>
-                        <FreeNumericInput
-                          inputMode="numeric"
-                          aria-label="Carência em meses"
-                          value={activeContract.gracePeriod}
-                          commitWhileFocused
-                          displayDecimals={0}
-                          onChange={(gracePeriod) =>
-                            handleUpdate({ gracePeriod: Math.max(0, gracePeriod) })
-                          }
-                          className={CF_LOAN_INPUT_NUM}
-                        />
-                    </div>
-                    <div className={CF_FIELD_COL}>
-                      <label className={CF_LABEL}>Juros na carência</label>
-                      <select
-                        aria-label="Juros na carência: pagar mensalmente ou capitalizar"
-                        value={activeContract.graceType}
-                        onChange={(e) =>
-                          handleUpdate({ graceType: e.target.value as LoanContract['graceType'] })
-                        }
-                        className={CF_LOAN_SELECT}
-                      >
-                        <option value="paid">PAGAR JUROS MENSALMENTE</option>
-                        <option value="capitalized">CAPITALIZAR NO PRINCIPAL</option>
-                      </select>
-                      <p className={CF_FIELD_HINT}>
-                        Capitalizar: sem parcela na carência (juros entram no saldo). Pagar: parcela só com juros.
-                      </p>
-                    </div>
-
-                    <div className={CF_FIELD_COL}>
-                        <label className={CF_LABEL}>IOF Financiado</label>
-                        <FreeNumericInput
-                          aria-label="IOF financiado"
-                          value={activeContract.iof}
-                          onChange={(iof) => handleUpdate({ iof })}
-                          className={CF_LOAN_INPUT_MONEY}
-                        />
-                    </div>
-                    <div className={CF_FIELD_COL}>
-                        <label className={CF_LABEL}>Taxas Banco (Custo)</label>
-                        <FreeNumericInput
-                          aria-label="Taxas banco custo operacional"
-                          value={activeContract.costs}
-                          onChange={(costs) => handleUpdate({ costs })}
-                          className={CF_LOAN_INPUT_MONEY}
-                        />
-                    </div>
+          {/* Left settings */}
+          <div className="lg:col-span-4 space-y-6 min-w-0">
+            {activeContract && (
+              <div className="technical-panel p-6 shadow-[4px_4px_0_0_#141414] space-y-6 min-w-0 overflow-hidden">
+                <div className="flex items-center justify-between border-b border-brand-border/20 pb-2">
+                  <h3 className="text-xs font-black uppercase tracking-widest flex items-center gap-2">
+                    <div className="w-2 h-2 bg-brand-border animate-pulse"></div>
+                    CONTRATO ATIVO
+                  </h3>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="file"
+                      ref={contractFileRef}
+                      className="hidden"
+                      accept=".pdf,image/*"
+                      onChange={handleScanContractWithAi}
+                    />
+                    <button
+                      onClick={() => contractFileRef.current?.click()}
+                      disabled={isScanning}
+                      title="Ler contrato com IA"
+                      className={cn(
+                        "p-1 hover:bg-brand-sidebar/10 border border-transparent hover:border-brand-border transition-all flex items-center gap-1.5 text-[9px] font-bold uppercase",
+                        isScanning && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      {isScanning ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={12} className="text-brand-border" />
+                      )}
+                      {isScanning ? 'Lendo...' : 'IA'}
+                    </button>
+                    <button
+                      onClick={handleDuplicate}
+                      title="Duplicar"
+                      className="p-1 hover:bg-brand-base border border-transparent hover:border-brand-border transition-all"
+                    >
+                      <Copy size={12} />
+                    </button>
+                    <button
+                      onClick={handleDelete}
+                      title="Excluir"
+                      className="p-1 text-red-600 hover:bg-red-50 border border-transparent transition-all"
+                    >
+                      <Trash2 size={12} />
+                    </button>
                   </div>
                 </div>
-              )}
 
-            </div>
-
-            {/* Right Display area (Charts / Data grid) */}
-            <div className="lg:col-span-8 space-y-6">
-              {/* Ribbon Navigation for Views */}
-              <div className="flex border border-brand-border bg-brand-sidebar/30 p-1">
-                {(['form', 'table', 'chart'] as const).map((view) => (
-                  <button
-                    key={view}
-                    onClick={() => setActiveView(view)}
-                    className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all ${
-                      activeView === view 
-                        ? 'bg-brand-border text-brand-bg shadow-[2px_2px_0_0_rgba(0,0,0,0.2)]' 
-                        : 'text-brand-text/50 hover:text-brand-text'
-                    }`}
-                  >
-                    {view === 'form' ? 'Ações & Config' : view === 'table' ? 'Tabela Amortização' : 'Gráfico Evolução'}
-                  </button>
-                ))}
-              </div>
-
-              {activeView === 'chart' && (
-                <div className="technical-panel p-6 shadow-[4px_4px_0_0_#141414] module-table-viewport min-w-0 flex flex-col">
-                  <h3 className="text-xs font-black uppercase tracking-widest mb-4 shrink-0">
-                    Gráfico de Amortização Visual
-                  </h3>
-                  {schedule.length > 0 && !isCalculating ? (
-                    <div className="flex-1 min-h-0 w-full min-w-0">
-                      <div className="w-full h-full min-h-[320px] min-w-0">
-                        <Suspense
-                          fallback={
-                            <div className="flex h-full min-h-[320px] items-center justify-center text-[10px] font-mono opacity-50">
-                              Carregando gráfico…
-                            </div>
-                          }
-                        >
-                          <LoanAmortizationChart data={chartData} />
-                        </Suspense>
-                      </div>
+                <div className={CF_FORM_FIELDS}>
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>Empresa</label>
+                    <div className="max-w-[14rem] px-2 py-1 bg-brand-sidebar/10 border border-brand-border/40 font-bold text-[11px] uppercase truncate">
+                      {selectedCompany}
                     </div>
-                  ) : (
-                    <div className="flex-1 min-h-[320px] flex items-center justify-center text-[10px] font-bold uppercase text-slate-400">
-                      {isCalculating ? 'Recalculando…' : 'Preencha o valor principal para plotar.'}
+                  </div>
+
+                  <div className={CF_FIELD_COL_GROW}>
+                    <label className={CF_LABEL}>Número do Contrato</label>
+                    <input
+                      aria-label="Número do Contrato"
+                      type="text"
+                      value={activeContract.contractNumber}
+                      onChange={(e) => handleUpdate({ contractNumber: e.target.value })}
+                      className={CF_LOAN_INPUT_MED}
+                      placeholder="Nº CONTRATO"
+                    />
+                    <label className={`${CF_LABEL} mt-2`}>Nome do Banco</label>
+                    <input
+                      aria-label="Nome do Banco"
+                      type="text"
+                      value={activeContract.bankName}
+                      onChange={(e) => handleUpdate({ bankName: e.target.value })}
+                      className={CF_LOAN_INPUT_MED}
+                      placeholder="Ex.: Banco do Brasil"
+                    />
+                  </div>
+
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>Amortização</label>
+                    <div className="inline-flex border border-brand-border overflow-hidden">
+                      {['PRICE', 'SAC'].map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => handleUpdate({ type: t as LoanContract['type'] })}
+                          className={`px-4 py-1.5 text-[9px] font-bold transition-all ${activeContract.type === t ? 'bg-brand-border text-brand-bg' : 'bg-transparent text-brand-text/60 hover:bg-brand-border/5'
+                            }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={CF_FIELD_INLINE}>
+                    <div className={CF_FIELD_COL}>
+                      <label className={CF_LABEL}>Principal (R$)</label>
+                      <FreeNumericInput
+                        aria-label="Principal em reais"
+                        value={activeContract.principal}
+                        onChange={(principal) => handleUpdate({ principal })}
+                        className={CF_LOAN_INPUT_MONEY}
+                      />
+                    </div>
+                    <div className={CF_FIELD_COL}>
+                      <label className={CF_LABEL}>Parcelas</label>
+                      <FreeNumericInput
+                        inputMode="numeric"
+                        aria-label="Quantidade de parcelas"
+                        value={activeContract.installments}
+                        displayDecimals={0}
+                        onChange={(installments) => handleUpdate({ installments })}
+                        className={CF_LOAN_INPUT_NUM}
+                      />
+                    </div>
+                  </div>
+
+                  <div className={CF_LOAN_FIELD_FULL}>
+                    <label className={CF_LABEL}>Indexador</label>
+                    <select
+                      aria-label="Indexador do contrato"
+                      value={activeTab?.varMode ?? 'none'}
+                      disabled={!activeTab}
+                      onChange={(e) => {
+                        const varMode = e.target.value as SimVarMode;
+                        const patch: Partial<SimTabFields> = { varMode };
+                        if (varMode === 'pronampe') {
+                          if (activeTab?.graceInterestRoundingMode === 'none') {
+                            patch.graceInterestRoundingMode = 'halfAwayFromZero';
+                          }
+                          if (activeContract?.type === 'SAC') {
+                            patch.sacAmortizationBase = 'contractPrincipal';
+                          }
+                        }
+                        patchActiveSimTab(patch);
+                      }}
+                      className={CF_LOAN_SELECT}
+                    >
+                      {SIM_VAR_MODE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {activeTab?.varMode === 'custom' && (
+                    <div className={CF_FIELD_COL}>
+                      <label className={CF_LABEL}>Taxa do indexador fixo % a.m.</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        aria-label="Taxa mensal do indexador fixo"
+                        value={activeTab.customVarRateStr}
+                        onChange={(e) =>
+                          patchActiveSimTab({ customVarRateStr: e.target.value })
+                        }
+                        placeholder="0,50"
+                        className={CF_LOAN_INPUT_PCT}
+                      />
                     </div>
                   )}
-                </div>
-              )}
 
-              {activeView === 'table' && (
-                <div className="space-y-4">
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>
+                      {activeTab && usesSpreadPlusIndexador(activeTab.varMode)
+                        ? `Spread Mensal Carência % (+ ${spreadIndexadorShortLabel(activeTab.varMode)})`
+                        : 'Taxa Mensal Carência %'}
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label="Spread ou taxa mensal na carência"
+                      value={graceInterestRateStr}
+                      onChange={(e) => handleUpdateGraceInterestRate(e.target.value)}
+                      placeholder={
+                        activeTab && usesSpreadPlusIndexador(activeTab.varMode) ? '0,30' : '1,02'
+                      }
+                      className={CF_LOAN_INPUT_PCT}
+                    />
+                  </div>
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>
+                      {activeTab && usesSpreadPlusIndexador(activeTab.varMode)
+                        ? `Spread Mensal s/ Carência % (+ ${spreadIndexadorShortLabel(activeTab.varMode)})`
+                        : 'Taxa Mensal s/ Carência %'}
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label="Spread ou taxa mensal sem carência"
+                      value={interestRateStr}
+                      onChange={(e) => handleUpdateInterestRate(e.target.value)}
+                      placeholder={
+                        activeTab && usesSpreadPlusIndexador(activeTab.varMode) ? '0,30' : '1,02'
+                      }
+                      className={CF_LOAN_INPUT_PCT}
+                    />
+                  </div>
+
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>Data do contrato</label>
+                    <input
+                      type="date"
+                      aria-label="Data do contrato"
+                      value={activeContract.startDate?.slice(0, 10) ?? ''}
+                      onChange={(e) => handleUpdate({ startDate: e.target.value })}
+                      className={CF_LOAN_INPUT_DATE}
+                    />
+                  </div>
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>Carência (Meses)</label>
+                    <FreeNumericInput
+                      inputMode="numeric"
+                      aria-label="Carência em meses"
+                      value={activeContract.gracePeriod}
+                      commitWhileFocused
+                      displayDecimals={0}
+                      onChange={(gracePeriod) =>
+                        handleUpdate({ gracePeriod: Math.max(0, gracePeriod) })
+                      }
+                      className={CF_LOAN_INPUT_NUM}
+                    />
+                  </div>
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>Juros na carência</label>
+                    <select
+                      aria-label="Juros na carência: pagar mensalmente ou capitalizar"
+                      value={activeContract.graceType}
+                      onChange={(e) =>
+                        handleUpdate({ graceType: e.target.value as LoanContract['graceType'] })
+                      }
+                      className={CF_LOAN_SELECT}
+                    >
+                      <option value="paid">PAGAR JUROS MENSALMENTE</option>
+                      <option value="capitalized">CAPITALIZAR NO PRINCIPAL</option>
+                    </select>
+                    <p className={CF_FIELD_HINT}>
+                      Capitalizar: sem parcela na carência (juros entram no saldo). Pagar: parcela só com juros.
+                    </p>
+                  </div>
+
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>IOF Financiado</label>
+                    <FreeNumericInput
+                      aria-label="IOF financiado"
+                      value={activeContract.iof}
+                      onChange={(iof) => handleUpdate({ iof })}
+                      className={CF_LOAN_INPUT_MONEY}
+                    />
+                  </div>
+                  <div className={CF_FIELD_COL}>
+                    <label className={CF_LABEL}>Taxas Banco (Custo)</label>
+                    <FreeNumericInput
+                      aria-label="Taxas banco custo operacional"
+                      value={activeContract.costs}
+                      onChange={(costs) => handleUpdate({ costs })}
+                      className={CF_LOAN_INPUT_MONEY}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+
+          {/* Right Display area (Charts / Data grid) */}
+          <div className="lg:col-span-8 space-y-6">
+            {/* Ribbon Navigation for Views */}
+            <div className="flex border border-brand-border bg-brand-sidebar/30 p-1">
+              {(['form', 'table', 'chart'] as const).map((view) => (
+                <button
+                  key={view}
+                  onClick={() => setActiveView(view)}
+                  className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all ${activeView === view
+                    ? 'bg-brand-border text-brand-bg shadow-[2px_2px_0_0_rgba(0,0,0,0.2)]'
+                    : 'text-brand-text/50 hover:text-brand-text'
+                    }`}
+                >
+                  {view === 'form' ? 'Ações & Config' : view === 'table' ? 'Tabela Amortização' : 'Gráfico Evolução'}
+                </button>
+              ))}
+            </div>
+
+            {activeView === 'chart' && (
+              <div className="technical-panel p-6 shadow-[4px_4px_0_0_#141414] module-table-viewport min-w-0 flex flex-col">
+                <h3 className="text-xs font-black uppercase tracking-widest mb-4 shrink-0">
+                  Gráfico de Amortização Visual
+                </h3>
+                {schedule.length > 0 && !isCalculating ? (
+                  <div className="flex-1 min-h-0 w-full min-w-0">
+                    <div className="w-full h-full min-h-[320px] min-w-0">
+                      <Suspense
+                        fallback={
+                          <div className="flex h-full min-h-[320px] items-center justify-center text-[10px] font-mono opacity-50">
+                            Carregando gráfico…
+                          </div>
+                        }
+                      >
+                        <LoanAmortizationChart data={chartData} />
+                      </Suspense>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 min-h-[320px] flex items-center justify-center text-[10px] font-bold uppercase text-slate-400">
+                    {isCalculating ? 'Recalculando…' : 'Preencha o valor principal para plotar.'}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeView === 'table' && (
+              <div className="space-y-4">
                 <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
                   <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-brand-border bg-brand-sidebar/30">
                     <div className="flex items-center gap-3">
@@ -755,8 +858,8 @@ export default function LoanModule({
                     </button>
                   </div>
                   {!bcbReadiness.ready &&
-                  activeTab &&
-                  usesSpreadPlusIndexador(activeTab.varMode) ? (
+                    activeTab &&
+                    usesSpreadPlusIndexador(activeTab.varMode) ? (
                     <div className="px-4 py-8 text-center text-[10px] font-bold uppercase text-red-800 bg-red-500/10">
                       {bcbReadiness.message}
                     </div>
@@ -773,82 +876,82 @@ export default function LoanModule({
                     />
                   )}
                 </div>
-                  {activeContract && (
-                    <div className="bg-brand-border p-6 text-brand-bg shadow-[4px_4px_0_0_#141414] space-y-4">
-                      <div className="flex items-center justify-between border-b border-white/20 pb-2">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-brand-bg">
-                          Resumo Financeiro
-                        </span>
-                        <span className="text-[9px] font-mono opacity-60 bg-white/10 px-1 py-0.5">
-                          {activeContract.type}
-                        </span>
-                      </div>
-                      <div>
-                        <h4 className="text-2xl font-black italic tracking-tighter">
-                          {isCalculating ? '…' : formatCurrency(scheduleTotals.paymentSum)}
-                        </h4>
-                        <p className="text-[8px] font-bold uppercase opacity-60 mt-1">
-                          {isCalculating
-                            ? 'Recalculando cronograma…'
-                            : 'Montante Final Calculado (Principal + Custos)'}
+                {activeContract && (
+                  <div className="bg-brand-border p-6 text-brand-bg shadow-[4px_4px_0_0_#141414] space-y-4">
+                    <div className="flex items-center justify-between border-b border-white/20 pb-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-brand-bg">
+                        Resumo Financeiro
+                      </span>
+                      <span className="text-[9px] font-mono opacity-60 bg-white/10 px-1 py-0.5">
+                        {activeContract.type}
+                      </span>
+                    </div>
+                    <div>
+                      <h4 className="text-2xl font-black italic tracking-tighter">
+                        {isCalculating ? '…' : formatCurrency(scheduleTotals.paymentSum)}
+                      </h4>
+                      <p className="text-[8px] font-bold uppercase opacity-60 mt-1">
+                        {isCalculating
+                          ? 'Recalculando cronograma…'
+                          : 'Montante Final Calculado (Principal + Custos)'}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 pt-2">
+                      <div className="bg-white/10 p-2 border border-white/10">
+                        <p className="text-[8px] font-bold opacity-60 mb-1 uppercase">Parcela Inicial</p>
+                        <p className="text-xs font-mono font-bold tracking-tight">
+                          {formatCurrency(scheduleTotals.firstPayment)}
                         </p>
                       </div>
-                      <div className="grid grid-cols-2 gap-4 pt-2">
-                        <div className="bg-white/10 p-2 border border-white/10">
-                          <p className="text-[8px] font-bold opacity-60 mb-1 uppercase">Parcela Inicial</p>
-                          <p className="text-xs font-mono font-bold tracking-tight">
-                            {formatCurrency(scheduleTotals.firstPayment)}
-                          </p>
-                        </div>
-                        <div className="bg-white/10 p-2 border border-white/10">
-                          <p className="text-[8px] font-bold opacity-60 mb-1 uppercase">Parcela Final</p>
-                          <p className="text-xs font-mono font-bold tracking-tight">
-                            {formatCurrency(scheduleTotals.lastPayment)}
-                          </p>
-                        </div>
+                      <div className="bg-white/10 p-2 border border-white/10">
+                        <p className="text-[8px] font-bold opacity-60 mb-1 uppercase">Parcela Final</p>
+                        <p className="text-xs font-mono font-bold tracking-tight">
+                          {formatCurrency(scheduleTotals.lastPayment)}
+                        </p>
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
+            )}
 
-              {activeView === 'form' && (
-                <div className="technical-panel p-12 shadow-[4px_4px_0_0_#141414] text-center flex flex-col items-center justify-center min-h-[400px] space-y-8 bg-brand-sidebar/5">
-                  <div className="w-16 h-16 border-2 border-brand-border flex items-center justify-center font-black text-2xl">
-                    $
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-black uppercase tracking-[0.2em]">Cálculo Ativo</h3>
-                    <p className="text-[10px] font-bold text-slate-500 uppercase max-w-xs tracking-widest leading-relaxed">
-                      Sua simulação está calculada e pronta. Verifique o grid de parcelas ou o gráfico de projeção, ou escolha exportar para integração contábil.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-4 justify-center">
-                    <MandarParaBalanceteButton
-                      onClick={handleMandarEmprestimoBalancete}
-                      disabled={!canExport}
-                      className="technical-button-primary disabled:opacity-40 text-[10px] py-2 px-3"
-                    />
-                    <button 
-                      onClick={handleExportDomínio}
-                      disabled={!canExport}
-                      className="technical-button-primary disabled:opacity-40"
-                    >
-                      EXPORTAR CONTAS (DOMÍNIO)
-                    </button>
-                    <button 
-                      onClick={handleExportPDF}
-                      disabled={!canExport}
-                      className="technical-button disabled:opacity-40"
-                    >
-                      EXPORTAR PDF
-                    </button>
-                  </div>
+            {activeView === 'form' && (
+              <div className="technical-panel p-12 shadow-[4px_4px_0_0_#141414] text-center flex flex-col items-center justify-center min-h-[400px] space-y-8 bg-brand-sidebar/5">
+                <div className="w-16 h-16 border-2 border-brand-border flex items-center justify-center font-black text-2xl">
+                  $
                 </div>
-              )}
-            </div>
+                <div className="space-y-2">
+                  <h3 className="text-sm font-black uppercase tracking-[0.2em]">Cálculo Ativo</h3>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase max-w-xs tracking-widest leading-relaxed">
+                    Sua simulação está calculada e pronta. Verifique o grid de parcelas ou o gráfico de projeção, ou escolha exportar para integração contábil.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-4 justify-center">
+                  <MandarParaBalanceteButton
+                    onClick={handleMandarEmprestimoBalancete}
+                    disabled={!canExport}
+                    className="technical-button-primary disabled:opacity-40 text-[10px] py-2 px-3"
+                  />
+                  <button
+                    onClick={handleExportDomínio}
+                    disabled={!canExport}
+                    className="technical-button-primary disabled:opacity-40"
+                  >
+                    EXPORTAR CONTAS (DOMÍNIO)
+                  </button>
+                  <button
+                    onClick={handleExportPDF}
+                    disabled={!canExport}
+                    className="technical-button disabled:opacity-40"
+                  >
+                    EXPORTAR PDF
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
+      </div>
     );
   };
 

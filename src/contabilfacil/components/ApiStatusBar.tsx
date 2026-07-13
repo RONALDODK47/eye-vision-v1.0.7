@@ -31,9 +31,6 @@ function statusLabel(status: ApiStatusValue): string {
 }
 
 function entryPortLabel(entry: ApiStatusEntry): string | undefined {
-  if (entry.id === 'gemini') {
-    return getAgentApiOrigin() ? 'nuvem' : import.meta.env.DEV ? 'local' : 'nuvem';
-  }
   if (entry.id === 'receita-federal' || entry.id === 'sefaz-icms' || entry.id === 'sped') {
     if (FISCAL_API_BASE.startsWith('http')) return 'nuvem';
     if (import.meta.env.DEV) return '8780';
@@ -53,8 +50,7 @@ function ApiStatusItem({
   const portLabel = entryPortLabel(entry);
   const title =
     titleOverride ??
-    `${entry.label}${portLabel ? ` (${portLabel})` : ''}: ${
-      status === 'online' ? 'disponível' : status === 'offline' ? 'indisponível' : 'verificando…'
+    `${entry.label}${portLabel ? ` (${portLabel})` : ''}: ${status === 'online' ? 'disponível' : status === 'offline' ? 'indisponível' : 'verificando…'
     }`;
 
   return (
@@ -77,9 +73,8 @@ export default function ApiStatusBar({ activeTab }: { activeTab: ActiveTab }) {
   const registry = useMemo(() => getApiStatusRegistryForTab(activeTab), [activeTab]);
   const [statusMap, setStatusMap] = useState(() => initialApiStatusMap(registry));
   const [bcbTitle, setBcbTitle] = useState<string | undefined>(undefined);
-  const [geminiTitle, setGeminiTitle] = useState<string | undefined>(undefined);
 
-  const refresh = useCallback(async (deepGemini = false) => {
+  const refresh = useCallback(async () => {
     const next = await probeAllApiStatuses(registry);
     setStatusMap(next);
 
@@ -94,17 +89,6 @@ export default function ApiStatusBar({ activeTab }: { activeTab: ActiveTab }) {
       } else {
         setBcbTitle(undefined);
       }
-    }
-
-    const showsGemini = registry.some((e) => e.id === 'gemini');
-    if (!showsGemini) {
-      setGeminiTitle(undefined);
-    } else {
-      const health = await fetchGeminiApiHealth(deepGemini).catch(() => ({
-        ok: false,
-        configured: false,
-      }));
-      setGeminiTitle(geminiStatusTitle(health, next.gemini === 'online'));
     }
 
     notifyDebugAppHealthy();
@@ -127,16 +111,14 @@ export default function ApiStatusBar({ activeTab }: { activeTab: ActiveTab }) {
             key={entry.id}
             entry={entry}
             status={statusMap[entry.id] ?? 'checking'}
-            titleOverride={
-              entry.id === 'bcb' ? bcbTitle : entry.id === 'gemini' ? geminiTitle : undefined
-            }
+            titleOverride={entry.id === 'bcb' ? bcbTitle : undefined}
           />
         ))}
         <button
           type="button"
-          onClick={() => void refresh(true)}
+          onClick={() => void refresh()}
           className="text-[8px] font-mono font-bold uppercase opacity-50 hover:opacity-100 underline shrink-0 whitespace-nowrap"
-          title="Atualizar status. Local: npm run dev. Nuvem: 1ª carga do Render pode levar ~30s — clique de novo."
+          title="Atualizar status."
         >
           Atualizar
         </button>

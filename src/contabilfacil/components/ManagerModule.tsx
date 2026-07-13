@@ -1,9 +1,9 @@
 import React, { lazy, Suspense, useState, useEffect, useMemo, useCallback, useRef, startTransition } from 'react';
-import { 
-  Plus, 
-  FileSpreadsheet, 
-  Download, 
-  Search, 
+import {
+  Plus,
+  FileSpreadsheet,
+  Download,
+  Search,
   Filter,
   BarChart,
   BookOpen,
@@ -24,7 +24,6 @@ import {
   FileImage,
   RefreshCw,
   ListOrdered,
-  Sparkles,
   FolderOpen,
   Save,
 } from 'lucide-react';
@@ -70,18 +69,12 @@ import PlanoContasVirtualTable from './PlanoContasVirtualTable';
 import ExtratoLancamentosVirtualTable from './ExtratoLancamentosVirtualTable';
 import ExtratoSemNotaModal from './ExtratoSemNotaModal';
 import ExtratoRegrasContasModal from './ExtratoRegrasContasModal';
-import AiInteligenciaPastasModal from './AiInteligenciaPastasModal';
 import ExtratoPastasModal from './ExtratoPastasModal';
 import {
   countExtratoPastas,
   saveExtratoNaPasta,
   type ExtratoPastaItem,
 } from '../logic/extratoPastasStorage';
-import {
-  listAiColigadasParaIa,
-  migrateAiInteligenciaOutOfLocalStorage,
-  upsertAiColigada,
-} from '../logic/aiInteligenciaStorage';
 import { reclaimLocalStorageSpace } from '../../lib/safeLocalStorage';
 import {
   buildPlanoNomeLookup,
@@ -180,7 +173,6 @@ import type { CompanyWorkspaceControls } from '../types/companyWorkspaceControls
 const LoanModule = lazy(() => import('./LoanModule'));
 const InstallmentModule = lazy(() => import('./InstallmentModule'));
 const AppsModule = lazy(() => import('./AppsModule'));
-const AiSettingsModule = lazy(() => import('./AiSettingsModule'));
 
 export type ManagerSubTab =
   | 'extrato'
@@ -193,8 +185,7 @@ export type ManagerSubTab =
   | 'nota_explicativa'
   | 'emprestimos'
   | 'parcelamento'
-  | 'aplicacoes'
-  | 'ia';
+  | 'aplicacoes';
 
 const STANDALONE_MANAGER_TABS = new Set<ManagerSubTab>([
   'extrato',
@@ -203,7 +194,6 @@ const STANDALONE_MANAGER_TABS = new Set<ManagerSubTab>([
   'emprestimos',
   'parcelamento',
   'aplicacoes',
-  'ia',
 ]);
 
 function managerSubTabLabel(tab: ManagerSubTab): string {
@@ -230,8 +220,6 @@ function managerSubTabLabel(tab: ManagerSubTab): string {
       return 'Parcelamento';
     case 'aplicacoes':
       return 'Aplicações de empréstimo';
-    case 'ia':
-      return 'Configuração de IA';
     default:
       return tab;
   }
@@ -322,14 +310,14 @@ export default function ManagerModule({
       company: selectedCompany || undefined,
     });
   }, [activeSubTab, selectedCompany]);
-  
+
   // Local states
   const [planoContas, setPlanoContas] = useState<AccountPlan[]>([]);
   const [extratoLancamentos, setExtratoLancamentos] = useState<BankStatement[]>([]);
   const [folhaPayroll, setFolhaPayroll] = useState<PayrollRecord[]>([]);
   const [folhaRelatorio, setFolhaRelatorio] = useState<FolhaRelatorioRow[]>([]);
   const [razaoRows, setRazaoRows] = useState<VisionBalanceteRow[]>([]);
-  
+
   // Interactive inputs for entries
   const [showAddPlano, setShowAddPlano] = useState(false);
   const [showAddExtrato, setShowAddExtrato] = useState(false);
@@ -344,8 +332,6 @@ export default function ManagerModule({
   const [pendingSemNotaRows, setPendingSemNotaRows] = useState<ExtratoSemNotaPendingRow[]>([]);
   const [extratoRegrasContas, setExtratoRegrasContas] = useState<ExtratoRegraConta[]>([]);
   const [regrasContasModalOpen, setRegrasContasModalOpen] = useState(false);
-  const [inteligenciaModalOpen, setInteligenciaModalOpen] = useState(false);
-  const [inteligenciaTick, setInteligenciaTick] = useState(0);
   const [extratoPastasModalOpen, setExtratoPastasModalOpen] = useState(false);
   const [extratoPastasTick, setExtratoPastasTick] = useState(0);
   const [contaBancoTick, setContaBancoTick] = useState(0);
@@ -501,7 +487,7 @@ export default function ManagerModule({
       const corrigidas = corrigeRegrasContasOperacionaisInadequadas({
         regras: migrated,
         plano: planoLike,
-        coligadas: listAiColigadasParaIa(selectedCompany),
+        coligadas: [],
       });
       if (corrigidas !== migrated) {
         migrated = saveExtratoRegrasContas(selectedCompany, corrigidas);
@@ -534,7 +520,7 @@ export default function ManagerModule({
       fiscalContext: extratoFiscalContext,
       semNotaDecisions,
       regrasContas: extratoRegrasContas,
-      coligadas: listAiColigadasParaIa(selectedCompany),
+      coligadas: [],
     }),
     [
       selectedCompany,
@@ -544,33 +530,15 @@ export default function ManagerModule({
       extratoFiscalContext,
       semNotaDecisions,
       extratoRegrasContas,
-      inteligenciaTick,
     ],
   );
 
-  // Garante AJTF cadastrada como coligada (não cliente) se ainda não existir.
-  // Também migra textos grandes da inteligência para IndexedDB (libera cota do localStorage).
   useEffect(() => {
     if (!selectedCompany) return;
     try {
       reclaimLocalStorageSpace();
-      migrateAiInteligenciaOutOfLocalStorage(selectedCompany);
     } catch {
       /* ignore */
-    }
-    const cols = listAiColigadasParaIa(selectedCompany);
-    const hasAjtf = cols.some(
-      (c) =>
-        /ajtf/i.test(c.nome) ||
-        c.aliases.some((a) => /a[\s.]*j[\s.]*t[\s.]*f/i.test(a) || /^ajtf$/i.test(a)),
-    );
-    if (!hasAjtf) {
-      upsertAiColigada(selectedCompany, {
-        nome: 'AJTF',
-        aliases: ['AJTF', 'A.J.T.F', 'A J T F', 'A. J. T. F', 'A.J.T.F.'],
-        notas: 'Empresa coligada — NÃO é cliente',
-      });
-      setInteligenciaTick((n) => n + 1);
     }
   }, [selectedCompany]);
 
@@ -1057,7 +1025,7 @@ export default function ManagerModule({
 
   // Render subtabs
   const tabs: { id: ManagerSubTab; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
-    { id: 'extrato', label: 'Extrato Vision', icon: ArrowRightLeft },
+    { id: 'extrato', label: 'Conciliador de Extratos', icon: ArrowRightLeft },
     { id: 'plano', label: 'Plano de Contas', icon: ClipboardList },
     { id: 'razao', label: 'Balancete', icon: BookOpen },
     { id: 'folha', label: 'Folha de Pagamento', icon: Building },
@@ -1068,7 +1036,6 @@ export default function ManagerModule({
     { id: 'emprestimos', label: 'Empréstimos', icon: DollarSign },
     { id: 'parcelamento', label: 'Parcelamento', icon: Layers },
     { id: 'aplicacoes', label: 'Aplicações', icon: Percent },
-    { id: 'ia', label: 'IA', icon: Sparkles },
   ];
 
   const hasPlano = planoContas.length > 0;
@@ -1338,8 +1305,7 @@ export default function ManagerModule({
       });
       setExtratoPastasTick((n) => n + 1);
       alert(
-        `Extrato salvo na pasta.\n${saved.label}\nBanco ${saved.contaBanco} · ${saved.total} lançamento(s)${
-          pdfBase64 ? ' · PDF incluído' : ''
+        `Extrato salvo na pasta.\n${saved.label}\nBanco ${saved.contaBanco} · ${saved.total} lançamento(s)${pdfBase64 ? ' · PDF incluído' : ''
         }`,
       );
     } catch (err) {
@@ -1557,33 +1523,33 @@ export default function ManagerModule({
             </Suspense>
           ) : tabRequiresPlano && !hasPlano ? (
             <div className="technical-panel p-20 shadow-[8px_8px_0_0_#141414] text-center flex flex-col items-center justify-center space-y-8 bg-brand-sidebar/10">
-               <div className="w-20 h-20 border-2 border-brand-border flex items-center justify-center font-black text-3xl italic text-red-600 animate-pulse">
-                 <Lock size={32} />
-               </div>
-               <div className="space-y-2">
-                 <h3 className="text-sm font-black uppercase tracking-[0.2em] text-red-700">Módulo Bloqueado</h3>
-                 <p className="text-[10px] font-bold text-slate-500 uppercase max-w-sm tracking-widest leading-relaxed">
-                   O Plano de Contas central não foi detectado no sistema. Importe os registros de contas para habilitar o motor gerencial, conciliações e visualização.
-                 </p>
-               </div>
-               <div className="flex gap-4">
-                 <button 
-                   onClick={() => setActiveSubTab('plano')} 
-                   className="technical-button-primary"
-                 >
-                    Ir para Plano de Contas
-                 </button>
+              <div className="w-20 h-20 border-2 border-brand-border flex items-center justify-center font-black text-3xl italic text-red-600 animate-pulse">
+                <Lock size={32} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-sm font-black uppercase tracking-[0.2em] text-red-700">Módulo Bloqueado</h3>
+                <p className="text-[10px] font-bold text-slate-500 uppercase max-w-sm tracking-widest leading-relaxed">
+                  O Plano de Contas central não foi detectado no sistema. Importe os registros de contas para habilitar o motor gerencial, conciliações e visualização.
+                </p>
+              </div>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setActiveSubTab('plano')}
+                  className="technical-button-primary"
+                >
+                  Ir para Plano de Contas
+                </button>
 
-               </div>
+              </div>
             </div>
           ) : (
             <>
               {/* ======================= EXTRATO SUBTAB ======================= */}
               {activeSubTab === 'extrato' && (
-                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    <div className="lg:col-span-8 space-y-6">
-                       {/* Stats */}
-                       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                  <div className="lg:col-span-8 space-y-6">
+                    {/* Stats */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
                       <div className="technical-panel p-6 shadow-[4px_4px_0_0_#141414]">
                         <p className="text-[9px] font-black text-brand-text/40 uppercase tracking-widest mb-2 italic">
                           Total Débitos
@@ -1682,7 +1648,7 @@ export default function ManagerModule({
                     {/* Ribbon controller */}
                     <div className="flex gap-2 justify-between">
                       <div className="flex gap-2">
-                        <button 
+                        <button
                           type="button"
                           onClick={() => setShowAddExtrato(!showAddExtrato)}
                           className="technical-button-primary text-xs font-bold"
@@ -1691,7 +1657,7 @@ export default function ManagerModule({
                         </button>
                       </div>
                       {extratoLancamentos.length > 0 && (
-                        <button 
+                        <button
                           type="button"
                           onClick={() => void handleLimparExtratos()}
                           className="technical-button border-red-800 text-red-800 hover:bg-red-800 hover:text-white text-xs"
@@ -1708,23 +1674,23 @@ export default function ManagerModule({
                         <div className={CF_FORM_FIELDS}>
                           <div className={CF_FIELD_COL}>
                             <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Data</label>
-                            <input aria-label="Data" 
-                              type="date" 
-                              required 
-                              value={extDate} 
+                            <input aria-label="Data"
+                              type="date"
+                              required
+                              value={extDate}
                               onChange={e => setExtDate(e.target.value)}
-                              className={CF_FORM_INPUT_DATE} 
+                              className={CF_FORM_INPUT_DATE}
                             />
                           </div>
                           <div className={CF_FIELD_COL_GROW}>
                             <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Descrição</label>
-                            <input aria-label="Descrição" 
-                              type="text" 
-                              required 
-                              placeholder="LIQ FATURA..." 
+                            <input aria-label="Descrição"
+                              type="text"
+                              required
+                              placeholder="LIQ FATURA..."
                               value={extDesc}
                               onChange={e => setExtDesc(e.target.value)}
-                              className={CF_FORM_INPUT_LONG} 
+                              className={CF_FORM_INPUT_LONG}
                             />
                           </div>
                           <div className={CF_FIELD_COL}>
@@ -1733,21 +1699,21 @@ export default function ManagerModule({
                               required
                               value={extVal}
                               onChange={setExtVal}
-                              className={CF_FORM_INPUT_MONEY} 
+                              className={CF_FORM_INPUT_MONEY}
                             />
                           </div>
                           <div className={CF_FIELD_COL}>
                             <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Natureza</label>
                             <div className="flex border border-brand-border h-[26px]">
-                              <button 
-                                type="button" 
+                              <button
+                                type="button"
                                 onClick={() => setExtNat('D')}
                                 className={cn("flex-1 text-[9px] font-bold", extNat === 'D' ? "bg-red-600 text-white" : "bg-transparent")}
                               >
                                 DEBITO (D)
                               </button>
-                              <button 
-                                type="button" 
+                              <button
+                                type="button"
                                 onClick={() => setExtNat('C')}
                                 className={cn("flex-1 text-[9px] font-bold", extNat === 'C' ? "bg-blue-600 text-white" : "bg-transparent")}
                               >
@@ -1768,69 +1734,69 @@ export default function ManagerModule({
                     <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
                       <div className="p-3 border-b border-brand-border flex flex-wrap items-center justify-between gap-2 bg-brand-sidebar/30">
                         <div className="flex flex-wrap items-center gap-3">
-                           <h3 className="text-[10px] font-black uppercase tracking-widest">Registros de Conciliação Bancária</h3>
-                           {extratoLancamentos.length > 0 && (
-                             <div className="px-2 py-0.5 bg-brand-border text-brand-bg text-[8px] font-black uppercase tracking-tighter">
-                                Sincronizado ({extratoConciliacaoStats.total} itens · {extratoConciliacaoStats.conciliadas} conciliadas)
-                             </div>
-                           )}
+                          <h3 className="text-[10px] font-black uppercase tracking-widest">Registros de Conciliação Bancária</h3>
+                          {extratoLancamentos.length > 0 && (
+                            <div className="px-2 py-0.5 bg-brand-border text-brand-bg text-[8px] font-black uppercase tracking-tighter">
+                              Sincronizado ({extratoConciliacaoStats.total} itens · {extratoConciliacaoStats.conciliadas} conciliadas)
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                        {extratoLancamentos.length > 0 && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void handleReaplicarExtratoContas({ immediate: true })}
-                              className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1"
-                              title="Aplica as contas das regras cadastradas na tabela de conciliação"
-                            >
-                              <RefreshCw size={11} aria-hidden="true" />
-                              APLICAR REGRAS NA CONCILIAÇÃO
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleExportExtratoConciliacaoPdf}
-                              className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1"
-                              title="Exportar conciliacao em PDF"
-                            >
-                              <FileText size={11} aria-hidden="true" />
-                              PDF CONCILIADO
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleSalvarExtratoNaPasta}
-                              className="technical-button-primary text-[9px] py-1 px-2 inline-flex items-center gap-1"
-                              title="Salva o extrato conciliado + PDF na pasta, ligado à conta banco"
-                            >
-                              <Save size={11} aria-hidden="true" />
-                              SALVAR EXTRATO
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleExportExtratoConciliacaoPng}
-                              className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1"
-                              title="Exportar conciliacao como imagem PNG"
-                            >
-                              <FileImage size={11} aria-hidden="true" />
-                              IMAGEM
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleMandarConciliacaoParaBalancete}
-                              disabled={extratoConciliacaoStats.conciliadas === 0}
-                              className="technical-button-primary text-[9px] py-1 px-2 inline-flex items-center gap-1 disabled:opacity-40"
-                              title="Envia os lançamentos conciliados (débito+crédito) para o balancete/razão"
-                            >
-                              <BookMarked size={11} aria-hidden="true" />
-                              MANDAR PARA O BALANCETE
-                              {extratoConciliacaoStats.conciliadas > 0 ? (
-                                <span className="text-[8px] opacity-80">
-                                  ({extratoConciliacaoStats.conciliadas})
-                                </span>
-                              ) : null}
-                            </button>
-                          </>
-                        )}
+                          {extratoLancamentos.length > 0 && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void handleReaplicarExtratoContas({ immediate: true })}
+                                className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1"
+                                title="Aplica as contas das regras cadastradas na tabela de conciliação"
+                              >
+                                <RefreshCw size={11} aria-hidden="true" />
+                                APLICAR REGRAS NA CONCILIAÇÃO
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleExportExtratoConciliacaoPdf}
+                                className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1"
+                                title="Exportar conciliacao em PDF"
+                              >
+                                <FileText size={11} aria-hidden="true" />
+                                PDF CONCILIADO
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSalvarExtratoNaPasta}
+                                className="technical-button-primary text-[9px] py-1 px-2 inline-flex items-center gap-1"
+                                title="Salva o extrato conciliado + PDF na pasta, ligado à conta banco"
+                              >
+                                <Save size={11} aria-hidden="true" />
+                                SALVAR EXTRATO
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleExportExtratoConciliacaoPng}
+                                className="technical-button text-[9px] py-1 px-2 inline-flex items-center gap-1"
+                                title="Exportar conciliacao como imagem PNG"
+                              >
+                                <FileImage size={11} aria-hidden="true" />
+                                IMAGEM
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleMandarConciliacaoParaBalancete}
+                                disabled={extratoConciliacaoStats.conciliadas === 0}
+                                className="technical-button-primary text-[9px] py-1 px-2 inline-flex items-center gap-1 disabled:opacity-40"
+                                title="Envia os lançamentos conciliados (débito+crédito) para o balancete/razão"
+                              >
+                                <BookMarked size={11} aria-hidden="true" />
+                                MANDAR PARA O BALANCETE
+                                {extratoConciliacaoStats.conciliadas > 0 ? (
+                                  <span className="text-[8px] opacity-80">
+                                    ({extratoConciliacaoStats.conciliadas})
+                                  </span>
+                                ) : null}
+                              </button>
+                            </>
+                          )}
                           <button
                             type="button"
                             onClick={() => setExtratoPastasModalOpen(true)}
@@ -1894,8 +1860,8 @@ export default function ManagerModule({
                     </div>
                   </div>
                   <div className="lg:col-span-4 space-y-6">
-                    <DataIngestionBox 
-                      dataType="extrato" 
+                    <DataIngestionBox
+                      dataType="extrato"
                       title="Processar Extrato Externo"
                       selectedCompany={selectedCompany}
                       extratoPlanoOptions={extratoBancoPlanoOptions.length > 0 ? extratoBancoPlanoOptions : extratoPlanoOptions}
@@ -1943,7 +1909,7 @@ export default function ManagerModule({
                           });
                           void flushPersistenceAfterCriticalWrite();
                         });
-                      }} 
+                      }}
                     />
                   </div>
                 </div>
@@ -1954,140 +1920,140 @@ export default function ManagerModule({
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                   <div className="lg:col-span-8 space-y-6">
                     <div className="flex gap-2 justify-between">
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => setShowAddPlano(!showAddPlano)}
-                        className="technical-button-primary text-xs"
-                      >
-                         + CRIAR CONTA CONTÁBIL
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setShowAddPlano(!showAddPlano)}
+                          className="technical-button-primary text-xs"
+                        >
+                          + CRIAR CONTA CONTÁBIL
+                        </button>
+                      </div>
+                      {planoContas.length > 0 && (
+                        <button
+                          onClick={() => savePlano([])}
+                          className="technical-button border-red-800 text-red-00 hover:bg-red-800 hover:text-white text-xs"
+                        >
+                          LIMPAR PLANO
+                        </button>
+                      )}
                     </div>
-                    {planoContas.length > 0 && (
-                      <button 
-                        onClick={() => savePlano([])}
-                        className="technical-button border-red-800 text-red-00 hover:bg-red-800 hover:text-white text-xs"
-                      >
-                        LIMPAR PLANO
-                      </button>
+
+                    {showAddPlano && (
+                      <form onSubmit={handleAddPlanoSubmit} className="technical-panel p-6 bg-brand-sidebar/10 space-y-4 max-w-3xl">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest border-b border-brand-border pb-1">Configurar Conta</h4>
+                        <div className={CF_FIELD_ROW}>
+                          <div className={CF_FIELD_COL}>
+                            <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Código Reduzido</label>
+                            <input aria-label="Código Reduzido"
+                              type="text"
+                              placeholder="0000001"
+                              value={accReduzido}
+                              onChange={(e) => setAccReduzido(e.target.value)}
+                              className={CF_FORM_INPUT_SHORT}
+                            />
+                          </div>
+                          <div className={CF_FIELD_COL}>
+                            <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Classificação</label>
+                            <input aria-label="Classificação"
+                              type="text"
+                              required
+                              placeholder="1.1.1.01.00001"
+                              value={accCode}
+                              onChange={(e) => setAccCode(e.target.value)}
+                              className={CF_INPUT_ACCOUNT}
+                            />
+                          </div>
+                          <div className={CF_FIELD_COL}>
+                            <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Descrição</label>
+                            <input aria-label="Descrição"
+                              type="text"
+                              required
+                              placeholder="CAIXA GERAL"
+                              value={accName}
+                              onChange={(e) => setAccName(e.target.value)}
+                              className={CF_FORM_INPUT_MED}
+                            />
+                          </div>
+                          <div className={CF_FIELD_COL}>
+                            <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Tipo</label>
+                            <select aria-label="Tipo"
+                              value={accTipo}
+                              onChange={(e) => setAccTipo(e.target.value as 'S' | 'A' | '')}
+                              className={CF_FORM_SELECT}
+                            >
+                              <option value="">AUTO</option>
+                              <option value="S">S — Sintética</option>
+                              <option value="A">A — Analítica</option>
+                            </select>
+                          </div>
+                          <div className={CF_FIELD_COL}>
+                            <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Nível</label>
+                            <input aria-label="Nível"
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="Auto"
+                              value={accNivel}
+                              onChange={(e) => setAccNivel(e.target.value)}
+                              className={CF_FORM_INPUT_NUM}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 justify-end pt-2">
+                          <button type="button" onClick={() => setShowAddPlano(false)} className="technical-button text-[10px] py-1 px-3">CANCELAR</button>
+                          <button type="submit" className="technical-button-primary text-[10px] py-1 px-4">SALVAR CONTA</button>
+                        </div>
+                      </form>
                     )}
-                  </div>
 
-                  {showAddPlano && (
-                    <form onSubmit={handleAddPlanoSubmit} className="technical-panel p-6 bg-brand-sidebar/10 space-y-4 max-w-3xl">
-                      <h4 className="text-[10px] font-black uppercase tracking-widest border-b border-brand-border pb-1">Configurar Conta</h4>
-                      <div className={CF_FIELD_ROW}>
-                        <div className={CF_FIELD_COL}>
-                          <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Código Reduzido</label>
-                          <input aria-label="Código Reduzido"
-                            type="text"
-                            placeholder="0000001"
-                            value={accReduzido}
-                            onChange={(e) => setAccReduzido(e.target.value)}
-                            className={CF_FORM_INPUT_SHORT}
-                          />
+                    {planoContas.length > 0 && (
+                      <div className="flex flex-wrap gap-3">
+                        <div className="flex items-center gap-2 px-3 py-1.5 border border-brand-border bg-brand-sidebar/30">
+                          <span className="text-sm font-black">{planoContas.length.toLocaleString('pt-BR')}</span>
+                          <span className="text-[9px] font-bold uppercase opacity-50">contas totais</span>
                         </div>
-                        <div className={CF_FIELD_COL}>
-                          <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Classificação</label>
-                          <input aria-label="Classificação"
-                            type="text"
-                            required
-                            placeholder="1.1.1.01.00001"
-                            value={accCode}
-                            onChange={(e) => setAccCode(e.target.value)}
-                            className={CF_INPUT_ACCOUNT}
-                          />
-                        </div>
-                        <div className={CF_FIELD_COL}>
-                          <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Descrição</label>
-                          <input aria-label="Descrição"
-                            type="text"
-                            required
-                            placeholder="CAIXA GERAL"
-                            value={accName}
-                            onChange={(e) => setAccName(e.target.value)}
-                            className={CF_FORM_INPUT_MED}
-                          />
-                        </div>
-                        <div className={CF_FIELD_COL}>
-                          <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Tipo</label>
-                          <select aria-label="Tipo"
-                            value={accTipo}
-                            onChange={(e) => setAccTipo(e.target.value as 'S' | 'A' | '')}
-                            className={CF_FORM_SELECT}
-                          >
-                            <option value="">AUTO</option>
-                            <option value="S">S — Sintética</option>
-                            <option value="A">A — Analítica</option>
-                          </select>
-                        </div>
-                        <div className={CF_FIELD_COL}>
-                          <label className="block text-[9px] font-bold uppercase opacity-50 mb-1">Nível</label>
-                          <input aria-label="Nível"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="Auto"
-                            value={accNivel}
-                            onChange={(e) => setAccNivel(e.target.value)}
-                            className={CF_FORM_INPUT_NUM}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2 justify-end pt-2">
-                        <button type="button" onClick={() => setShowAddPlano(false)} className="technical-button text-[10px] py-1 px-3">CANCELAR</button>
-                        <button type="submit" className="technical-button-primary text-[10px] py-1 px-4">SALVAR CONTA</button>
-                      </div>
-                    </form>
-                  )}
-
-                  {planoContas.length > 0 && (
-                    <div className="flex flex-wrap gap-3">
-                      <div className="flex items-center gap-2 px-3 py-1.5 border border-brand-border bg-brand-sidebar/30">
-                        <span className="text-sm font-black">{planoContas.length.toLocaleString('pt-BR')}</span>
-                        <span className="text-[9px] font-bold uppercase opacity-50">contas totais</span>
-                      </div>
-                      {planoTotalSinteticas > 0 && (
-                        <div className="flex items-center gap-2 px-3 py-1.5 border border-amber-700/40 bg-amber-50">
-                          <span className="text-[9px] font-black text-amber-800 bg-amber-200 px-1.5 py-0.5">S</span>
-                          <span className="text-[10px] font-bold text-amber-900">{planoTotalSinteticas} Sintéticas</span>
-                        </div>
-                      )}
-                      {planoTotalAnaliticas > 0 && (
-                        <div className="flex items-center gap-2 px-3 py-1.5 border border-emerald-700/40 bg-emerald-50">
-                          <span className="text-[9px] font-black text-emerald-800 bg-emerald-200 px-1.5 py-0.5">A</span>
-                          <span className="text-[10px] font-bold text-emerald-900">{planoTotalAnaliticas} Analíticas</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
-                    <div className="p-3 border-b border-brand-border flex items-center justify-between bg-brand-sidebar/30 gap-4">
-                      <div className="flex items-center gap-4 min-w-0">
-                        <h3 className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
-                          Plano de Contas
-                        </h3>
-                        {planoContas.length > 0 && (
-                          <div className="px-2 py-0.5 bg-brand-border text-brand-bg text-[8px] font-black uppercase tracking-tighter whitespace-nowrap">
-                            {planoContas.length.toLocaleString('pt-BR')} conta(s)
+                        {planoTotalSinteticas > 0 && (
+                          <div className="flex items-center gap-2 px-3 py-1.5 border border-amber-700/40 bg-amber-50">
+                            <span className="text-[9px] font-black text-amber-800 bg-amber-200 px-1.5 py-0.5">S</span>
+                            <span className="text-[10px] font-bold text-amber-900">{planoTotalSinteticas} Sintéticas</span>
+                          </div>
+                        )}
+                        {planoTotalAnaliticas > 0 && (
+                          <div className="flex items-center gap-2 px-3 py-1.5 border border-emerald-700/40 bg-emerald-50">
+                            <span className="text-[9px] font-black text-emerald-800 bg-emerald-200 px-1.5 py-0.5">A</span>
+                            <span className="text-[10px] font-bold text-emerald-900">{planoTotalAnaliticas} Analíticas</span>
                           </div>
                         )}
                       </div>
-                      <p className="text-[8px] font-bold uppercase tracking-wide text-slate-500 hidden sm:block truncate">
-                        Reduzido · Classificação · Descrição · Tipo · Nível
-                      </p>
+                    )}
+
+                    <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
+                      <div className="p-3 border-b border-brand-border flex items-center justify-between bg-brand-sidebar/30 gap-4">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <h3 className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                            Plano de Contas
+                          </h3>
+                          {planoContas.length > 0 && (
+                            <div className="px-2 py-0.5 bg-brand-border text-brand-bg text-[8px] font-black uppercase tracking-tighter whitespace-nowrap">
+                              {planoContas.length.toLocaleString('pt-BR')} conta(s)
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-[8px] font-bold uppercase tracking-wide text-slate-500 hidden sm:block truncate">
+                          Reduzido · Classificação · Descrição · Tipo · Nível
+                        </p>
+                      </div>
+                      <PlanoContasVirtualTable
+                        rows={planoContas}
+                        codeLengthToLevel={codeLengthToLevel}
+                        onDelete={deleteAccount}
+                      />
                     </div>
-                    <PlanoContasVirtualTable
-                      rows={planoContas}
-                      codeLengthToLevel={codeLengthToLevel}
-                      onDelete={deleteAccount}
-                    />
-                  </div>
                   </div>
                   <div className="lg:col-span-4 space-y-6">
-                    <DataIngestionBox 
-                      dataType="plano" 
-                      title="Processar Plano de Contas" 
+                    <DataIngestionBox
+                      dataType="plano"
+                      title="Processar Plano de Contas"
                       selectedCompany={selectedCompany}
                       onImport={(newItems) => savePlano(newItems as AccountPlan[])}
                       onRazaoImport={(rows) => saveRazao(rows)}
@@ -2099,35 +2065,35 @@ export default function ManagerModule({
               {/* ======================= RAZÃO / BALANCETE SUBTAB ======================= */}
               {activeSubTab === 'razao' && (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 min-w-0">
-                <div className="lg:col-span-8 min-w-0">
-                  <BalanceteTabPanel
-                    selectedCompany={selectedCompany}
-                    planoContas={planoContas}
-                    razaoRows={razaoRows}
-                    onRazaoRowsChange={saveRazao}
-                    folhaRelatorio={folhaRelatorio}
-                  />
-                </div>
-                <div className="lg:col-span-4 space-y-6">
-                  <DataIngestionBox
-                    dataType="balancete"
-                    title="Importar Lançamentos (TXT Domínio)"
-                    selectedCompany={selectedCompany}
-                    onImport={(newItems) => {
-                      const first = newItems[0] as Record<string, unknown> | undefined;
-                      if (first && ('code' in first || 'name' in first)) {
-                        window.alert(
-                          'Arquivo de plano de contas detectado. Importe na sub-aba Plano de Contas.',
-                        );
-                        return;
-                      }
-                      if (first && ('dataInicio' in first || 'descricao' in first)) {
-                        saveRazao(migrateLegacyBalanceteToRazao(newItems as BalanceteRow[]));
-                      }
-                    }}
-                    onRazaoImport={(rows) => saveRazao(rows)}
-                  />
-                </div>
+                  <div className="lg:col-span-8 min-w-0">
+                    <BalanceteTabPanel
+                      selectedCompany={selectedCompany}
+                      planoContas={planoContas}
+                      razaoRows={razaoRows}
+                      onRazaoRowsChange={saveRazao}
+                      folhaRelatorio={folhaRelatorio}
+                    />
+                  </div>
+                  <div className="lg:col-span-4 space-y-6">
+                    <DataIngestionBox
+                      dataType="balancete"
+                      title="Importar Lançamentos (TXT Domínio)"
+                      selectedCompany={selectedCompany}
+                      onImport={(newItems) => {
+                        const first = newItems[0] as Record<string, unknown> | undefined;
+                        if (first && ('code' in first || 'name' in first)) {
+                          window.alert(
+                            'Arquivo de plano de contas detectado. Importe na sub-aba Plano de Contas.',
+                          );
+                          return;
+                        }
+                        if (first && ('dataInicio' in first || 'descricao' in first)) {
+                          saveRazao(migrateLegacyBalanceteToRazao(newItems as BalanceteRow[]));
+                        }
+                      }}
+                      onRazaoImport={(rows) => saveRazao(rows)}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -2135,55 +2101,48 @@ export default function ManagerModule({
               {activeSubTab === 'folha' && (
                 <div className="space-y-6">
                   <FolhaModule selectedCompany={selectedCompany} onSynced={reloadFolhaFromStorage} />
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                  <div className="lg:col-span-8 space-y-6">
-                  <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
-                    <div className="p-3 border-b border-brand-border bg-brand-sidebar/30 flex items-center justify-between gap-2">
-                      <h3 className="text-[10px] font-black uppercase tracking-widest">Relatório folha importado (OCR)</h3>
-                      <MandarParaBalanceteButton
-                        onClick={handleMandarFolhaParaBalancete}
-                        disabled={folhaRelatorio.length === 0 && folhaPayroll.length === 0}
-                        count={folhaRelatorio.length + folhaPayroll.length}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    <div className="lg:col-span-8 space-y-6">
+                      <div className="technical-panel shadow-[4px_4px_0_0_#141414] overflow-hidden">
+                        <div className="p-3 border-b border-brand-border bg-brand-sidebar/30 flex items-center justify-between gap-2">
+                          <h3 className="text-[10px] font-black uppercase tracking-widest">Relatório folha importado (OCR)</h3>
+                          <MandarParaBalanceteButton
+                            onClick={handleMandarFolhaParaBalancete}
+                            disabled={folhaRelatorio.length === 0 && folhaPayroll.length === 0}
+                            count={folhaRelatorio.length + folhaPayroll.length}
+                          />
+                        </div>
+                        <FolhaRelatorioVirtualTable rows={folhaRelatorio} />
+                      </div>
+                    </div>
+                    <div className="lg:col-span-4 space-y-6">
+                      <DataIngestionBox
+                        dataType="folha"
+                        title="Recortar PDF da Folha"
+                        selectedCompany={selectedCompany}
+                        ingestionMode="pdfOnly"
+                        pdfVariants={FOLHA_PDF_VARIANTS}
+                        onPdfVariantChange={setFolhaPdfVariant}
+                        onImport={(newItems) => {
+                          const prefix = folhaVariantDescriptionPrefix(folhaPdfVariant);
+                          const relatorio = (newItems as FolhaRelatorioRow[])
+                            .filter(
+                              (i) => 'debito' in i && 'credito' in i && !('baseSalary' in i),
+                            )
+                            .map((row) => ({
+                              ...row,
+                              description: row.description?.startsWith('[')
+                                ? row.description
+                                : `${prefix} ${row.description || ''}`.trim(),
+                            }));
+                          if (relatorio.length > 0) {
+                            saveFolhaRelatorio([...folhaRelatorio, ...relatorio]);
+                          }
+                        }}
                       />
                     </div>
-                    <FolhaRelatorioVirtualTable rows={folhaRelatorio} />
-                  </div>
-                  </div>
-                  <div className="lg:col-span-4 space-y-6">
-                    <DataIngestionBox 
-                      dataType="folha" 
-                      title="Recortar PDF da Folha"
-                      selectedCompany={selectedCompany}
-                      ingestionMode="pdfOnly"
-                      pdfVariants={FOLHA_PDF_VARIANTS}
-                      onPdfVariantChange={setFolhaPdfVariant}
-                      onImport={(newItems) => {
-                        const prefix = folhaVariantDescriptionPrefix(folhaPdfVariant);
-                        const relatorio = (newItems as FolhaRelatorioRow[])
-                          .filter(
-                            (i) => 'debito' in i && 'credito' in i && !('baseSalary' in i),
-                          )
-                          .map((row) => ({
-                            ...row,
-                            description: row.description?.startsWith('[')
-                              ? row.description
-                              : `${prefix} ${row.description || ''}`.trim(),
-                          }));
-                        if (relatorio.length > 0) {
-                          saveFolhaRelatorio([...folhaRelatorio, ...relatorio]);
-                        }
-                      }} 
-                    />
                   </div>
                 </div>
-                </div>
-              )}
-
-              {/* ======================= IA SUBTAB ======================= */}
-              {activeSubTab === 'ia' && (
-                <Suspense fallback={<TabLoadingFallback />}>
-                  <AiSettingsModule selectedCompany={selectedCompany} />
-                </Suspense>
               )}
 
               {/* ======================= FISCAL / IMPOSTOS SUBTAB ======================= */}
@@ -2207,74 +2166,74 @@ export default function ManagerModule({
               {activeSubTab === 'demonstracoes' && (
                 <div className="space-y-6">
                   <div className="p-4 bg-brand-sidebar/20 border border-brand-border text-xs">
-                     <span className="font-bold uppercase tracking-widest">DRE & Demonstrações Financeiras Automatizadas</span>
-                     <p className="opacity-50 text-[9px] mt-1">Abaixo está o balancete analítico estruturado a nível gerencial.</p>
+                    <span className="font-bold uppercase tracking-widest">DRE & Demonstrações Financeiras Automatizadas</span>
+                    <p className="opacity-50 text-[9px] mt-1">Abaixo está o balancete analítico estruturado a nível gerencial.</p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                     {/* Dynamic DRE */}
-                     <div className="technical-panel p-6 shadow-[6px_6px_0_0_#141414] bg-white space-y-4">
-                        <h4 className="text-xs font-black uppercase tracking-widest border-b pb-2 flex justify-between">
-                          <span>Demonstração do Resultado (DRE)</span>
-                          <span className="text-[9px] font-mono opacity-50 underline">Período Fiscal</span>
-                        </h4>
-                        
-                        <div className="space-y-2 text-[10px] font-mono uppercase">
-                          <div className="flex justify-between border-b py-1">
-                            <span>(+) Receita Operacional Bruta</span>
-                            <span className="font-bold text-blue-600">{formatCurrency(currentTotalInflows)}</span>
-                          </div>
-                          <div className="flex justify-between border-b py-1">
-                            <span>(-) Deduções e Impostos DAS (6.5%)</span>
-                            <span className="text-red-500">-{formatCurrency(currentTotalInflows * 0.065)}</span>
-                          </div>
-                          <div className="flex justify-between border-b py-1 font-bold">
-                            <span>(=) Receita Líquida</span>
-                            <span>{formatCurrency(currentTotalInflows * 0.935)}</span>
-                          </div>
-                          <div className="flex justify-between border-b py-1">
-                            <span>(-) Despesas Operacionais (Folha e Outros)</span>
-                            <span className="text-red-500">
-                              -{formatCurrency(folhaPayrollTotals.base + currentTotalOutflows)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between border-b-2 py-1 font-black text-xs text-green-700 bg-green-50 px-2 mt-4">
-                            <span>(=) Resultado Líquido do Exercício</span>
-                            <span>
-                              {formatCurrency(
-                                (currentTotalInflows * 0.935) - 
-                                (folhaPayrollTotals.base + currentTotalOutflows)
-                              )}
-                            </span>
-                          </div>
-                        </div>
-                     </div>
+                    {/* Dynamic DRE */}
+                    <div className="technical-panel p-6 shadow-[6px_6px_0_0_#141414] bg-white space-y-4">
+                      <h4 className="text-xs font-black uppercase tracking-widest border-b pb-2 flex justify-between">
+                        <span>Demonstração do Resultado (DRE)</span>
+                        <span className="text-[9px] font-mono opacity-50 underline">Período Fiscal</span>
+                      </h4>
 
-                     {/* Dynamic Balanço Patrimonial */}
-                     <div className="technical-panel p-6 shadow-[6px_6px_0_0_#141414] bg-white space-y-4">
-                        <h4 className="text-xs font-black uppercase tracking-widest border-b pb-2 flex justify-between">
-                          <span>Balanço Patrimonial Simplificado</span>
-                          <span className="text-[9px] font-mono opacity-50">Equação Ativo x Passivo</span>
-                        </h4>
-                        
-                        <div className="space-y-4 text-[10px] font-mono uppercase">
-                           <div className="border border-brand-border/20 p-3">
-                             <div className="font-bold border-b pb-1 text-blue-600 flex justify-between">
-                               <span>Ativo Total</span>
-                               <span>{formatCurrency(currentTotalBalance > 0 ? currentTotalBalance : 0)}</span>
-                             </div>
-                             <p className="text-[8px] opacity-50 mt-1 italic leading-normal">Caixa, Bancos e Aplicações Líquidas.</p>
-                           </div>
-
-                           <div className="border border-brand-border/20 p-3">
-                             <div className="font-bold border-b pb-1 text-red-600 flex justify-between">
-                               <span>Passivo + PL</span>
-                               <span>{formatCurrency(folhaPayrollTotals.base)}</span>
-                             </div>
-                             <p className="text-[8px] opacity-50 mt-1 italic leading-normal">Salários a pagar e deduções estimadas.</p>
-                           </div>
+                      <div className="space-y-2 text-[10px] font-mono uppercase">
+                        <div className="flex justify-between border-b py-1">
+                          <span>(+) Receita Operacional Bruta</span>
+                          <span className="font-bold text-blue-600">{formatCurrency(currentTotalInflows)}</span>
                         </div>
-                     </div>
+                        <div className="flex justify-between border-b py-1">
+                          <span>(-) Deduções e Impostos DAS (6.5%)</span>
+                          <span className="text-red-500">-{formatCurrency(currentTotalInflows * 0.065)}</span>
+                        </div>
+                        <div className="flex justify-between border-b py-1 font-bold">
+                          <span>(=) Receita Líquida</span>
+                          <span>{formatCurrency(currentTotalInflows * 0.935)}</span>
+                        </div>
+                        <div className="flex justify-between border-b py-1">
+                          <span>(-) Despesas Operacionais (Folha e Outros)</span>
+                          <span className="text-red-500">
+                            -{formatCurrency(folhaPayrollTotals.base + currentTotalOutflows)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between border-b-2 py-1 font-black text-xs text-green-700 bg-green-50 px-2 mt-4">
+                          <span>(=) Resultado Líquido do Exercício</span>
+                          <span>
+                            {formatCurrency(
+                              (currentTotalInflows * 0.935) -
+                              (folhaPayrollTotals.base + currentTotalOutflows)
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dynamic Balanço Patrimonial */}
+                    <div className="technical-panel p-6 shadow-[6px_6px_0_0_#141414] bg-white space-y-4">
+                      <h4 className="text-xs font-black uppercase tracking-widest border-b pb-2 flex justify-between">
+                        <span>Balanço Patrimonial Simplificado</span>
+                        <span className="text-[9px] font-mono opacity-50">Equação Ativo x Passivo</span>
+                      </h4>
+
+                      <div className="space-y-4 text-[10px] font-mono uppercase">
+                        <div className="border border-brand-border/20 p-3">
+                          <div className="font-bold border-b pb-1 text-blue-600 flex justify-between">
+                            <span>Ativo Total</span>
+                            <span>{formatCurrency(currentTotalBalance > 0 ? currentTotalBalance : 0)}</span>
+                          </div>
+                          <p className="text-[8px] opacity-50 mt-1 italic leading-normal">Caixa, Bancos e Aplicações Líquidas.</p>
+                        </div>
+
+                        <div className="border border-brand-border/20 p-3">
+                          <div className="font-bold border-b pb-1 text-red-600 flex justify-between">
+                            <span>Passivo + PL</span>
+                            <span>{formatCurrency(folhaPayrollTotals.base)}</span>
+                          </div>
+                          <p className="text-[8px] opacity-50 mt-1 italic leading-normal">Salários a pagar e deduções estimadas.</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2304,14 +2263,6 @@ export default function ManagerModule({
           }
         />
       ) : null}
-
-      <AiInteligenciaPastasModal
-        open={inteligenciaModalOpen}
-        company={selectedCompany}
-        planoOptions={extratoPlanoNomeOptions}
-        onClose={() => setInteligenciaModalOpen(false)}
-        onChanged={() => setInteligenciaTick((n) => n + 1)}
-      />
 
       <ExtratoPastasModal
         open={extratoPastasModalOpen}

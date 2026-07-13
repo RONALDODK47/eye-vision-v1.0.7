@@ -16,7 +16,7 @@ const EXTRACT_REQUEST_TIMEOUT_MS = (() => {
     const v = (import.meta as any).env?.VITE_EXTRACT_REQUEST_TIMEOUT_MS;
     const n = Number(v);
     if (Number.isFinite(n) && n > 0) return n;
-  } catch {}
+  } catch { }
   return 300_000;
 })();
 
@@ -36,6 +36,28 @@ export type AiExtractPlanoResult = {
   model?: string;
   provider?: string;
   rowCount?: number;
+  reason?: string;
+  detail?: string;
+};
+
+export type AiExtractLoanContractResult = {
+  ok: boolean;
+  data?: {
+    contractNumber?: string;
+    bankName?: string;
+    principal?: number;
+    installments?: number;
+    startDate?: string;
+    interestRate?: number;
+    gracePeriod?: number;
+    graceType?: 'paid' | 'capitalized';
+    amortizationType?: 'PRICE' | 'SAC';
+    indexType?: 'CDI' | 'SELIC' | 'FIXED' | 'NONE';
+    iof?: number;
+    costs?: number;
+  };
+  model?: string;
+  provider?: string;
   reason?: string;
   detail?: string;
 };
@@ -164,6 +186,7 @@ export async function extractExtratoWithAi(params: {
   providerId?: string;
   model?: string;
   perPage?: boolean;
+  mode?: 'surgical' | 'standard';
   bankHint?: string;
   signal?: AbortSignal;
   /** PDF/planilha original — motor erp.contabil processa nativamente (melhor precisão). */
@@ -186,6 +209,7 @@ export async function extractExtratoWithAi(params: {
           providerId: params.providerId,
           model: params.model,
           perPage: params.perPage === true,
+          mode: params.mode,
           bankHint: params.bankHint,
           fileBase64: params.fileBase64,
           mimeType: params.mimeType,
@@ -208,6 +232,54 @@ export async function extractExtratoWithAi(params: {
     const raw = err instanceof Error ? err.message : 'Falha na extração IA';
     const detail = /signal timed out|aborted|timeout/i.test(raw)
       ? 'A IA demorou demais para responder (limite ~3 min). Tente com menos páginas, aumente a resolução do PDF ou verifique a chave API em Contábil → IA.'
+      : raw;
+    return {
+      ok: false,
+      reason: 'network_error',
+      detail,
+    };
+  }
+}
+
+export async function extractLoanContractWithAi(params: {
+  images?: AiExtractImage[];
+  fileName?: string;
+  providerId?: string;
+  model?: string;
+  signal?: AbortSignal;
+}): Promise<AiExtractLoanContractResult> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), EXTRACT_REQUEST_TIMEOUT_MS + 15_000);
+    const signal = params.signal ?? controller.signal;
+    try {
+      const res = await fetch(`${AGENT_BASE}/ai/extract-loan-contract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          images: params.images,
+          fileName: params.fileName,
+          providerId: params.providerId,
+          model: params.model,
+        }),
+        signal,
+      });
+      const data = (await res.json()) as AiExtractLoanContractResult;
+      if (!res.ok) {
+        return {
+          ok: false,
+          reason: data.reason ?? 'request_failed',
+          detail: data.detail ?? `HTTP ${res.status}`,
+        };
+      }
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : 'Falha na extração IA do contrato';
+    const detail = /signal timed out|aborted|timeout/i.test(raw)
+      ? 'A IA demorou demais para responder. Tente com um arquivo menor ou verifique a chave API.'
       : raw;
     return {
       ok: false,
@@ -313,5 +385,70 @@ export async function refineOcrRowsWithAi(params: {
     };
   } catch {
     return { ok: false, rows: params.lines, detail: 'Refino IA indisponível' };
+  }
+}
+
+export type AiOcrBlock = {
+  text: string;
+  ymin: number;
+  xmin: number;
+  ymax: number;
+  xmax: number;
+};
+
+export type AiOcrOverlayResult = {
+  ok: boolean;
+  blocks?: AiOcrBlock[];
+  model?: string;
+  provider?: string;
+  reason?: string;
+  detail?: string;
+};
+
+export async function extractOcrOverlayWithAi(params: {
+  images?: AiExtractImage[];
+  fileName?: string;
+  providerId?: string;
+  model?: string;
+  signal?: AbortSignal;
+}): Promise<AiOcrOverlayResult> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), EXTRACT_REQUEST_TIMEOUT_MS + 15_000);
+    const signal = params.signal ?? controller.signal;
+    try {
+      const res = await fetch(`${AGENT_BASE}/ai/ocr-overlay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          images: params.images,
+          fileName: params.fileName,
+          providerId: params.providerId,
+          model: params.model,
+        }),
+        signal,
+      });
+      const data = (await res.json()) as AiOcrOverlayResult;
+      if (!res.ok) {
+        return {
+          ok: false,
+          reason: data.reason ?? 'request_failed',
+          detail: data.detail ?? `HTTP ${res.status}`,
+        };
+      }
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : 'Falha no OCR IA';
+    const detail = /signal timed out|aborted|timeout/i.test(raw)
+      ? 'A IA demorou demais para responder. Tente com um arquivo menor ou verifique a chave API.'
+      : raw;
+    return {
+      ok: false,
+      reason: 'network_error',
+      detail,
+    };
   }
 }
