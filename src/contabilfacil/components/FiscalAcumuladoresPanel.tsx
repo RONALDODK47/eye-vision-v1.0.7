@@ -100,6 +100,10 @@ export default function FiscalAcumuladoresPanel({ selectedCompany, contasImposto
     return () => window.removeEventListener('contabilfacil-fiscal-sped-updated', onUpdate);
   }, [selectedCompany]);
 
+  useEffect(() => {
+    return () => {};
+  }, []);
+
   const planoOptions = useMemo((): ExtratoPlanoContaOption[] => {
     const rows = readManagerData<PlanoRow>(selectedCompany, 'plano');
     return rows
@@ -335,6 +339,8 @@ export default function FiscalAcumuladoresPanel({ selectedCompany, contasImposto
                                   <ExtratoContaPicker
                                     value={contas.debito}
                                     options={planoOptions}
+                                    lookupOptions={planoOptions}
+                                    showNomeInline
                                     onChange={(v) => patchConta(group.key, 'debito', v)}
                                     placeholder={contas.debito || 'Padrão imposto'}
                                   />
@@ -358,6 +364,8 @@ export default function FiscalAcumuladoresPanel({ selectedCompany, contasImposto
                                   <ExtratoContaPicker
                                     value={contas.credito}
                                     options={planoOptions}
+                                    lookupOptions={planoOptions}
+                                    showNomeInline
                                     onChange={(v) => patchConta(group.key, 'credito', v)}
                                     placeholder={contas.credito || 'Padrão imposto'}
                                   />

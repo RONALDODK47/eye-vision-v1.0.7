@@ -1,44 +1,50 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileKey, Loader2, RefreshCw, Upload } from 'lucide-react';
-import { cn, formatCurrency } from '../../lib/utils';
+import { Loader2, RefreshCw, Upload } from 'lucide-react';
+import { cn, formatCurrency } from '../lib/utils';
 import {
   CF_FIELD_COL,
   CF_FIELD_ROW,
-  CF_FORM_FIELDS,
   CF_INPUT_MED,
   CF_LABEL,
   CF_SELECT,
-} from '../../lib/formFieldClasses';
-import type { PricingWorkspace } from '../../logic/pricingTypes';
-import { applyNfeCreditsToWorkspace, buildNfeCacheFromApi, mergeNfeCache } from '../../logic/pricingNfeCredits';
+} from '../lib/formFieldClasses';
+import { buildNfeCacheFromApi, mergeNfeCache } from '../logic/pricingNfeCredits';
+import type { FiscalNfeCache } from '../logic/fiscalNfeStorage';
+import { loadFiscalNfeCache, saveFiscalNfeCache } from '../logic/fiscalNfeStorage';
 import {
   fetchNfeDistribuicaoSefaz,
   importNfeXmlFiles,
   NFE_SEFAZ_MIN_INTERVAL_MS,
-  pingNfePrecificacaoApi,
-} from '../../../services/nfePrecificacaoApi';
-import { getTributaryRegimeDetails, getRegimeBadges, type TributaryRegime } from '../../logic/tributaryRegimeRules';
-import { saveSpedFromNfeCache } from '../../logic/nfeToSpedConverter';
-import FiscalImpostosAcumuladoresTable from './FiscalImpostosAcumuladoresTable';
-
-export interface PricingNotasFiscaisPanelProps {
-  selectedCompany: string;
-  workspace: PricingWorkspace;
-  onWorkspaceChange: (next: PricingWorkspace) => void;
-}
+  probeNfeFiscalApiStatus,
+  type NfeFiscalApiStatus,
+} from '../../services/nfePrecificacaoApi';
 
 const UFS = [
   'AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT',
   'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO',
 ];
 
-export default function PricingNotasFiscaisPanel({
-  selectedCompany,
-  workspace,
-  onWorkspaceChange,
-}: PricingNotasFiscaisPanelProps) {
+type Props = {
+  selectedCompany: string;
+};
+
+function fiscalApiStatusLabel(status: NfeFiscalApiStatus | null): string {
+  if (!status) return '…';
+  if (status.nfeReady) {
+    if (status.mode === 'local') return 'online (:8780 local)';
+    if (status.mode === 'proxy') return 'online (proxy local)';
+    return 'online (nuvem)';
+  }
+  if (status.online) return 'health OK · NF-e OFF';
+  return 'offline';
+}
+
+export default function FiscalNotasFiscaisPanel({ selectedCompany }: Props) {
   const certRef = useRef<HTMLInputElement>(null);
   const xmlRef = useRef<HTMLInputElement>(null);
+  const [cache, setCache] = useState<FiscalNfeCache | undefined>(() =>
+    loadFiscalNfeCache(selectedCompany),
+  );
   const [cnpj, setCnpj] = useState('');
   const [uf, setUf] = useState('SP');
   const [ambiente, setAmbiente] = useState<'producao' | 'homologacao'>('producao');
@@ -47,33 +53,32 @@ export default function PricingNotasFiscaisPanel({
   const [dataFim, setDataFim] = useState('');
   const [certFile, setCertFile] = useState<File | null>(null);
   const [manifestarCiencia, setManifestarCiencia] = useState(true);
-  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [apiStatus, setApiStatus] = useState<NfeFiscalApiStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [importingXml, setImportingXml] = useState(false);
-  const [applying, setApplying] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  const [selectedRegime, setSelectedRegime] = useState<TributaryRegime>(
-    (workspace.nfeCache?.selectedRegime ?? 'Lucro Real') as TributaryRegime
-  );
-
-  const cache = workspace.nfeCache;
 
   useEffect(() => {
-    pingNfePrecificacaoApi().then(setApiOnline).catch(() => setApiOnline(false));
+    const loaded = loadFiscalNfeCache(selectedCompany);
+    setCache(loaded);
+    if (loaded?.cnpjSync) setCnpj(loaded.cnpjSync);
+    if (loaded?.ufSync) setUf(loaded.ufSync);
+  }, [selectedCompany]);
+
+  useEffect(() => {
+    probeNfeFiscalApiStatus().then(setApiStatus).catch(() =>
+      setApiStatus({ online: false, nfeReady: false }),
+    );
   }, []);
 
-  // Atualizar regime selecionado quando muda
-  useEffect(() => {
-    if (cache?.selectedRegime) {
-      setSelectedRegime(cache.selectedRegime as TributaryRegime);
-    }
-  }, [cache?.selectedRegime]);
-
-  useEffect(() => {
-    if (cache?.cnpjSync) setCnpj(cache.cnpjSync);
-    if (cache?.ufSync) setUf(cache.ufSync);
-  }, [selectedCompany, cache?.cnpjSync, cache?.ufSync]);
+  const persistCache = useCallback(
+    (next: FiscalNfeCache) => {
+      setCache(next);
+      saveFiscalNfeCache(selectedCompany, next);
+    },
+    [selectedCompany],
+  );
 
   const proximaSyncPermitida = cache?.lastSyncAt
     ? new Date(cache.lastSyncAt).getTime() + NFE_SEFAZ_MIN_INTERVAL_MS
@@ -83,6 +88,15 @@ export default function PricingNotasFiscaisPanel({
   const syncSefaz = useCallback(async () => {
     setErro(null);
     setSucesso(null);
+    const status = await probeNfeFiscalApiStatus();
+    setApiStatus(status);
+    if (!status.nfeReady) {
+      setErro(
+        status.hint ??
+          'API fiscal NF-e indisponível. Rode npm run fiscal-api e abra http://localhost:3000.',
+      );
+      return;
+    }
     if (!certFile) {
       setErro('Selecione o certificado digital e-CNPJ A1 (.pfx).');
       return;
@@ -104,8 +118,7 @@ export default function PricingNotasFiscaisPanel({
     setSyncing(true);
     try {
       const cnpjLimpo = cnpj.replace(/\D/g, '');
-      const ultNSU =
-        cache?.cnpjSync === cnpjLimpo && cache?.ultNSU ? cache.ultNSU : '0';
+      const ultNSU = cache?.cnpjSync === cnpjLimpo && cache?.ultNSU ? cache.ultNSU : '0';
 
       const result = await fetchNfeDistribuicaoSefaz({
         cnpj: cnpjLimpo,
@@ -134,167 +147,125 @@ export default function PricingNotasFiscaisPanel({
         cnpjSync: cnpjLimpo,
         ufSync: uf,
       });
-      const nfeCache = mergeNfeCache(workspace.nfeCache, incoming);
-      onWorkspaceChange({ ...workspace, nfeCache });
+      persistCache(mergeNfeCache(cache, incoming));
       setSucesso(result.mensagem);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao sincronizar SEFAZ.');
+      setErro(e instanceof Error ? e.message : 'Falha ao consultar webservice SEFAZ.');
     } finally {
       setSyncing(false);
     }
   }, [
     ambiente,
     bloqueadoPorIntervalo,
-    cache?.cnpjSync,
-    cache?.ultNSU,
+    cache,
     certFile,
     cnpj,
     dataFim,
     dataInicio,
     manifestarCiencia,
-    onWorkspaceChange,
+    persistCache,
     proximaSyncPermitida,
     senha,
     uf,
-    workspace,
   ]);
 
   const resetarNsu = useCallback(() => {
-    if (!workspace.nfeCache) return;
-    onWorkspaceChange({
-      ...workspace,
-      nfeCache: { ...workspace.nfeCache, ultNSU: '0', maxNSU: '0' },
-    });
+    if (!cache) return;
+    persistCache({ ...cache, ultNSU: '0', maxNSU: '0' });
     setSucesso('NSU reiniciado — próxima consulta buscará desde o início.');
     setErro(null);
-  }, [onWorkspaceChange, workspace]);
+  }, [cache, persistCache]);
 
-  const importarXmls = useCallback(async (files: FileList | null) => {
-    if (!files?.length) {
-      setErro('Selecione um ou mais arquivos .xml de NF-e.');
-      return;
-    }
-    setErro(null);
-    setSucesso(null);
-    setImportingXml(true);
-    try {
-      const result = await importNfeXmlFiles([...files], {
-        dataInicio: dataInicio || undefined,
-        dataFim: dataFim || undefined,
-      });
-      if (!result.ok) {
-        setErro(result.mensagem);
+  const importarXmls = useCallback(
+    async (files: FileList | null) => {
+      if (!files?.length) {
+        setErro('Selecione um ou mais arquivos .xml de NF-e.');
         return;
       }
-      const nfeCache = mergeNfeCache(workspace.nfeCache, buildNfeCacheFromApi(result));
-      onWorkspaceChange({ ...workspace, nfeCache });
-      setSucesso(result.mensagem);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao importar XMLs.');
-    } finally {
-      setImportingXml(false);
-    }
-  }, [dataFim, dataInicio, onWorkspaceChange, workspace]);
-
-  const aplicarCreditos = useCallback(async () => {
-    setApplying(true);
-    setErro(null);
-    try {
-      const applied = applyNfeCreditsToWorkspace(workspace, {
-        importStockItems: true,
-      });
-      onWorkspaceChange(applied.workspace);
-      
-      // Salvar as NFs também como arquivo SPED para aparecerem nos acumuladores
-      if (cache && cache.creditosSugeridos?.length) {
-        const cnpjParaSalvar = cache.cnpjSync || cnpj.replace(/\D/g, '');
-        if (cnpjParaSalvar.length === 14) {
-          const savedToSped = saveSpedFromNfeCache(selectedCompany, cache, cnpjParaSalvar);
-          if (savedToSped) {
-            // Disparar evento para que a aba de Acumuladores recarregue
-            window.dispatchEvent(new CustomEvent('contabilfacil-fiscal-sped-updated'));
-          }
+      setErro(null);
+      setSucesso(null);
+      setImportingXml(true);
+      try {
+        const result = await importNfeXmlFiles([...files], {
+          dataInicio: dataInicio || undefined,
+          dataFim: dataFim || undefined,
+        });
+        if (!result.ok) {
+          setErro(result.mensagem);
+          return;
         }
+        persistCache(mergeNfeCache(cache, buildNfeCacheFromApi(result)));
+        setSucesso(result.mensagem);
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : 'Falha ao importar XMLs.');
+      } finally {
+        setImportingXml(false);
       }
-      
-      setSucesso(applied.message);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao aplicar créditos.');
-    } finally {
-      setApplying(false);
-    }
-  }, [onWorkspaceChange, workspace, cache, selectedCompany, cnpj]);
+    },
+    [cache, dataFim, dataInicio, persistCache],
+  );
+
+  const limparCache = useCallback(() => {
+    if (!window.confirm('Apagar todas as NF-e importadas desta empresa?')) return;
+    setCache(undefined);
+    saveFiscalNfeCache(selectedCompany, {
+      notas: [],
+      itensEstoque: [],
+      creditosSugeridos: [],
+    });
+    setSucesso('Cache de NF-e limpo.');
+    setErro(null);
+  }, [selectedCompany]);
 
   return (
     <div className="space-y-4">
-      {/* Seletor de Regime Tributário */}
-      <div className="technical-panel shadow-[3px_3px_0_0_#141414] p-4">
-        <div className={CF_FIELD_ROW}>
-          <label className={CF_FIELD_COL}>
-            <span className={CF_LABEL}>Regime Tributário</span>
-            <select
-              className={CF_SELECT}
-              value={selectedRegime}
-              onChange={(e) => {
-                const newRegime = e.target.value as TributaryRegime;
-                setSelectedRegime(newRegime);
-                if (cache) {
-                  onWorkspaceChange({
-                    ...workspace,
-                    nfeCache: { ...cache, selectedRegime: newRegime },
-                  });
-                }
-              }}
-            >
-              <option value="Lucro Real">Lucro Real</option>
-              <option value="Lucro Presumido">Lucro Presumido</option>
-              <option value="Simples Nacional">Simples Nacional</option>
-            </select>
-          </label>
-          <div className={CF_FIELD_COL}>
-            <span className={CF_LABEL}>Impacto</span>
-            <p className="text-[9px] opacity-70 font-mono pt-1">
-              Determina recuperação de impostos, alíquotas zero, monofásicos e ICMS ST acima ↑
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Conteúdo existente */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-[10px] font-black uppercase">Notas fiscais · Distribuição DF-e SEFAZ</p>
+          <p className="text-[10px] font-black uppercase">Notas fiscais · Webservice SEFAZ</p>
           <p className="text-[9px] opacity-60 uppercase font-bold mt-1">
-            Web Service oficial · certificado A1 · sem scraping de portal
+            Distribuição DF-e · certificado A1 · consulta oficial de NF-e recebidas
           </p>
         </div>
         <span
           className={cn(
             'text-[9px] font-mono uppercase px-2 py-1 border',
-            apiOnline ? 'border-green-700 text-green-800' : 'border-red-700 text-red-800',
+            apiStatus?.nfeReady
+              ? 'border-green-700 text-green-800'
+              : apiStatus?.online
+                ? 'border-amber-700 text-amber-900'
+                : 'border-red-700 text-red-800',
           )}
         >
-          API fiscal {apiOnline ? 'online' : 'offline'} (:8780)
+          API fiscal {fiscalApiStatusLabel(apiStatus)}
         </span>
       </div>
 
+      {!apiStatus?.nfeReady ? (
+        <div className="technical-panel shadow-[3px_3px_0_0_#141414] p-4 text-[9px] font-mono leading-relaxed space-y-2">
+          <p className="font-black uppercase text-[10px] mb-1">Como puxar NF-e agora</p>
+          <ol className="list-decimal list-inside space-y-1">
+            <li>Terminal 1: <code className="bg-brand-sidebar/40 px-1">npm run fiscal-api</code> (porta 8780)</li>
+            <li>Terminal 2: <code className="bg-brand-sidebar/40 px-1">npm run dev</code></li>
+            <li>Abra <strong>http://localhost:3000</strong> (não GitHub Pages — HTTPS bloqueia :8780 local)</li>
+            <li>Volte em Fiscal → NF-e webservice e clique em Buscar</li>
+          </ol>
+          {apiStatus?.hint ? <p className="text-amber-900">{apiStatus.hint}</p> : null}
+        </div>
+      ) : null}
+
       <div className="technical-panel shadow-[3px_3px_0_0_#141414] p-4 space-y-3 text-[9px] leading-relaxed opacity-80">
-        <p className="font-black uppercase text-[10px] opacity-100">Como o robô funciona</p>
+        <p className="font-black uppercase text-[10px] opacity-100">Como funciona</p>
         <ol className="list-decimal list-inside space-y-1 font-mono">
           <li>
-            <strong>ConsNSU</strong> — consulta Distribuição DF-e informando o último NSU (contador SEFAZ).
+            <strong>ConsNSU</strong> — consulta o webservice Distribuição DF-e com o último NSU da SEFAZ.
           </li>
           <li>
-            <strong>Manifesto</strong> — registra ciência da operação (evento 210210) para liberar XML de terceiros.
+            <strong>Manifesto</strong> — registra ciência da operação (210210) para liberar XML de terceiros.
           </li>
           <li>
-            <strong>Download</strong> — recebe XML compactado (GZIP), descompacta e extrai itens/créditos.
+            <strong>Download</strong> — recebe XML compactado, extrai dados da nota, itens e créditos sugeridos.
           </li>
         </ol>
-        <p className="opacity-70">
-          Consultas repetidas em curto intervalo geram rejeição 656. O sistema aguarda ~1 h entre sincronizações
-          automáticas e persiste o NSU por empresa.
-        </p>
       </div>
 
       <div className="technical-panel shadow-[3px_3px_0_0_#141414] p-4 space-y-4">
@@ -401,17 +372,17 @@ export default function PricingNotasFiscaisPanel({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={syncing || !apiOnline || bloqueadoPorIntervalo}
+            disabled={syncing || !apiStatus?.nfeReady || bloqueadoPorIntervalo}
             onClick={() => void syncSefaz()}
             className="technical-button-primary text-[9px] flex items-center gap-2 disabled:opacity-40"
             title={
               bloqueadoPorIntervalo
                 ? 'Aguarde 1 h entre consultas SEFAZ'
-                : 'Distribuição DF-e + manifesto + XML'
+                : 'Consultar webservice SEFAZ (Distribuição DF-e)'
             }
           >
             {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-            Importar da SEFAZ
+            Buscar NF-e na SEFAZ
           </button>
           <button
             type="button"
@@ -435,22 +406,18 @@ export default function PricingNotasFiscaisPanel({
           />
           <button
             type="button"
-            disabled={importingXml || !apiOnline}
+            disabled={importingXml || !apiStatus?.nfeReady}
             onClick={() => xmlRef.current?.click()}
             className="technical-button text-[9px] flex items-center gap-2 disabled:opacity-40"
           >
             {importingXml ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
             Importar XMLs (manual)
           </button>
-          <button
-            type="button"
-            disabled={applying || !cache?.creditosSugeridos?.length}
-            onClick={() => void aplicarCreditos()}
-            className="technical-button text-[9px] flex items-center gap-2 disabled:opacity-40"
-          >
-            {applying ? <Loader2 size={12} className="animate-spin" /> : <FileKey size={12} />}
-            Lançar créditos a recuperar
-          </button>
+          {cache?.notas?.length ? (
+            <button type="button" onClick={limparCache} className="technical-button text-[9px] border-red-800 text-red-800">
+              Limpar cache
+            </button>
+          ) : null}
         </div>
 
         {bloqueadoPorIntervalo && cache?.lastSyncAt ? (
@@ -466,54 +433,63 @@ export default function PricingNotasFiscaisPanel({
 
       {cache?.lastSyncAt ? (
         <div className="technical-panel shadow-[3px_3px_0_0_#141414] overflow-hidden">
-          <div className="px-4 py-3 border-b border-brand-border text-[10px] font-black uppercase">
-            Última sync · {new Date(cache.lastSyncAt).toLocaleString('pt-BR')}
-          </div>
-          <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-[10px] font-mono">
-            <div>
-              <p className="font-black uppercase opacity-50">Notas</p>
-              <p className="text-lg font-bold">{cache.notas.length}</p>
-            </div>
-            <div>
-              <p className="font-black uppercase opacity-50">Itens estoque</p>
-              <p className="text-lg font-bold">{cache.itensEstoque.length}</p>
-            </div>
-            <div>
-              <p className="font-black uppercase opacity-50">Créditos sugeridos</p>
-              <p className="text-lg font-bold">{cache.creditosSugeridos.length}</p>
-            </div>
+          <div className="px-4 py-3 border-b border-brand-border text-[10px] font-black uppercase flex flex-wrap justify-between gap-2">
+            <span>Notas importadas · {new Date(cache.lastSyncAt).toLocaleString('pt-BR')}</span>
+            <span className="font-mono opacity-60">
+              {cache.notas.length} nota(s) · {cache.creditosSugeridos.length} crédito(s)
+            </span>
           </div>
 
-          {/* Exibição de Notas Fiscais */}
           {cache.notas.length > 0 ? (
-            <div className="border-t border-brand-border/30">
-              <div className="px-4 py-2 bg-brand-sidebar/20 text-[9px] font-black uppercase">
-                Notas Fiscais ({cache.notas.length})
-              </div>
-              <div className="max-h-48 overflow-y-auto divide-y divide-brand-border/10">
-                {cache.notas.slice(0, 20).map((n) => (
-                  <div key={n.chave} className="px-4 py-2 text-[9px] font-mono flex justify-between gap-2 hover:bg-brand-sidebar/10">
-                    <div className="min-w-0 flex-1">
-                      <span className="truncate block font-bold">
-                        NF {n.numero}/{n.serie}
-                      </span>
-                      <span className="truncate block opacity-70">{n.emitente}</span>
-                      {n.emissao && <span className="text-[8px] opacity-50">{n.emissao}</span>}
-                    </div>
-                    <span className="shrink-0 font-bold text-emerald-400">{formatCurrency(n.total)}</span>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-[9px] font-mono">
+                <thead>
+                  <tr className="border-b border-brand-border/40 text-[8px] font-black uppercase opacity-60">
+                    <th className="px-3 py-2">NF</th>
+                    <th className="px-3 py-2">Emissão</th>
+                    <th className="px-3 py-2">Emitente</th>
+                    <th className="px-3 py-2 text-right">Total</th>
+                    <th className="px-3 py-2">Chave</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand-border/10">
+                  {cache.notas.map((n) => (
+                    <tr key={n.chave}>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {n.numero}/{n.serie}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{n.emissao || '—'}</td>
+                      <td className="px-3 py-2 max-w-[220px] truncate" title={n.emitente}>
+                        {n.emitente}
+                      </td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">{formatCurrency(n.total)}</td>
+                      <td className="px-3 py-2 font-mono text-[8px] opacity-70 max-w-[200px] truncate" title={n.chave}>
+                        {n.chave}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="p-4 text-[9px] font-mono opacity-60">Nenhuma nota no período consultado.</p>
+          )}
+
+          {cache.creditosSugeridos.length > 0 ? (
+            <div className="border-t border-brand-border/30 p-4 space-y-2">
+              <p className="text-[9px] font-black uppercase opacity-60">Créditos sugeridos (PIS/COFINS/ICMS)</p>
+              <div className="max-h-40 overflow-y-auto divide-y divide-brand-border/10 text-[9px] font-mono">
+                {cache.creditosSugeridos.slice(0, 30).map((c, i) => (
+                  <div key={`${c.chave}-${c.tipo}-${i}`} className="py-1.5 flex justify-between gap-2">
+                    <span className="truncate">
+                      {c.tipo} · {c.fundamento}
+                    </span>
+                    <span className="shrink-0">{formatCurrency(c.valor)}</span>
                   </div>
                 ))}
               </div>
             </div>
           ) : null}
-
-          {/* Nova Tabela: Impostos & Acumuladores */}
-          <div className="border-t border-brand-border/30">
-            <FiscalImpostosAcumuladoresTable
-              cache={cache}
-              selectedRegime={selectedRegime}
-            />
-          </div>
         </div>
       ) : null}
     </div>

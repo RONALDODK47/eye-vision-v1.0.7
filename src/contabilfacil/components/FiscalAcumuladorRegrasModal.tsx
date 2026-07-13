@@ -209,6 +209,8 @@ export default memo(function FiscalAcumuladorRegrasModal({
               <ExtratoContaPicker
                 value={draftConta}
                 options={planoOptions}
+                lookupOptions={planoOptions}
+                showNomeInline
                 onChange={setDraftConta}
                 placeholder="Conta contrapartida"
               />

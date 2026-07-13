@@ -173,6 +173,27 @@ export interface NfeCreditoSugerido {
   valor: number;
   fundamento: string;
   regime: string;
+  /** Detalhes do regime tributário — adicionado dinamicamente */
+  regimeDetalhes?: TributaryRegimeDetails;
+}
+
+/**
+ * Detalhes das regras tributárias por regime.
+ * Define se o crédito é recuperável, alíquota zero, monofásico ou ICMS ST.
+ */
+export interface TributaryRegimeDetails {
+  /** Regime: 'Simples Nacional', 'Lucro Presumido', 'Lucro Real' */
+  regime: string;
+  /** É recuperável o imposto neste regime? */
+  isRecuperavel: boolean;
+  /** Alíquota é zero? */
+  isAliquotaZero: boolean;
+  /** É operação monofásica? */
+  isMonofasico: boolean;
+  /** É ICMS ST (Substituição Tributária)? */
+  isIcmsSt: boolean;
+  /** Observações sobre as regras aplicadas */
+  observacoes?: string;
 }
 
 export interface PricingNfeCache {
@@ -187,6 +208,8 @@ export interface PricingNfeCache {
   cnpjSync?: string;
   ufSync?: string;
   manifestados?: number;
+  /** Regime tributário selecionado na empresa */
+  selectedRegime?: 'Simples Nacional' | 'Lucro Presumido' | 'Lucro Real';
 }
 
 /** Categorias de estoque que podem ser vinculadas a um PA. */

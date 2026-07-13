@@ -1,3 +1,5 @@
+import { loadPlanoCompletoForContaResolve } from './planoContasAiContext';
+import { assertSomenteCodigoReduzido } from './planoContasMapper';
 import { readManagerData, writeManagerData } from './companyWorkspace';
 import {
   emptyFiscalContasImposto,
@@ -5,8 +7,15 @@ import {
   type FiscalContasImpostoConfig,
 } from './fiscalContasImposto';
 
+function normalizeContaCampo(raw: string, plano: ReturnType<typeof loadPlanoCompletoForContaResolve>): string {
+  const v = String(raw ?? '').trim();
+  if (!v) return '';
+  return assertSomenteCodigoReduzido(v, plano);
+}
+
 export function loadFiscalContasImposto(companyName: string): FiscalContasImpostoConfig {
   const base = emptyFiscalContasImposto();
+  const plano = loadPlanoCompletoForContaResolve(companyName);
   const rows = readManagerData<Partial<FiscalContasImpostoConfig>>(companyName, 'fiscalContasImposto');
   const stored = rows[0];
   if (!stored || typeof stored !== 'object') return base;
@@ -14,10 +23,10 @@ export function loadFiscalContasImposto(companyName: string): FiscalContasImpost
     const par = stored[id];
     if (par && typeof par === 'object') {
       base[id] = {
-        debito: String(par.debito ?? '').trim(),
-        credito: String(par.credito ?? '').trim(),
-        debitoRecuperar: String(par.debitoRecuperar ?? '').trim(),
-        creditoRecuperar: String(par.creditoRecuperar ?? '').trim(),
+        debito: normalizeContaCampo(String(par.debito ?? ''), plano),
+        credito: normalizeContaCampo(String(par.credito ?? ''), plano),
+        debitoRecuperar: normalizeContaCampo(String(par.debitoRecuperar ?? ''), plano),
+        creditoRecuperar: normalizeContaCampo(String(par.creditoRecuperar ?? ''), plano),
       };
     }
   }

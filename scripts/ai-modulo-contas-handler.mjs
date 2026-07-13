@@ -71,29 +71,22 @@ function resolveCodigoReduzidoFromPlano(raw, plano) {
   }
 
   if (isClassificacaoHierarquica(input)) {
-    const byClassif = plano.find((p) => String(p.classificacao ?? p.code ?? '').trim() === input);
+    const inputNorm = input.replace(/[^\d]/g, '');
+    const byClassif = plano.find((p) => {
+      const c = String(p.classificacao ?? p.code ?? '').trim();
+      return c === input || c.replace(/[^\d]/g, '') === inputNorm;
+    });
     if (byClassif) return sanitizeCodigoReduzido(byClassif.codigoReduzido) || '';
     return '';
   }
 
-  const needle = norm(input);
-  if (needle.length < 3) return asReduzido || '';
-
-  let best = null;
-  for (const p of plano) {
-    const name = norm(p.name);
-    const red = sanitizeCodigoReduzido(p.codigoReduzido);
-    if (!name || !red) continue;
-    let score = 0;
-    if (name === needle) score = 100;
-    else if (name.includes(needle) || needle.includes(name)) score = 50;
-    else {
-      const tokens = needle.split(/\s+/).filter((t) => t.length > 2);
-      score = tokens.filter((t) => name.includes(t)).length * 8;
-    }
-    if (score > 0 && (!best || score > best.score)) best = { red, score };
+  const planoTemReduzido = plano.some((p) => Boolean(sanitizeCodigoReduzido(p.codigoReduzido)));
+  if (asReduzido) {
+    if (planoTemReduzido) return '';
+    return asReduzido;
   }
-  return best && best.score >= 16 ? best.red : asReduzido || '';
+
+  return '';
 }
 
 function sanitizeContas(rawList, plano, allowedKeys) {
@@ -105,7 +98,7 @@ function sanitizeContas(rawList, plano, allowedKeys) {
     if (!key || (allowedKeys.size > 0 && !allowedKeys.has(key))) continue;
     if (seen.has(key)) continue;
     const conta = resolveCodigoReduzidoFromPlano(item?.conta ?? item?.code ?? '', plano);
-    if (!conta) continue;
+    if (!conta || conta.includes('.')) continue;
     seen.add(key);
     out.push({
       key,

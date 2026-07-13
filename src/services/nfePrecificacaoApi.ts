@@ -1,4 +1,4 @@
-import { fiscalApiCandidateBases } from './fiscalApiBase';
+import { fiscalApiCandidateBases, fiscalNfeCandidateBases, probeFiscalNfeApi } from './fiscalApiBase';
 import type {
   NfeCreditoSugerido,
   NfeItemEstoque,
@@ -34,16 +34,86 @@ export type NfeDistribuicaoResult = {
 /** Intervalo mínimo entre sincronizações SEFAZ (evita cStat 656). */
 export const NFE_SEFAZ_MIN_INTERVAL_MS = 60 * 60 * 1000;
 
-export async function pingNfePrecificacaoApi(): Promise<boolean> {
-  for (const base of fiscalApiCandidateBases()) {
-    try {
-      const res = await fetch(`${base}/health`, { cache: 'no-store' });
-      if (res.ok) return true;
-    } catch {
-      // próximo
-    }
+async function readFiscalJson<T extends Record<string, unknown>>(
+  res: Response,
+): Promise<T & { mensagem?: string }> {
+  const text = await res.text();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error(`API fiscal retornou resposta vazia (HTTP ${res.status}).`);
   }
-  return false;
+  if (trimmed.startsWith('<') || trimmed.toLowerCase().startsWith('<!doctype')) {
+    if (res.status === 404) {
+      throw new Error(
+        'Rota NF-e ausente no servidor. Atualize o backend Render ou rode localmente: npm run fiscal-api (:8780).',
+      );
+    }
+    throw new Error(
+      `API fiscal devolveu HTML em vez de JSON (HTTP ${res.status}). Verifique se o backend fiscal está atualizado.`,
+    );
+  }
+  try {
+    return JSON.parse(trimmed) as T & { mensagem?: string };
+  } catch {
+    throw new Error(`Resposta inválida da API fiscal (HTTP ${res.status}).`);
+  }
+}
+
+export type NfeFiscalApiStatus = {
+  online: boolean;
+  nfeReady: boolean;
+  mode?: 'local' | 'proxy' | 'remote';
+  service?: string;
+  hint?: string;
+};
+
+export async function pingNfePrecificacaoApi(): Promise<boolean> {
+  const status = await probeNfeFiscalApiStatus();
+  return status.nfeReady;
+}
+
+export async function probeNfeFiscalApiStatus(): Promise<NfeFiscalApiStatus> {
+  const probe = await probeFiscalNfeApi();
+  if (probe.online && probe.nfeBase) {
+    return {
+      online: true,
+      nfeReady: true,
+      mode: probe.mode,
+      service: probe.service,
+    };
+  }
+
+  const anyHealth = await (async () => {
+    for (const base of fiscalApiCandidateBases()) {
+      try {
+        const res = await fetch(`${base}/health`, { cache: 'no-store' });
+        if (res.ok) return true;
+      } catch {
+        /* ignore */
+      }
+    }
+    return false;
+  })();
+
+  const onHttpsRemote =
+    typeof window !== 'undefined' &&
+    window.location.protocol === 'https:' &&
+    !['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+  let hint = 'Rode npm run fiscal-api (:8780) e abra o app em http://localhost:3000 (npm run dev).';
+  if (onHttpsRemote && anyHealth) {
+    hint =
+      'A nuvem responde health mas ainda não tem a rota NF-e. Atualize o backend Render ou use localhost:3000 com fiscal-api local.';
+  } else if (onHttpsRemote) {
+    hint =
+      'No GitHub Pages (HTTPS) é necessário backend Render com rota NF-e ou app local em http://localhost:3000 + npm run fiscal-api.';
+  }
+
+  return {
+    online: anyHealth,
+    nfeReady: false,
+    hint,
+  };
 }
 
 export async function fetchNfeDistribuicaoSefaz(
@@ -60,14 +130,15 @@ export async function fetchNfeDistribuicaoSefaz(
   if (params.ultNSU) fd.append('ultNSU', params.ultNSU.replace(/\D/g, '') || '0');
   fd.append('manifestarCiencia', params.manifestarCiencia === false ? 'false' : 'true');
 
-  let lastErr = 'API fiscal offline (:8780)';
-  for (const base of fiscalApiCandidateBases()) {
+  let lastErr = 'API fiscal NF-e indisponível.';
+  const bases = await fiscalNfeCandidateBases();
+  for (const base of bases) {
     try {
       const res = await fetch(`${base}/sefaz/nfe/distribuicao`, {
         method: 'POST',
         body: fd,
       });
-      const data = (await res.json()) as NfeDistribuicaoResult & { mensagem?: string };
+      const data = await readFiscalJson<NfeDistribuicaoResult>(res);
       if (!res.ok) {
         lastErr = data.mensagem ?? `HTTP ${res.status}`;
         continue;
@@ -105,11 +176,12 @@ export async function importNfeXmlFiles(
   if (opts.dataInicio) fd.append('dataInicio', opts.dataInicio);
   if (opts.dataFim) fd.append('dataFim', opts.dataFim);
 
-  let lastErr = 'API fiscal offline (:8780)';
-  for (const base of fiscalApiCandidateBases()) {
+  let lastErr = 'API fiscal NF-e indisponível.';
+  const bases = await fiscalNfeCandidateBases();
+  for (const base of bases) {
     try {
       const res = await fetch(`${base}/sefaz/nfe/importar-xml`, { method: 'POST', body: fd });
-      const data = (await res.json()) as NfeDistribuicaoResult & { mensagem?: string; ignorados?: string[] };
+      const data = await readFiscalJson<NfeDistribuicaoResult & { ignorados?: string[] }>(res);
       if (!res.ok) {
         lastErr = data.mensagem ?? `HTTP ${res.status}`;
         continue;

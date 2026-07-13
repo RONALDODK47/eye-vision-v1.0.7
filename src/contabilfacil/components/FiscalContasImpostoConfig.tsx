@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { CF_FIELD_COL, CF_FIELD_ROW, CF_INPUT_ACCOUNT, CF_ACCOUNT_REDUCED_PLACEHOLDER } from '../lib/formFieldClasses';
 import ModuloContasAiButton from './ModuloContasAiButton';
+import ExtratoContaPicker, { type ExtratoPlanoContaOption } from './ExtratoContaPicker';
+import { dedupePlanoOptions } from './ExtratoContaPicker';
+import { readManagerData } from '../logic/companyWorkspace';
 import {
   FISCAL_IMPOSTO_LABELS,
   FISCAL_IMPOSTOS,
@@ -26,6 +29,7 @@ function ContaInput({
   placeholder,
   value,
   onChange,
+  planoOptions,
 }: {
   id: FiscalImpostoId;
   field: ContaField;
@@ -33,7 +37,28 @@ function ContaInput({
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
+  planoOptions?: ExtratoPlanoContaOption[];
 }) {
+  const options = planoOptions ?? [];
+
+  if (options.length > 0) {
+    return (
+      <div className={CF_FIELD_ROW}>
+        <div className={CF_FIELD_COL}>
+          <ExtratoContaPicker
+            value={value}
+            options={options}
+            lookupOptions={options}
+            showNomeInline
+            includeSinteticas={false}
+            placeholder={placeholder}
+            onChange={(v) => onChange(v)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={CF_FIELD_ROW}>
       <div className={CF_FIELD_COL}>
@@ -54,6 +79,14 @@ function ContaInput({
 export default function FiscalContasImpostoPanel({ selectedCompany, onChange }: Props) {
   const [contas, setContas] = useState<FiscalContasImpostoConfig>(() =>
     loadFiscalContasImposto(selectedCompany),
+  );
+
+  const planoRows = readManagerData<{ code: string; name: string; codigoReduzido?: string }>(
+    selectedCompany,
+    'plano',
+  );
+  const planoOptions: ExtratoPlanoContaOption[] = dedupePlanoOptions(
+    (planoRows || []).map((r) => ({ code: r.code, name: r.name || r.code, codigoReduzido: r.codigoReduzido })),
   );
 
   const persist = useCallback(
@@ -137,6 +170,7 @@ export default function FiscalContasImpostoPanel({ selectedCompany, onChange }: 
                     placeholder={CF_ACCOUNT_REDUCED_PLACEHOLDER}
                     value={contas[id].debito}
                     onChange={(v) => patchPar(id, 'debito', v)}
+                    planoOptions={planoOptions}
                   />
                 </td>
                 <td className="py-2 pr-3 align-middle">
@@ -147,6 +181,7 @@ export default function FiscalContasImpostoPanel({ selectedCompany, onChange }: 
                     placeholder={CF_ACCOUNT_REDUCED_PLACEHOLDER}
                     value={contas[id].credito}
                     onChange={(v) => patchPar(id, 'credito', v)}
+                    planoOptions={planoOptions}
                   />
                 </td>
                 <td className="py-2 pr-3 pl-2 align-middle border-l border-brand-border/15">
@@ -157,6 +192,7 @@ export default function FiscalContasImpostoPanel({ selectedCompany, onChange }: 
                     placeholder={CF_ACCOUNT_REDUCED_PLACEHOLDER}
                     value={contas[id].debitoRecuperar}
                     onChange={(v) => patchPar(id, 'debitoRecuperar', v)}
+                    planoOptions={planoOptions}
                   />
                 </td>
                 <td className="py-2 align-middle">
@@ -167,6 +203,7 @@ export default function FiscalContasImpostoPanel({ selectedCompany, onChange }: 
                     placeholder={CF_ACCOUNT_REDUCED_PLACEHOLDER}
                     value={contas[id].creditoRecuperar}
                     onChange={(v) => patchPar(id, 'creditoRecuperar', v)}
+                    planoOptions={planoOptions}
                   />
                 </td>
               </tr>

@@ -50,12 +50,24 @@ export function escapeXmlForSoapDataMsg(xml) {
     .replace(/"/g, '&quot;');
 }
 
-/** XML distDFeInt (corpo da consulta). */
+/** Remove declaração XML antes de embutir em nfeDadosMsg (evita cStat 243). */
+export function stripXmlDeclaration(xml) {
+  return String(xml ?? '').replace(/^\s*<\?xml[^?]*\?>\s*/i, '').trim();
+}
+
+/** XML distDFeInt (corpo da consulta) — layout MOC v1.01. */
 export function buildDistDfeInner(params) {
   const { cnpj, tpAmb, ultNSU, cUFAutor, omitCufAutor = false } = params;
-  const nsu = String(ultNSU ?? '0').padStart(15, '0');
-  const cufBlock = omitCufAutor ? '' : `<cUFAutor>${cUFAutor}</cUFAutor>`;
-  return `<distDFeInt xmlns="${NFE_NS}" versao="${DIST_DFE_VERSAO}"><tpAmb>${tpAmb}</tpAmb>${cufBlock}<CNPJ>${cnpj}</CNPJ><distNSU><ultNSU>${nsu}</ultNSU></distNSU></distDFeInt>`;
+  const nsu = String(ultNSU ?? '0').replace(/\D/g, '').padStart(15, '0');
+  const cnpjLimpo = String(cnpj ?? '').replace(/\D/g, '').slice(0, 14);
+  const cufBlock = omitCufAutor ? '' : `\n  <cUFAutor>${cUFAutor}</cUFAutor>`;
+  return `<distDFeInt xmlns="${NFE_NS}" versao="${DIST_DFE_VERSAO}">
+  <tpAmb>${tpAmb}</tpAmb>${cufBlock}
+  <CNPJ>${cnpjLimpo}</CNPJ>
+  <distNSU>
+    <ultNSU>${nsu}</ultNSU>
+  </distNSU>
+</distDFeInt>`;
 }
 
 function wrapNfeDadosMsg(inner, encoding) {
@@ -85,12 +97,13 @@ export function buildDistDfeEnvelope(params, soapVersion = '1.2', encoding = 'es
 }
 
 export function distDfeEnvelopeVariants(params) {
+  /** NFePHP / MOC: nfeDadosMsg com distDFeInt aninhado (não escapado). */
   const combos = [
-    { soapVersion: '1.2', omitCufAutor: false, encoding: 'escaped', label: 'SOAP 1.2 + cUFAutor + escaped' },
-    { soapVersion: '1.2', omitCufAutor: false, encoding: 'cdata', label: 'SOAP 1.2 + cUFAutor + CDATA' },
     { soapVersion: '1.2', omitCufAutor: false, encoding: 'nested', label: 'SOAP 1.2 + cUFAutor + nested' },
-    { soapVersion: '1.2', omitCufAutor: true, encoding: 'escaped', label: 'SOAP 1.2 sem cUFAutor + escaped' },
-    { soapVersion: '1.1', omitCufAutor: false, encoding: 'escaped', label: 'SOAP 1.1 + cUFAutor + escaped' },
+    { soapVersion: '1.2', omitCufAutor: false, encoding: 'cdata', label: 'SOAP 1.2 + cUFAutor + CDATA' },
+    { soapVersion: '1.2', omitCufAutor: true, encoding: 'nested', label: 'SOAP 1.2 sem cUFAutor + nested' },
+    { soapVersion: '1.1', omitCufAutor: false, encoding: 'nested', label: 'SOAP 1.1 + cUFAutor + nested' },
+    { soapVersion: '1.2', omitCufAutor: false, encoding: 'escaped', label: 'SOAP 1.2 + cUFAutor + escaped' },
   ];
   return combos.map((v) => ({
     ...v,

@@ -235,7 +235,7 @@ export function listLocalManagerSlugs(): string[] {
   }
   for (const key of keys) {
     const rest = key.slice(prefix.length);
-    const match = rest.match(/^(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/);
+    const match = rest.match(/^(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalNfe|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/);
     if (match?.[1]) slugs.add(canonicalCompanyStorageSlug(match[1]));
   }
   for (const slug of listManagerCacheSlugs()) {

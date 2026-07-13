@@ -230,6 +230,7 @@ const LEGACY_MANAGER_KEYS = {
   fiscalSped: 'fiscal_sped_import',
   fiscalPgdas: 'fiscal_pgdas_import',
   fiscalOcr: 'fiscal_ocr_relatorio',
+  fiscalNfe: 'fiscal_nfe_cache',
   fiscalContasImposto: 'fiscal_contas_imposto',
   folhaContasAutomacao: 'folha_contas_automacao',
   honorariosLancamentos: 'honorarios_lancamentos',
@@ -627,7 +628,7 @@ const managerMemoryCache = new Map<string, unknown[]>();
 export function listManagerCacheSlugs(): string[] {
   const slugs = new Set<string>();
   const re =
-    /^contabilfacil_(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/;
+    /^contabilfacil_(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalNfe|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/;
   for (const key of managerMemoryCache.keys()) {
     const m = key.match(re);
     if (m?.[1]) slugs.add(m[1]);
@@ -698,7 +699,7 @@ export function repairIsolatedManagerStoragePerCompany(): void {
   );
 
   const re =
-    /^contabilfacil_(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/;
+    /^contabilfacil_(.+)_(plano|extrato|folha|folhaRelatorio|razao|balancete|fiscalSped|fiscalPgdas|fiscalOcr|fiscalNfe|fiscalContasImposto|folhaContasAutomacao|honorariosLancamentos|honorariosContasAutomacao)$/;
   const keys = new Set<string>(listManagerMemoryCacheKeys());
   try {
     for (let i = 0; i < localStorage.length; i++) {

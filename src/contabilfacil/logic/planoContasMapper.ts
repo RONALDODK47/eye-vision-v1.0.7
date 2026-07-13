@@ -110,12 +110,26 @@ export function resolveCodigoReduzidoDoPlano(
     return sanitizeCodigoReduzido(byClassif.codigoReduzido) ?? '';
   }
 
-  // Já é reduzido válido no plano mesmo sem match estrito acima
-  if (asReduzido) return asReduzido;
+  const planoTemReduzido = plano.some((p) => Boolean(sanitizeCodigoReduzido(p.codigoReduzido)));
+  if (asReduzido) {
+    // Com plano Domínio (reduzido): só aceita código que exista no plano.
+    if (planoTemReduzido) return '';
+    return asReduzido;
+  }
 
   // Classificação sem reduzido → proibido
   if (isClassificacaoHierarquica(input)) return '';
   return '';
+}
+
+/** Garante código reduzido para módulos Contas — nunca classificação hierárquica. */
+export function assertSomenteCodigoReduzido(
+  raw: string,
+  plano: Array<{ code: string; name?: string; codigoReduzido?: string }>,
+): string {
+  const normalized = normalizeExtratoContaParaGravacao(raw, plano);
+  if (!normalized || normalized.includes('.') || isClassificacaoHierarquica(normalized)) return '';
+  return normalized;
 }
 
 /**

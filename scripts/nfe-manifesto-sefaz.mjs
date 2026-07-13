@@ -42,6 +42,10 @@ export function buildCienciaEventoXml({ cnpj, chNFe, tpAmb, nSeqEvento = 1, idLo
   return `<?xml version="1.0" encoding="UTF-8"?><envEvento versao="1.00" xmlns="${NFE_NS}"><idLote>${idLote}</idLote><evento versao="1.00"><infEvento Id="${id}"><cOrgao>91</cOrgao><tpAmb>${tpAmb}</tpAmb><CNPJ>${cnpjLimpo}</CNPJ><chNFe>${chave}</chNFe><dhEvento>${dh}</dhEvento><tpEvento>${TPEVENTO_CIENCIA}</tpEvento><nSeqEvento>${nSeqEvento}</nSeqEvento><verEvento>1.00</verEvento><detEvento versao="1.00"><descEvento>Ciencia da Operacao</descEvento></detEvento></infEvento></evento></envEvento>`;
 }
 
+function stripXmlDeclaration(xml) {
+  return String(xml ?? '').replace(/^\s*<\?xml[^?]*\?>\s*/i, '').trim();
+}
+
 function signNfeEvento(unsignedXml, cred) {
   const sig = new SignedXml({
     privateKey: cred.privateKeyPem,
@@ -70,17 +74,9 @@ function signNfeEvento(unsignedXml, cred) {
   return sig.getSignedXml();
 }
 
-function escapeXmlForSoapDataMsg(xml) {
-  return String(xml ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 function buildRecepcaoEventoEnvelope(signedEnvEvento) {
-  const escaped = escapeXmlForSoapDataMsg(signedEnvEvento);
-  const body = `<nfeRecepcaoEvento xmlns="${WSDL_NS}"><nfeDadosMsg>${escaped}</nfeDadosMsg></nfeRecepcaoEvento>`;
+  const payload = stripXmlDeclaration(signedEnvEvento);
+  const body = `<nfeRecepcaoEvento xmlns="${WSDL_NS}"><nfeDadosMsg>${payload}</nfeDadosMsg></nfeRecepcaoEvento>`;
   return `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body>${body}</soap12:Body></soap12:Envelope>`;
 }
 
@@ -108,7 +104,7 @@ export async function enviarManifestoCiencia({ pfx, passphrase, cnpj, chNFe, tpA
 
   const cred = loadPfxCredentials(pfx, passphrase);
   const unsigned = buildCienciaEventoXml({ cnpj, chNFe: chave, tpAmb });
-  const signed = signNfeEvento(unsigned, cred);
+  const signed = stripXmlDeclaration(signNfeEvento(unsigned, cred));
   const envelope = buildRecepcaoEventoEnvelope(signed);
   const url = EVENTO_URL[String(tpAmb)] ?? EVENTO_URL['1'];
 

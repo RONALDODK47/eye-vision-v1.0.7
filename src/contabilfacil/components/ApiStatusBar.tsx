@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
 import { getAgentApiOrigin } from '../../lib/agentApiBase';
 import { FISCAL_API_BASE } from '../../services/fiscalApiBase';
+import { pingBcbApi } from '../../services/bcbService';
 import { fetchGeminiApiHealth, geminiStatusTitle } from '../../services/geminiApi';
 import { notifyDebugAppHealthy } from '../agent/browserConsoleBridge';
 import { deferIdle } from '../lib/deferIdle';

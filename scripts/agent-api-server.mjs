@@ -6,7 +6,7 @@ import './production-start-guard.mjs';
 import './load-env.mjs';
 import express from 'express';
 import { registerAgentRoutes } from './agent-api-routes.mjs';
-import { registerFiscalHealthStubs } from './fiscal-health-stubs.mjs';
+import { fiscalNfeApp } from './fiscal-nfe-api.mjs';
 
 const app = express();
 /** Render/Railway injetam PORT; local usa AGENT_API_PORT ou 8790. */
@@ -120,10 +120,11 @@ app.use('/api/agent', (req, res, next) => {
   agentRouter(req, res, next);
 });
 
-/** Health-checks fiscais para o frontend em GitHub Pages (sem fiscal-api separado). */
-const fiscalHealthRouter = express();
-registerFiscalHealthStubs(fiscalHealthRouter);
-app.use('/api/fiscal-nfe', fiscalHealthRouter);
+/**
+ * API fiscal completa (NF-e Distribuição DF-e, XML, SPED, RF, ICMS)
+ * montada sob /api/fiscal-nfe — usada pelo frontend em GitHub Pages via Render.
+ */
+app.use('/api/fiscal-nfe', fiscalNfeApp);
 
 const server = app.listen(PORT, HOST, () => {
   console.info(

@@ -1,3 +1,5 @@
+import { loadPlanoCompletoForContaResolve } from './planoContasAiContext';
+import { assertSomenteCodigoReduzido } from './planoContasMapper';
 import { readManagerData, writeManagerData } from './companyWorkspace';
 import {
   emptyHonorariosContasAutomacao,
@@ -6,15 +8,18 @@ import {
 
 export function loadHonorariosContasAutomacao(companyName: string): HonorariosContasAutomacaoConfig {
   const base = emptyHonorariosContasAutomacao();
+  const plano = loadPlanoCompletoForContaResolve(companyName);
   const rows = readManagerData<Partial<HonorariosContasAutomacaoConfig>>(
     companyName,
     'honorariosContasAutomacao',
   );
   const stored = rows[0];
   if (!stored || typeof stored !== 'object') return base;
+  const debito = String(stored.debito ?? '').trim();
+  const credito = String(stored.credito ?? '').trim();
   return {
-    debito: String(stored.debito ?? '').trim(),
-    credito: String(stored.credito ?? '').trim(),
+    debito: debito ? assertSomenteCodigoReduzido(debito, plano) : '',
+    credito: credito ? assertSomenteCodigoReduzido(credito, plano) : '',
   };
 }
 

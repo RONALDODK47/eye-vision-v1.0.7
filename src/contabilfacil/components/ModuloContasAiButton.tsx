@@ -7,6 +7,7 @@ import { getModuloContasCampoDefs, type ModuloContasAiId } from '../logic/modulo
 import {
   buildPlanoPayloadForModuloAi,
   loadPlanoAnaliticoForAi,
+  loadPlanoCompletoForContaResolve,
   resolveCodigoReduzidoSugestaoPlano,
 } from '../logic/planoContasAiContext';
 
@@ -41,6 +42,7 @@ export default function ModuloContasAiButton({
   const handleClick = async () => {
     setMsg(null);
     const planoRows = loadPlanoAnaliticoForAi(company);
+    const planoResolve = loadPlanoCompletoForContaResolve(company);
     const plano = buildPlanoPayloadForModuloAi(planoRows);
     if (!plano.length) {
       setMsg(
@@ -76,8 +78,8 @@ export default function ModuloContasAiButton({
       if (result.ok && Object.keys(result.contas).length > 0) {
         for (const [key, raw] of Object.entries(result.contas)) {
           if (onlyEmpty && (contasAtuais[key] ?? '').trim()) continue;
-          const resolved = resolveCodigoReduzidoSugestaoPlano(raw, planoRows);
-          if (resolved) patch[key] = resolved;
+          const resolved = resolveCodigoReduzidoSugestaoPlano(raw, planoResolve);
+          if (resolved && !resolved.includes('.')) patch[key] = resolved;
         }
       }
 

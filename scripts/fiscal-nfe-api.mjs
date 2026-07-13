@@ -13,7 +13,9 @@
  */
 import express from 'express';
 import https from 'node:https';
+import path from 'node:path';
 import tls from 'node:tls';
+import { pathToFileURL } from 'node:url';
 import multer from 'multer';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -809,10 +811,25 @@ app.use((err, _req, res, _next) => {
   }
 });
 
-app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[fiscal-nfe-api] online em http://127.0.0.1:${PORT} (SPED: ${resolveSpedModeLabel()})`);
-});
+/** Exportado para montar no agent-api (Render) sob `/api/fiscal-nfe`. */
+export { app as fiscalNfeApp };
+
+function isFiscalApiCliEntry() {
+  try {
+    const entry = process.argv[1] ? path.resolve(process.argv[1]) : '';
+    if (!entry) return false;
+    return pathToFileURL(entry).href === import.meta.url;
+  } catch {
+    return false;
+  }
+}
+
+if (isFiscalApiCliEntry() || process.env.FISCAL_NFE_STANDALONE === '1') {
+  app.listen(PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`[fiscal-nfe-api] online em http://127.0.0.1:${PORT} (SPED: ${resolveSpedModeLabel()})`);
+  });
+}
 
 function validarCertificadoA1({ pfx, passphrase }) {
   try {

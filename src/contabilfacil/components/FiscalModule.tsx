@@ -4,6 +4,7 @@ import DataIngestionBox from './DataIngestionBox';
 import MandarParaBalanceteButton from './MandarParaBalanceteButton';
 import FiscalContasImpostoPanel from './FiscalContasImpostoConfig';
 import FiscalAcumuladoresPanel from './FiscalAcumuladoresPanel';
+import FiscalNotasFiscaisPanel from './FiscalNotasFiscaisPanel';
 import { FolhaRelatorioVirtualTable, type FolhaRelatorioRow } from './FolhaVirtualTables';
 import type { FiscalContasImpostoConfig } from '../logic/fiscalContasImposto';
 import { loadFiscalContasImposto } from '../logic/fiscalContasImpostoStorage';
@@ -18,10 +19,11 @@ import {
   fiscalVariantDescriptionPrefix,
 } from '../logic/ocrColunasConfig';
 
-type FiscalInnerTab = 'importacao' | 'acumuladores' | 'contas';
+type FiscalInnerTab = 'importacao' | 'nfe' | 'acumuladores' | 'contas';
 
 const INNER_TABS: { id: FiscalInnerTab; label: string }[] = [
   { id: 'importacao', label: 'Importação PDF' },
+  { id: 'nfe', label: 'NF-e webservice' },
   { id: 'acumuladores', label: 'Acumuladores' },
   { id: 'contas', label: 'Contas' },
 ];
@@ -157,6 +159,8 @@ export default function FiscalModule({ selectedCompany }: Props) {
           </div>
         </div>
       )}
+
+      {innerTab === 'nfe' && <FiscalNotasFiscaisPanel selectedCompany={selectedCompany} />}
 
       {innerTab === 'acumuladores' && (
         <FiscalAcumuladoresPanel

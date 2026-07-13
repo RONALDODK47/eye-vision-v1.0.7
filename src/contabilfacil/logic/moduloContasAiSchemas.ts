@@ -291,7 +291,7 @@ function norm(s: string): string {
     .toLowerCase();
 }
 
-type PlanoRow = { code: string; name: string };
+type PlanoRow = { code: string; name: string; codigoReduzido?: string };
 
 /** Fallback local: escolhe conta do plano por palavras-chave + grupo. */
 export function sugerirContasLocalDoPlano(
@@ -310,9 +310,11 @@ export function sugerirContasLocalDoPlano(
     let best: PlanoRow | null = null;
     let bestScore = 0;
     for (const p of plano) {
+      const red = String(p.codigoReduzido ?? '').trim();
+      if (!red || red.includes('.') || used.has(red)) continue;
       const name = norm(p.name);
       const code = p.code.trim();
-      if (!code || used.has(code)) continue;
+      if (!code) continue;
       const group = code.replace(/\D/g, '')[0] ?? '';
       let score = 0;
       for (const kw of campo.keywords) {
@@ -325,8 +327,11 @@ export function sugerirContasLocalDoPlano(
       }
     }
     if (best && bestScore >= 10) {
-      out[campo.key] = best.code.trim();
-      used.add(best.code.trim());
+      const red = String(best.codigoReduzido ?? '').trim();
+      if (red && !red.includes('.')) {
+        out[campo.key] = red;
+        used.add(red);
+      }
     }
   }
   return out;

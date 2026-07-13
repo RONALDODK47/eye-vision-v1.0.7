@@ -140,9 +140,16 @@ async function callDistDfeWithVariants({ pfx, passphrase, cnpj, cUFAutor, tpAmb,
     const parsed = parseDistDfeSoapResponse(body);
     last = parsed;
 
-    if (parsed.cStat !== '215') {
+    if (parsed.cStat === '137' || parsed.cStat === '138') {
       return { ...parsed, variant: variant.label };
     }
+
+    // cStat 243 (mal formado) e 215 (schema) — tenta próximo formato de envelope
+    if (parsed.cStat === '215' || parsed.cStat === '243' || !parsed.cStat) {
+      continue;
+    }
+
+    return { ...parsed, variant: variant.label };
   }
 
   return last;

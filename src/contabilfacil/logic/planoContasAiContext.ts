@@ -1,5 +1,8 @@
 import { readManagerData } from './companyWorkspace';
-import { resolveCodigoReduzidoDoPlano, sanitizeCodigoReduzido } from './planoContasMapper';
+import {
+  assertSomenteCodigoReduzido,
+  sanitizeCodigoReduzido,
+} from './planoContasMapper';
 
 export type PlanoAiRow = {
   code: string;
@@ -45,12 +48,34 @@ export function buildPlanoPayloadForModuloAi(
     .filter((p) => p.codigoReduzido && p.name);
 }
 
+/** Plano completo para resolver classificação → código reduzido (todas as analíticas). */
+export function loadPlanoCompletoForContaResolve(companyName: string): Array<{
+  code: string;
+  name: string;
+  codigoReduzido?: string;
+  tipo?: string;
+}> {
+  return readManagerData<{
+    code?: string;
+    name?: string;
+    codigoReduzido?: string;
+    tipo?: string;
+  }>(companyName, 'plano')
+    .map((r) => ({
+      code: String(r.code ?? '').trim(),
+      name: String(r.name ?? '').trim(),
+      codigoReduzido: sanitizeCodigoReduzido(r.codigoReduzido),
+      tipo: r.tipo,
+    }))
+    .filter((r) => r.code || r.codigoReduzido);
+}
+
 /** Resolve sugestão da IA para código reduzido do plano. */
 export function resolveCodigoReduzidoSugestaoPlano(
   raw: string,
   plano: Array<{ code: string; name?: string; codigoReduzido?: string }>,
 ): string {
-  return resolveCodigoReduzidoDoPlano(raw, plano);
+  return assertSomenteCodigoReduzido(raw, plano);
 }
 
 /** @deprecated use resolveCodigoReduzidoSugestaoPlano */
