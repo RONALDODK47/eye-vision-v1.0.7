@@ -57,6 +57,9 @@ export function LeitorRecortadorUploader({
     }
   };
 
+  const canGoPrev = Boolean(metadata && metadata.pageNumber > 1 && !isProcessing);
+  const canGoNext = Boolean(metadata && metadata.pageNumber < metadata.totalPages && !isProcessing);
+
   return (
     <div className="flex flex-col gap-4">
       {/* Upload Box */}
@@ -102,9 +105,15 @@ export function LeitorRecortadorUploader({
 
       {/* File metadata & controls */}
       {metadata && (
-        <div className="technical-panel p-4 shadow-[2px_2px_0_0_#141414] flex flex-col gap-3">
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 border flex items-center justify-center ${ metadata.type === 'pdf' ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-amber-50 border-amber-200 text-amber-700' }`}>
+        <div className="technical-panel flex flex-col gap-4 overflow-hidden p-4 shadow-[2px_2px_0_0_#141414]">
+          <div className="flex items-start gap-3">
+            <div
+              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center border ${
+                metadata.type === 'pdf'
+                  ? 'border-rose-200 bg-rose-50 text-rose-600'
+                  : 'border-amber-200 bg-amber-50 text-amber-700'
+              }`}
+            >
               {metadata.type === 'pdf' ? (
                 <FileText className="w-4 h-4" />
               ) : (
@@ -112,10 +121,10 @@ export function LeitorRecortadorUploader({
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <h4 className="font-semibold text-brand-text text-xs truncate">
+              <h4 className="truncate text-xs font-semibold text-brand-text" title={metadata.name}>
                 {metadata.name}
               </h4>
-              <p className="text-brand-text/60 text-[10px] uppercase font-mono">
+              <p className="break-all text-[10px] font-mono uppercase text-brand-text/60">
                 {metadata.type} • {metadata.width}x{metadata.height}px
               </p>
             </div>
@@ -124,24 +133,26 @@ export function LeitorRecortadorUploader({
           {/* PDF Page Selection Controls */}
           {metadata.type === 'pdf' && metadata.totalPages > 1 && (
             <div className="border-t border-brand-border pt-3">
-              <label className="text-[10px] font-bold text-brand-text/60 uppercase tracking-wider block mb-1.5">
+              <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-brand-text/60">
                 Página Selecionada ({metadata.pageNumber} de {metadata.totalPages})
               </label>
-              <div className="flex items-center gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
                 <button
-                  disabled={metadata.pageNumber <= 1 || isProcessing}
+                  type="button"
+                  disabled={!canGoPrev}
                   onClick={() => onPageChange && onPageChange(metadata.pageNumber - 1)}
-                  className="technical-button px-2 py-1 text-xs font-semibold disabled:opacity-50"
+                  className="technical-button flex w-full items-center justify-center px-3 py-2 text-xs font-semibold disabled:opacity-50"
                 >
                   Anterior
                 </button>
-                <div className="flex-1 text-center font-mono text-xs font-semibold bg-brand-sidebar border border-brand-border py-1 text-brand-text">
+                <div className="flex min-h-[36px] items-center justify-center border border-brand-border bg-brand-sidebar px-3 py-2 text-center font-mono text-xs font-semibold text-brand-text">
                   Pág. {metadata.pageNumber}
                 </div>
                 <button
-                  disabled={metadata.pageNumber >= metadata.totalPages || isProcessing}
+                  type="button"
+                  disabled={!canGoNext}
                   onClick={() => onPageChange && onPageChange(metadata.pageNumber + 1)}
-                  className="technical-button px-2 py-1 text-xs font-semibold disabled:opacity-50"
+                  className="technical-button flex w-full items-center justify-center px-3 py-2 text-xs font-semibold disabled:opacity-50"
                 >
                   Próxima
                 </button>

@@ -366,6 +366,13 @@ export default function ManagerModule({
   saldoAnteriorExtratoRef.current = saldoAnteriorExtrato;
   const extratoContaCacheRef = useRef(extratoContaCache);
   extratoContaCacheRef.current = extratoContaCache;
+  const extratoAsyncVersionRef = useRef(0);
+
+  const isExtratoAsyncResultStale = useCallback(
+    (companyScope: string, version: number) =>
+      version !== extratoAsyncVersionRef.current || !isSameCompanyScope(companyScope, selectedCompany),
+    [selectedCompany],
+  );
 
   useEffect(() => {
     const companyScope = selectedCompany;
@@ -603,6 +610,7 @@ export default function ManagerModule({
 
   const handleSemNotaModalConfirm = async (decisions: Record<string, ExtratoSemNotaPolicy>) => {
     const companyScope = selectedCompany;
+    const asyncVersion = extratoAsyncVersionRef.current;
     const merged = { ...semNotaDecisions, ...decisions };
     saveExtratoSemNotaDecisions(companyScope, merged);
     setSemNotaDecisions(merged);
@@ -614,7 +622,7 @@ export default function ManagerModule({
       extratoContaCache,
       { ...extratoResolverOptions, semNotaDecisions: merged },
     );
-    if (!isSameCompanyScope(companyScope, selectedCompany)) return;
+    if (isExtratoAsyncResultStale(companyScope, asyncVersion)) return;
     commitExtratoResolverResult(companyScope, rows, cache, pendingSemNota);
   };
 
@@ -775,6 +783,8 @@ export default function ManagerModule({
 
   const handleLimparExtratos = async () => {
     const company = requireCompanyScope(selectedCompany);
+    extratoAsyncVersionRef.current += 1;
+    autoReapplyAbortRef.current?.abort();
 
     // Atualiza estado e ref juntos para impedir que um cleanup grave novamente a lista antiga.
     extratoLancamentosRef.current = [];
@@ -1064,6 +1074,7 @@ export default function ManagerModule({
     beginHeavyUiWork();
     try {
       const companyScope = selectedCompany;
+      const asyncVersion = extratoAsyncVersionRef.current;
       const banco = getExtratoBancoConta(companyScope) || contaBancoExtratoAtivo;
       const regrasFresh = loadExtratoRegrasContas(companyScope, banco);
       const { rows, cache: nextCache, pendingSemNota } = await applyExtratoContaResolverAsync(
@@ -1076,7 +1087,7 @@ export default function ManagerModule({
           regrasContas: regrasFresh.length > 0 ? regrasFresh : extratoRegrasContas,
         },
       );
-      if (!isSameCompanyScope(companyScope, selectedCompany)) return;
+      if (isExtratoAsyncResultStale(companyScope, asyncVersion)) return;
       startTransition(() => {
         commitExtratoResolverResult(companyScope, rows, nextCache, pendingSemNota, {
           immediate: options?.immediate ?? false,
@@ -1095,6 +1106,7 @@ export default function ManagerModule({
     extratoContaCache,
     extratoLancamentos,
     extratoRegrasContas,
+    isExtratoAsyncResultStale,
     extratoResolverOptions,
     planoParaResolver,
     selectedCompany,
@@ -1167,6 +1179,7 @@ export default function ManagerModule({
     const rowsSnapshot = extratoLancamentos;
     const cacheSnapshot = extratoContaCache;
     const companyScope = selectedCompany;
+    const asyncVersion = extratoAsyncVersionRef.current;
     const opts = {
       ...extratoResolverOptions,
       contaBancoPreferida: getExtratoBancoConta(companyScope) || contaBancoExtratoAtivo,
@@ -1186,7 +1199,7 @@ export default function ManagerModule({
           cacheSnapshot,
           opts,
         );
-        if (ac.signal.aborted || !isSameCompanyScope(companyScope, selectedCompany)) return;
+        if (ac.signal.aborted || isExtratoAsyncResultStale(companyScope, asyncVersion)) return;
         const changed = rows.some((r, i) => {
           const prev = rowsSnapshot[i];
           return (
@@ -1338,12 +1351,13 @@ export default function ManagerModule({
       // Aplica regras do banco deste extrato nas linhas restauradas (em background).
       const regrasFresh = loadExtratoRegrasContas(companyScope, item.contaBanco);
       if (planoParaResolver.length > 0) {
+        const asyncVersion = extratoAsyncVersionRef.current;
         void applyExtratoContaResolverAsync(rows, planoParaResolver, extratoContaCache, {
           ...extratoResolverOptions,
           contaBancoPreferida: item.contaBanco,
           regrasContas: regrasFresh.length > 0 ? regrasFresh : extratoRegrasContas,
         }).then(({ rows: resolved, cache: nextCache, pendingSemNota }) => {
-          if (!isSameCompanyScope(companyScope, selectedCompany)) return;
+          if (isExtratoAsyncResultStale(companyScope, asyncVersion)) return;
           startTransition(() => {
             commitExtratoResolverResult(companyScope, resolved, nextCache, pendingSemNota);
           });
@@ -1868,6 +1882,7 @@ export default function ManagerModule({
                       onExtratoConciliacao={handleExtratoConciliacao}
                       onImport={(newItems, saldoAnterior) => {
                         const companyScope = selectedCompany;
+                        const asyncVersion = extratoAsyncVersionRef.current;
                         const resolverOpts = {
                           ...extratoResolverOptions,
                           contaBancoPreferida: getExtratoBancoConta(companyScope),
@@ -1890,6 +1905,9 @@ export default function ManagerModule({
                           extratoContaCache,
                           resolverOpts,
                         ).then(({ rows: resolved, cache: nextCache, pendingSemNota }) => {
+                          if (isExtratoAsyncResultStale(companyScope, asyncVersion)) {
+                            return;
+                          }
                           if (!isSameCompanyScope(companyScope, selectedCompany)) {
                             writeManagerData(
                               companyScope,

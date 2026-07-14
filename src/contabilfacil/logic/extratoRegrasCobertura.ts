@@ -73,20 +73,17 @@ export function findUncoveredExtratoRows(
 ): ExtratoLinhaParaRegra[] {
   if (!extrato.length) return [];
   const uncovered: ExtratoLinhaParaRegra[] = [];
-  const seen = new Set<string>();
 
   for (const row of extrato) {
     const nature = row.nature === 'C' ? 'C' : 'D';
     const hist = normalizeExtratoMatchText(row.description);
     if (!hist) continue;
-    const key = `${nature}|${hist}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
 
     const hit = matchExtratoRegraConta(hist, nature, regrasDoBanco);
     if (!hit) {
+      const originalDescription = String(row.description ?? '').replace(/\s+/g, ' ').trim();
       uncovered.push({
-        description: sanitizarHistoricoExtratoParaRegra(row.description, nature),
+        description: originalDescription || String(row.description ?? '').trim(),
         nature,
         value: row.value,
       });

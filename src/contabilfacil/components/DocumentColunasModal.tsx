@@ -83,8 +83,38 @@ import {
   mergeItauIgnoreLineWords,
   getItauExtratoExtractGenericOptions,
 } from '../../lib/itauExtratoProfile';
-import { fetchAiConfig, saveAiConfig } from '../ai/aiSettingsClient';
-import { type AiExtractEngine, EXTRACT_ENGINE_BANNER_LABELS, normalizeExtractEngine } from '../ai/aiModelCatalog';
+// Local definitions and mocks after removing AI features folder
+export type AiExtractEngine = 'ai' | 'hybrid';
+export const EXTRACT_ENGINE_BANNER_LABELS: Record<AiExtractEngine, string> = {
+  ai: 'IA',
+  hybrid: 'Híbrido',
+};
+export function normalizeExtractEngine(_eng?: string | null): AiExtractEngine {
+  return 'ai';
+}
+export async function fetchAiConfig(): Promise<{
+  config: {
+    tier: string;
+    providerId: string;
+    model: string;
+    localModel: string;
+    pricingTier: string;
+    extractEngine: AiExtractEngine;
+  };
+  label: string;
+}> {
+  return {
+    config: {
+      tier: 'gemini',
+      providerId: 'gemini',
+      model: 'gemini-2.5-flash',
+      localModel: 'gemini-2.5-flash',
+      pricingTier: 'free',
+      extractEngine: 'ai' as AiExtractEngine,
+    },
+    label: 'Google Gemini (Mock)',
+  };
+}
 import {
   extractExtratoWithAi,
   extractPlanoWithAi,
@@ -1944,8 +1974,8 @@ export function DocumentColunasModal({
             items: activeDoc.items,
             ocrSource: 'ocr',
             itemCount: activeDoc.items.length,
-            pdfSuggestedScaleFhd: activeDoc.pdfSuggestedScaleFhd,
-            pdfSuggestedScale4k: activeDoc.pdfSuggestedScale4k,
+            pdfSuggestedScaleFhd: activeDoc.pdfSuggestedScaleFhd ?? PDF_RENDER_SCALE_DEFAULT,
+            pdfSuggestedScale4k: activeDoc.pdfSuggestedScale4k ?? (PDF_RENDER_SCALE_DEFAULT * 2),
             ocrFullText: activeDoc.ocrFullText,
           };
         }
@@ -2472,6 +2502,8 @@ export function DocumentColunasModal({
                 finalRows = pkg.rows;
                 finalMeta = {
                   ...pkg.meta,
+                  conciliacaoRawRows: pkg.meta.conciliacaoRawRows as GenericOcrRow[] | undefined,
+                  extractDiagnostic: pkg.meta.extractDiagnostic as any,
                   ocrTextBlob: ocrText || doc.ocrFullText || undefined,
                 };
               }

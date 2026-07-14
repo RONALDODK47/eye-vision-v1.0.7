@@ -17,11 +17,9 @@ import {
   isClassificacaoHierarquica,
   resolveCodigoReduzidoDoPlano,
   sanitizeCodigoReduzido,
-  sameCodigoReduzido,
 } from '../logic/planoContasMapper';
 import {
   findUncoveredExtratoRows,
-  sanitizarHistoricoExtratoParaRegra,
 } from '../logic/extratoRegrasCobertura';
 import { CF_FORM_INPUT_LONG } from '../lib/formFieldClasses';
 import ExtratoContaPicker from './ExtratoContaPicker';
@@ -87,12 +85,12 @@ const ExtratoRegraContaEditableRow = memo(function ExtratoRegraContaEditableRow(
   }, [regra.descricao]);
 
   const commitDescricao = useCallback(() => {
-    const normalized = normalizeExtratoRegraTexto(descricaoDraft);
-    if (!normalized || normalized === regra.descricao) {
+    const descricaoManual = descricaoDraft.trim();
+    if (!normalizeExtratoRegraTexto(descricaoManual) || descricaoManual === regra.descricao) {
       setDescricaoDraft(regra.descricao);
       return;
     }
-    onUpdate(regra.id, { descricao: normalized, nome: normalized.slice(0, 40) });
+    onUpdate(regra.id, { descricao: descricaoManual, nome: descricaoManual.slice(0, 40) });
   }, [descricaoDraft, onUpdate, regra.descricao, regra.id]);
 
   return (
@@ -289,12 +287,17 @@ export default memo(function ExtratoRegrasContasModal({
     >();
     for (const row of uncoveredRows) {
       const nature: ExtratoRegraContaNature = row.nature === 'C' ? 'C' : 'D';
-      const descricao = sanitizarHistoricoExtratoParaRegra(row.description, nature);
-      if (!descricao) continue;
-      const key = `${nature}|${descricao}`;
+      const descricaoOriginal = String(row.description ?? '').replace(/\s+/g, ' ').trim();
+      const descricaoKey = normalizeExtratoRegraTexto(descricaoOriginal);
+      if (!descricaoKey) continue;
+      const key = `${nature}|${descricaoKey}`;
       const cur = map.get(key);
-      if (cur) cur.ocorrencias += 1;
-      else map.set(key, { descricao, nature, ocorrencias: 1 });
+      if (cur) {
+        cur.ocorrencias += 1;
+        if (descricaoOriginal.length > cur.descricao.length) cur.descricao = descricaoOriginal;
+      } else {
+        map.set(key, { descricao: descricaoOriginal, nature, ocorrencias: 1 });
+      }
     }
     return [...map.values()].sort((a, b) => b.ocorrencias - a.ocorrencias);
   }, [uncoveredRows]);
@@ -417,7 +420,7 @@ export default memo(function ExtratoRegrasContasModal({
 
   const persist = useCallback(
     (next: ExtratoRegraConta[]) => {
-      onChange(saveExtratoRegrasContas(company, next));
+      onChange(saveExtratoRegrasContas(company, next, undefined, { consolidate: false }));
     },
     [company, onChange],
   );
@@ -425,7 +428,7 @@ export default memo(function ExtratoRegrasContasModal({
   const handleRemove = useCallback(
     (id: string) => {
       const next = regras.filter((r) => r.id !== id);
-      onChange(saveExtratoRegrasContas(company, next));
+      onChange(saveExtratoRegrasContas(company, next, undefined, { consolidate: false }));
     },
     [company, onChange, regras],
   );
@@ -434,13 +437,10 @@ export default memo(function ExtratoRegrasContasModal({
     (id: string, patch: Partial<Omit<ExtratoRegraConta, 'id'>>) => {
       const next = regras.map((r) => {
         if (r.id !== id) return r;
-        const descricao =
-          patch.descricao !== undefined
-            ? normalizeExtratoRegraTexto(patch.descricao)
-            : r.descricao;
+        const descricao = patch.descricao !== undefined ? patch.descricao.trim() : r.descricao;
         const contraRaw = patch.contaContrapartida ?? r.contaContrapartida;
         const contraRed = toReduzido(contraRaw) || sanitizeCodigoReduzido(contraRaw);
-        if (!descricao || !contraRed) return r;
+        if (!normalizeExtratoRegraTexto(descricao) || !contraRed) return r;
         const nature: ExtratoRegraContaNature =
           patch.nature === 'C' ? 'C' : patch.nature === 'D' ? 'D' : r.nature;
         return {
@@ -452,19 +452,19 @@ export default memo(function ExtratoRegrasContasModal({
           contaContrapartida: contraRed,
         };
       });
-      onChange(saveExtratoRegrasContas(company, next));
+      onChange(saveExtratoRegrasContas(company, next, undefined, { consolidate: false }));
     },
     [company, onChange, regras, toReduzido],
   );
 
   const handleAdd = useCallback(() => {
-    const descricao = normalizeExtratoRegraTexto(draftDescricao);
+    const descricao = draftDescricao.trim();
     const contraRed = toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta);
     if (!selectedBanco.trim()) {
       setAddError('Selecione uma conta banco primeiro!');
       return;
     }
-    if (!descricao) {
+    if (!normalizeExtratoRegraTexto(descricao)) {
       setAddError('Informe o histórico no extrato!');
       return;
     }
@@ -492,6 +492,12 @@ export default memo(function ExtratoRegrasContasModal({
     setPadraoHistoricoPick('');
   }, [company, draftConta, draftDescricao, draftNature, persist, selectedBanco, toReduzido]);
 
+  const contraDigitadaInvalida = useMemo(() => {
+    const raw = draftConta.trim();
+    if (!raw) return false;
+    return !Boolean(toReduzido(raw) || sanitizeCodigoReduzido(raw));
+  }, [draftConta, toReduzido]);
+
   const bancoLabel = useCallback(
     (code: string) => {
       const red = sanitizeCodigoReduzido(code) || code;
@@ -512,7 +518,7 @@ export default memo(function ExtratoRegrasContasModal({
     if (!window.confirm(msg)) return;
     const norm = normContaBancoCode(selectedBanco);
     const next = regras.filter((r) => normContaBancoCode(r.contaBanco) !== norm);
-    onChange(saveExtratoRegrasContas(company, next));
+    onChange(saveExtratoRegrasContas(company, next, undefined, { consolidate: false }));
   }, [bancoLabel, company, onChange, regras, regrasDoBanco.length, selectedBanco]);
 
   if (!open) return null;
@@ -665,6 +671,7 @@ export default memo(function ExtratoRegrasContasModal({
                       Puxar histórico do extrato ({padroesHistoricoExtrato.length} sem regra)
                     </label>
                     <ExtratoHistoricoPicker
+                      buttonId="regra-padrao-historico"
                       padroes={padroesHistoricoExtrato}
                       value={padraoHistoricoPick}
                       disabled={!selectedBanco}
@@ -762,15 +769,7 @@ export default memo(function ExtratoRegrasContasModal({
                       ariaLabel="Conta contrapartida (código reduzido)"
                       onChange={(code) => {
                         setDraftConta(code);
-                        const hit = allPlano.find((p) =>
-                          sameCodigoReduzido(p.codigoReduzido, code) ||
-                          p.code === code
-                        );
-                        if (hit && (hit.tipo === 'S' || (!sanitizeCodigoReduzido(hit.codigoReduzido)))) {
-                          setAddError('Conta sintética selecionada! Escolha uma conta analítica com código reduzido.');
-                        } else {
-                          setAddError('');
-                        }
+                        setAddError('');
                       }}
                     />
                   </div>
@@ -778,36 +777,17 @@ export default memo(function ExtratoRegrasContasModal({
                   <button
                     type="button"
                     onClick={handleAdd}
-                    disabled={
-                      !selectedBanco.trim() ||
-                      (() => {
-                        const contraRed = toReduzido(draftConta) || sanitizeCodigoReduzido(draftConta);
-                        const hit = allPlano.find((p) => 
-                          (contraRed && sameCodigoReduzido(p.codigoReduzido, contraRed)) || 
-                          p.code === draftConta
-                        );
-                        return hit && (hit.tipo === 'S' || !sanitizeCodigoReduzido(hit.codigoReduzido));
-                      })()
-                    }
+                    disabled={!selectedBanco.trim()}
                     className="technical-button-primary text-[9px] py-1 px-4 shrink-0 inline-flex items-center justify-center gap-1 disabled:opacity-40 min-h-[26px] w-full sm:w-auto"
                   >
                     <Plus size={12} aria-hidden="true" />
                     ADD
                   </button>
-                  {(() => {
-                    const hit = allPlano.find((p) =>
-                      sameCodigoReduzido(p.codigoReduzido, draftConta) ||
-                      p.code === draftConta
-                    );
-                    if (hit && (hit.tipo === 'S' || (!sanitizeCodigoReduzido(hit.codigoReduzido)))) {
-                      return (
-                        <p className="text-[9px] text-rose-700 font-bold uppercase w-full mt-1">
-                          Conta sintética selecionada! Escolha uma conta analítica com código reduzido.
-                        </p>
-                      );
-                    }
-                    return null;
-                  })()}
+                  {contraDigitadaInvalida ? (
+                    <p className="text-[9px] text-rose-700 font-bold uppercase w-full mt-1">
+                      Informe um código reduzido numérico da contrapartida.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>

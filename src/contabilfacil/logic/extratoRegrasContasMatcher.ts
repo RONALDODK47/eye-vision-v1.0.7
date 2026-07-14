@@ -100,7 +100,30 @@ const TOKEN_SYNONYMS: Record<string, string[]> = {
   REC: ['REC', 'RECEBIDO', 'RECEBIMENTO'],
   RECEBIDO: ['RECEBIDO', 'REC', 'RECEBIMENTO'],
   RECEBIMENTO: ['RECEBIMENTO', 'RECEBIDO', 'REC'],
+  BOLETO: ['BOLETO', 'BOLETOS'],
+  BOLETOS: ['BOLETO', 'BOLETOS'],
+  TITULO: ['TITULO', 'TITULOS'],
+  TITULOS: ['TITULO', 'TITULOS'],
 };
+
+const RE_PAGAMENTO_TITULO =
+  /BOLETO|TITULO|COMPE|SISPAG|DIFTIT|DEB\.?\s*PGTO|DEB\.?\s*TIT|PGTO\.?\s*BOLETO/;
+
+/**
+ * Regras operacionais muito amplas não podem capturar históricos completos de
+ * outras contas/contrapartes. Para esses rótulos, só aceitamos match exato.
+ */
+const GENERIC_RULES_REQUIRE_EXACT = new Set([
+  'TRANSFERENCIA',
+  'PIX REC',
+  'PIX EMIT',
+  'TED REC',
+  'TED ENV',
+  'DOC REC',
+  'DOC ENV',
+  'PAGAMENTO FORNECEDOR',
+  'RECEBIMENTO CLIENTE',
+]);
 
 function expandTokenVariants(token: string): string[] {
   const t = token.toUpperCase();
@@ -139,6 +162,19 @@ const HIST_EXCLUSIVO_CATCHALL =
   /TARIFA|IOF|IMPOSTO|TRIBUTO|DARF|FOLHA|SALARIO|EMPREST|RENDIMENTO|REND\s+PAGO|BB\s+RENDE|RENDE\s+FACIL|APLIC|CDB|RESGATE|OUROCAP|AUT\s+MAIS|TRANSFERENCIA|TRANSF\b/;
 
 function scorePadraoOperacionalAgrupado(historico: string, descNorm: string): number {
+  if (
+    descNorm === 'BOLETO' ||
+    descNorm === 'BOLETOS' ||
+    descNorm === 'TITULO' ||
+    descNorm === 'TITULOS' ||
+    descNorm === 'PAGAMENTO BOLETO' ||
+    descNorm === 'PAGAMENTO BOLETOS' ||
+    descNorm === 'PAGAMENTO TITULO' ||
+    descNorm === 'PAGAMENTO TITULOS'
+  ) {
+    if (RE_PAGAMENTO_TITULO.test(historico)) return 360;
+    return 0;
+  }
   if (descNorm === 'RENDIMENTO APLICACAO') {
     if (
       /RENDIMENTO|REND\s+PAGO|BB\s+RENDE|RENDE\s+FACIL|AUT\s+MAIS|OUROCAP|REND\s+PAGO\s+APLIC/.test(
@@ -175,6 +211,10 @@ function scorePadraoOperacionalAgrupado(historico: string, descNorm: string): nu
 function scoreRegraNoHistorico(historico: string, regra: ExtratoRegraConta): number {
   const descNorm = normalizeExtratoMatchText(regra.descricao);
   if (!descNorm || !historico) return 0;
+
+  if (GENERIC_RULES_REQUIRE_EXACT.has(descNorm) && historico !== descNorm) {
+    return 0;
+  }
 
   const padraoScore = scorePadraoOperacionalAgrupado(historico, descNorm);
   if (padraoScore > 0) return padraoScore;

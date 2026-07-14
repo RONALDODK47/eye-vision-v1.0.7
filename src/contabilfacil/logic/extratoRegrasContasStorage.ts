@@ -12,7 +12,6 @@ import { deferIdle } from '../lib/deferIdle';
 import { getExtratoBancoConta } from './extratoOcrLayoutStorage';
 import {
   consolidateExtratoRegras,
-  mergeSugestoesIntoRegras,
 } from './extratoRegrasEntity';
 
 export type ExtratoRegraContaNature = 'D' | 'C';
@@ -67,10 +66,11 @@ function sanitizeRegra(
   raw: Partial<ExtratoRegraConta>,
   defaultBanco = '',
 ): ExtratoRegraConta | null {
-  const descricao = normalizeExtratoMatchText(raw.descricao ?? '');
+  const descricao = String(raw.descricao ?? '').trim();
+  const descricaoNorm = normalizeExtratoMatchText(descricao);
   let contaContrapartida = (raw.contaContrapartida ?? '').trim();
   let contaBanco = (raw.contaBanco ?? defaultBanco).trim();
-  if (!descricao || !contaContrapartida || !contaBanco) return null;
+  if (!descricaoNorm || !contaContrapartida || !contaBanco) return null;
 
   // Preferir reduzido; se ainda for classificação, mantém só se não houver como converter aqui.
   const redContra = sanitizeCodigoReduzido(contaContrapartida);
@@ -78,7 +78,7 @@ function sanitizeRegra(
   const redBanco = sanitizeCodigoReduzido(contaBanco);
   if (redBanco) contaBanco = redBanco;
 
-  const nome = normalizeExtratoMatchText(raw.nome ?? '') || descricao.slice(0, 40);
+  const nome = String(raw.nome ?? '').trim() || descricao.slice(0, 40);
   const nature: ExtratoRegraContaNature = raw.nature === 'C' ? 'C' : 'D';
   return {
     id: raw.id?.trim() || crypto.randomUUID(),
@@ -176,6 +176,7 @@ export function saveExtratoRegrasContas(
   company: string,
   regras: ExtratoRegraConta[],
   coligadas?: AiColigada[],
+  options?: { consolidate?: boolean },
 ): ExtratoRegraConta[] {
   const coligs = coligadas ?? listAiColigadasParaIa(company);
   const defaultBanco =
@@ -185,7 +186,7 @@ export function saveExtratoRegrasContas(
   const sanitized = regras
     .map((r) => sanitizeRegra(r, defaultBanco))
     .filter((r): r is ExtratoRegraConta => Boolean(r));
-  const next = consolidateExtratoRegras(sanitized, coligs);
+  const next = options?.consolidate === false ? sanitized : consolidateExtratoRegras(sanitized, coligs);
   writePersistedLocalStorageJson(storageKey(company), next);
   deferIdle(() => {
     void import('./eyeVisionPersistenceFlush').then(({ flushPersistenceAfterCriticalWrite }) => {
@@ -243,21 +244,16 @@ export function addExtratoRegraConta(
 ): ExtratoRegraConta[] {
   const regra = sanitizeRegra({ ...draft, id: draft.id ?? crypto.randomUUID() });
   if (!regra) return loadExtratoRegrasContas(company);
-  const coligs = listAiColigadasParaIa(company);
-  const merged = mergeSugestoesIntoRegras({
-    current: loadExtratoRegrasContas(company),
-    sugestoes: [
-      {
-        descricao: regra.descricao,
-        nature: regra.nature,
-        contaContrapartida: regra.contaContrapartida,
-      },
-    ],
-    contaBanco: regra.contaBanco,
-    resolveContra: (raw) => sanitizeCodigoReduzido(raw) || raw,
-    coligadas: coligs,
-  });
-  return saveExtratoRegrasContas(company, merged.next, coligs);
+  const current = loadExtratoRegrasContas(company);
+  const duplicate = current.some(
+    (item) =>
+      item.nature === regra.nature &&
+      normalizeExtratoMatchText(item.descricao) === normalizeExtratoMatchText(regra.descricao) &&
+      normContaBancoCode(item.contaBanco) === normContaBancoCode(regra.contaBanco) &&
+      normContaBancoCode(item.contaContrapartida) === normContaBancoCode(regra.contaContrapartida),
+  );
+  if (duplicate) return current;
+  return saveExtratoRegrasContas(company, [...current, regra], undefined, { consolidate: false });
 }
 
 export function removeExtratoRegraConta(company: string, id: string): ExtratoRegraConta[] {
@@ -288,7 +284,7 @@ export function updateExtratoRegraConta(
     if (r.id !== id) return r;
     return sanitizeRegra({ ...r, ...patch, id }) ?? r;
   });
-  return saveExtratoRegrasContas(company, next);
+  return saveExtratoRegrasContas(company, next, undefined, { consolidate: false });
 }
 
 function regraDedupKey(r: ExtratoRegraConta): string {

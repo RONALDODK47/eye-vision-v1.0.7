@@ -93,10 +93,12 @@ export function resolveCodigoReduzidoDoPlano(
 
   const asReduzido = sanitizeCodigoReduzido(input);
   if (asReduzido) {
-    const hit = plano.find((p) => sameCodigoReduzido(p.codigoReduzido, asReduzido));
+    const hit =
+      plano.find((p) => sameCodigoReduzido(p.codigoReduzido, asReduzido)) ||
+      plano.find((p) => sameCodigoReduzido(p.code, asReduzido));
     if (hit) {
       // Devolve o reduzido canônico do plano (como está cadastrado).
-      return sanitizeCodigoReduzido(hit.codigoReduzido) ?? asReduzido;
+      return sanitizeCodigoReduzido(hit.codigoReduzido) ?? sanitizeCodigoReduzido(hit.code) ?? asReduzido;
     }
   }
 
@@ -107,7 +109,7 @@ export function resolveCodigoReduzidoDoPlano(
     return code === input || norm(code) === inputNorm;
   });
   if (byClassif) {
-    return sanitizeCodigoReduzido(byClassif.codigoReduzido) ?? '';
+    return sanitizeCodigoReduzido(byClassif.codigoReduzido) ?? sanitizeCodigoReduzido(byClassif.code) ?? '';
   }
 
   const planoTemReduzido = plano.some((p) => Boolean(sanitizeCodigoReduzido(p.codigoReduzido)));

@@ -10,8 +10,8 @@ export type ExtratoHistoricoPadrao = {
   ocorrencias: number;
 };
 
-const PANEL_W_PX = 320;
-const PANEL_H_PX = 220;
+const PANEL_W_PX = 560;
+const PANEL_H_PX = 320;
 const FILTER_LIMIT = 60;
 
 function normalizeSearch(text: string): string {
@@ -39,6 +39,7 @@ function filterPadroes(padroes: ExtratoHistoricoPadrao[], query: string): Extrat
 }
 
 type Props = {
+  buttonId?: string;
   padroes: ExtratoHistoricoPadrao[];
   value: string;
   disabled?: boolean;
@@ -48,6 +49,7 @@ type Props = {
 };
 
 export default memo(function ExtratoHistoricoPicker({
+  buttonId,
   padroes,
   value,
   disabled = false,
@@ -107,7 +109,7 @@ export default memo(function ExtratoHistoricoPicker({
       ? createPortal(
           <DynamicStyleDiv
             ref={panelRef}
-            className="fixed z-[220] border-2 border-brand-border bg-white shadow-[4px_4px_0_0_#141414] flex flex-col overflow-hidden w-[320px] h-[220px]"
+            className="fixed z-[220] border-2 border-brand-border bg-white shadow-[4px_4px_0_0_#141414] flex flex-col overflow-hidden w-[560px] max-w-[calc(100vw-16px)] h-[320px] max-h-[calc(100vh-16px)]"
             layout={{ top: pos.top, left: pos.left }}
             layoutDeps={[pos.top, pos.left]}
           >
@@ -188,18 +190,17 @@ export default memo(function ExtratoHistoricoPicker({
         )
       : null;
 
-  const displayLabel = selected
-    ? `[${selected.nature}] ${selected.descricao.slice(0, 56)}${selected.descricao.length > 56 ? '…' : ''}`
-    : '';
+  const displayLabel = selected ? `[${selected.nature}] ${selected.descricao}` : '';
 
   return (
     <div ref={wrapRef} className="flex items-stretch gap-0.5 w-full min-w-0">
       <button
+        id={buttonId}
         type="button"
         disabled={disabled || padroes.length === 0}
         onClick={() => (open ? setOpen(false) : openPanel())}
         className={cn(
-          'flex-1 min-w-0 h-[26px] border border-brand-border bg-white px-2 text-left text-[9px] font-semibold uppercase truncate',
+          'flex-1 min-w-0 min-h-[26px] border border-brand-border bg-white px-2 py-1 text-left text-[9px] font-semibold uppercase leading-snug whitespace-normal break-words',
           disabled && 'opacity-40 cursor-not-allowed',
           !selected && 'text-brand-text/45',
         )}

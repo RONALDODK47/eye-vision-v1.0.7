@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Search } from 'lucide-react';
 import { DynamicStyleDiv } from '../lib/dynamicStyle';
@@ -65,9 +65,9 @@ export function buildPlanoNomeLookup(
       for (const k of reduzidoKeyVariants(reduzido)) map.set(k, name);
     }
     if (code) {
-      map.set(code, name);
+      if (!map.has(code)) map.set(code, name);
       const norm = normContaCode(code);
-      if (norm) map.set(norm, name);
+      if (norm && !map.has(norm)) map.set(norm, name);
     }
   }
   return map;
@@ -81,21 +81,27 @@ function findContaNoPlano(
   if (!c || !plano.length) return undefined;
   const digits = normContaCode(c);
 
-  const direct = plano.find((p) => {
+  const byReduzido = plano.find((p) => {
     const red = sanitizeCodigoReduzido(p.codigoReduzido);
-    if (red && (sameCodigoReduzido(red, c) || sameCodigoReduzido(red, digits))) return true;
-    const codeP = p.code.trim();
-    if (codeP === c || normContaCode(codeP) === digits) return true;
-    return false;
+    return Boolean(red && (sameCodigoReduzido(red, c) || sameCodigoReduzido(red, digits)));
   });
-  if (direct) return direct;
+  if (byReduzido) return byReduzido;
+
+  const byCode = plano.find((p) => {
+    const codeP = p.code.trim();
+    return codeP === c || normContaCode(codeP) === digits;
+  });
+  if (byCode) return byCode;
 
   const index = buildPlanoCodeIndex(plano);
   const canon = canonizarContaPlano(c, index) || normalizeExtratoContaParaGravacao(c, plano);
   if (!canon) return undefined;
-  return plano.find((p) => {
+  const byCanonReduzido = plano.find((p) => {
     const red = sanitizeCodigoReduzido(p.codigoReduzido);
-    if (red && sameCodigoReduzido(red, canon)) return true;
+    return Boolean(red && sameCodigoReduzido(red, canon));
+  });
+  if (byCanonReduzido) return byCanonReduzido;
+  return plano.find((p) => {
     const codeP = p.code.trim();
     return codeP === canon || normContaCode(codeP) === normContaCode(canon);
   });
@@ -116,6 +122,11 @@ export function resolveContaNome(
 ): string {
   const c = code.trim();
   if (!c) return '';
+
+  if (plano?.length) {
+    const hit = findContaNoPlano(c, plano);
+    if (hit) return contaDisplayLabel(hit);
+  }
 
   for (const k of reduzidoKeyVariants(c)) {
     const hit = lookup.get(k);
@@ -170,7 +181,7 @@ function filterPlanoOptions(options: ExtratoPlanoContaOption[], query: string): 
   const q = normalizeSearch(query.trim());
   const withReduzido = options.filter((p) => Boolean(sanitizeCodigoReduzido(p.codigoReduzido)));
   const source = withReduzido.length > 0 ? withReduzido : options;
-  if (!q) return source.slice(0, FILTER_LIMIT);
+  if (!q) return source;
   const out: ExtratoPlanoContaOption[] = [];
   for (const p of source) {
     const red = sanitizeCodigoReduzido(p.codigoReduzido) || '';
@@ -256,7 +267,6 @@ function filterPlanoComSinteticas(
       } else if (sanitizeCodigoReduzido(p.codigoReduzido)) {
         out.push(p);
       }
-      if (out.length >= limit) break;
     }
     return out;
   }
@@ -300,6 +310,8 @@ type ExtratoContaPickerProps = {
   options: ExtratoPlanoContaOption[];
   /** Plano ampliado só para resolver o nome da conta (ex.: plano completo). */
   lookupOptions?: ExtratoPlanoContaOption[];
+  inputId?: string;
+  inputName?: string;
   placeholder?: string;
   ariaLabel?: string;
   className?: string;
@@ -310,10 +322,73 @@ type ExtratoContaPickerProps = {
   onChange: (code: string) => void;
 };
 
+type HorizontalDragTextProps = {
+  text: string;
+  title?: string;
+  dimmed?: boolean;
+};
+
+function HorizontalDragText({ text, title, dimmed = false }: HorizontalDragTextProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ active: boolean; startX: number; startScrollLeft: number }>({
+    active: false,
+    startX: 0,
+    startScrollLeft: 0,
+  });
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    dragRef.current = {
+      active: true,
+      startX: e.clientX,
+      startScrollLeft: el.scrollLeft,
+    };
+    el.setPointerCapture?.(e.pointerId);
+  }, []);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const el = scrollRef.current;
+    const drag = dragRef.current;
+    if (!el || !drag.active) return;
+    el.scrollLeft = drag.startScrollLeft - (e.clientX - drag.startX);
+  }, []);
+
+  const finishDrag = useCallback((e?: React.PointerEvent<HTMLDivElement>) => {
+    dragRef.current.active = false;
+    if (e && scrollRef.current?.hasPointerCapture?.(e.pointerId)) {
+      scrollRef.current.releasePointerCapture(e.pointerId);
+    }
+  }, []);
+
+  return (
+    <div
+      ref={scrollRef}
+      className={cn(
+        'min-w-0 h-[26px] overflow-x-auto overflow-y-hidden whitespace-nowrap border border-brand-border/30 bg-brand-sidebar/20 px-2 text-[9px] uppercase leading-[24px] cursor-grab active:cursor-grabbing [scrollbar-width:none] [-ms-overflow-style:none]',
+        dimmed ? 'text-brand-text/70' : 'text-brand-text/80',
+      )}
+      title={title}
+      aria-label="Descrição da conta"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+      onPointerLeave={(e) => {
+        if (dragRef.current.active) finishDrag(e);
+      }}
+    >
+      <div className="inline-block min-w-full select-none">{text || '—'}</div>
+    </div>
+  );
+}
+
 export default memo(function ExtratoContaPicker({
   value,
   options,
   lookupOptions,
+  inputId,
+  inputName,
   placeholder,
   ariaLabel,
   className,
@@ -321,6 +396,7 @@ export default memo(function ExtratoContaPicker({
   includeSinteticas = false,
   onChange,
 }: ExtratoContaPickerProps) {
+  const autoInputId = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   /** Digitação local — só grava no pai no blur / Enter / escolha da lista. */
@@ -332,6 +408,10 @@ export default memo(function ExtratoContaPicker({
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  const resolvedInputId = inputId ?? autoInputId.replace(/:/g, '-');
+  const resolvedInputName = inputName ?? `${resolvedInputId}-value`;
+  const resolvedSearchId = `${resolvedInputId}-search`;
+  const resolvedSearchName = `${resolvedInputName}-search`;
 
   useEffect(() => {
     if (!focusedRef.current) {
@@ -443,6 +523,8 @@ export default memo(function ExtratoContaPicker({
               <Search size={11} className="text-brand-text/70 shrink-0" aria-hidden />
               <input
                 ref={searchRef}
+                id={resolvedSearchId}
+                name={resolvedSearchName}
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -590,6 +672,8 @@ export default memo(function ExtratoContaPicker({
       return (
         <div className={cn('grid grid-cols-[minmax(72px,1fr)_minmax(0,2fr)] gap-1 w-full min-w-0', className)}>
           <input
+            id={resolvedInputId}
+            name={resolvedInputName}
             type="text"
             className={INPUT_CLS}
             value={draft}
@@ -597,18 +681,14 @@ export default memo(function ExtratoContaPicker({
             aria-label={ariaLabel}
             {...inputHandlers}
           />
-          <div
-            className="min-w-0 h-[26px] px-2 border border-brand-border/30 bg-brand-sidebar/20 text-[9px] uppercase truncate leading-[26px] text-brand-text/70"
-            title={contaNomeTitle}
-            aria-label="Descrição da conta"
-          >
-            {contaNome || '—'}
-          </div>
+          <HorizontalDragText text={contaNome || '—'} title={contaNomeTitle} dimmed />
         </div>
       );
     }
     return (
       <input
+        id={resolvedInputId}
+        name={resolvedInputName}
         type="text"
         className={INPUT_CLS}
         value={draft}
@@ -623,6 +703,8 @@ export default memo(function ExtratoContaPicker({
     <div className={cn('flex items-stretch gap-0.5 min-w-0', showNomeInline ? 'w-full' : 'w-full')}>
       <input
         ref={inputRef}
+        id={resolvedInputId}
+        name={resolvedInputName}
         type="text"
         className={cn(INPUT_CLS, 'flex-1 min-w-0')}
         value={draft}
@@ -647,13 +729,7 @@ export default memo(function ExtratoContaPicker({
     return (
       <div ref={wrapRef} className={cn('grid grid-cols-[minmax(72px,1fr)_minmax(0,2fr)] gap-1 w-full min-w-0', className)}>
         {codeField}
-        <div
-          className="min-w-0 h-[26px] px-2 border border-brand-border/30 bg-brand-sidebar/20 text-[9px] uppercase truncate leading-[26px] text-brand-text/80"
-          title={contaNomeTitle}
-          aria-label="Descrição da conta"
-        >
-          {contaNome || '—'}
-        </div>
+        <HorizontalDragText text={contaNome || '—'} title={contaNomeTitle} />
         {panel}
       </div>
     );
