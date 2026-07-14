@@ -20,7 +20,7 @@ const BROWSER_ALLOWED_EXACT = new Set([
   'eye_vision_pg_migrated_tokens_v1',
 ]);
 
-const BROWSER_ALLOWED_PREFIXES = ['gc_auth_', 'cf-autobot-'] as const;
+const BROWSER_ALLOWED_PREFIXES = ['gc_auth_', 'cf-autobot-', 'contabilfacil_'] as const;
 
 type RawBrowserStorage = {
   getItem: (key: string) => string | null;

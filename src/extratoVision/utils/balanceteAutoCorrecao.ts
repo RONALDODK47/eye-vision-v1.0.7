@@ -678,5 +678,6 @@ export function aplicarLancamentosNoRazao(
   novos: VisionBalanceteRow[],
 ): VisionBalanceteRow[] {
   if (!novos.length) return razaoRows;
-  return sortRowsByDataRazao([...razaoRows, ...novos]);
+  const taggedNovos = novos.map((row) => ({ ...row, isReconciliation: true }));
+  return sortRowsByDataRazao([...razaoRows, ...taggedNovos]);
 }

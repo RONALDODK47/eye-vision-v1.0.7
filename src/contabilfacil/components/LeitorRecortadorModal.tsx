@@ -151,6 +151,7 @@ export function LeitorRecortadorModal({
   const [savedLayouts, setSavedLayouts] = useState<ExtratoOcrLayoutSaved[]>([]);
   const [saldoAnterior, setSaldoAnterior] = useState(0);
   const [cropExplicitlyApplied, setCropExplicitlyApplied] = useState(false);
+  const [valorSignHeuristic, setValorSignHeuristic] = useState<'automatic' | 'color_blue_c_red_d' | 'color_blue_d_red_c'>('automatic');
 
   const layoutContaKey = isExtrato ? contaBanco : dataType;
 
@@ -198,21 +199,9 @@ export function LeitorRecortadorModal({
 
   const detectPageRows = useCallback(
     (textItems: RenderedPDFPage['textItems'], mode: 'auto' | 'manual') => {
-      if (mode === 'manual') {
-        return Array.from({ length: gridRowCount }).map((_, i) => ({
-          y: gridStartY + i * gridRowHeight,
-          height: gridRowHeight,
-        }));
-      }
-      if (isDominioPlano) {
-        return detectPlanoRowsFromText(textItems);
-      }
-      if (isDominioBalancete) {
-        return detectRazaoRowsFromText(textItems);
-      }
       return detectRowsFromText(textItems, 10).map((r) => ({ y: r.y, height: r.height }));
     },
-    [gridRowCount, gridRowHeight, gridStartY, isDominioPlano, isDominioBalancete],
+    [],
   );
 
   const extractPageRows = useCallback(
@@ -226,24 +215,6 @@ export function LeitorRecortadorModal({
         : isDominioBalancete
           ? resolveRazaoColumnsForPage(page.textItems, page.width, columnIds, cols)
           : cols;
-      if (isDominioPlano && rowConfigs.every((r) => Array.isArray(r.items))) {
-        return extractPlanoDataFromCanvas(
-          page.canvas,
-          columnIds,
-          pageCols,
-          rowConfigs as ReturnType<typeof detectPlanoRowsFromText>,
-          page.pageNumber,
-        );
-      }
-      if (isDominioBalancete && rowConfigs.every((r) => Array.isArray(r.items))) {
-        return extractRazaoDataFromCanvas(
-          page.canvas,
-          columnIds,
-          pageCols,
-          rowConfigs as ReturnType<typeof detectRazaoRowsFromText>,
-          page.pageNumber,
-        );
-      }
       return extractGenericDataFromCanvas(
         page.canvas,
         page.textItems,
@@ -251,9 +222,11 @@ export function LeitorRecortadorModal({
         pageCols,
         rowConfigs,
         page.pageNumber,
+        true,
+        { valorSignHeuristic },
       );
     },
-    [columnIds, isDominioPlano, isDominioBalancete],
+    [columnIds, isDominioPlano, isDominioBalancete, valorSignHeuristic],
   );
 
   const runCropAll = useCallback(
@@ -776,6 +749,20 @@ export function LeitorRecortadorModal({
                   O modelo é identificado só pelo nome. As colunas e faixas de recorte são salvas junto.
                 </p>
               )}
+              <div className="pt-1">
+                <label className="block text-[9px] font-bold uppercase opacity-60 mb-1">
+                  Heurística de Sinais (D/C)
+                </label>
+                <select
+                  value={valorSignHeuristic}
+                  onChange={(e) => setValorSignHeuristic(e.target.value as any)}
+                  className="w-full border border-brand-border bg-white px-2 py-1.5 text-[10px] outline-none"
+                >
+                  <option value="automatic">Automático (Texto: D/C, -/+)</option>
+                  <option value="color_blue_c_red_d">Texto Azul é Crédito, Vermelho é Débito</option>
+                  <option value="color_blue_d_red_c">Texto Azul é Débito, Vermelho é Crédito</option>
+                </select>
+              </div>
               <button
                 type="button"
                 onClick={persistCurrentLayout}
@@ -1013,6 +1000,7 @@ export function LeitorRecortadorModal({
                     exclusionRules={exclusionRules}
                     setExclusionRules={setExclusionRules}
                     fileName={file.name}
+                    pdfPages={pdfPages}
                   />
                 </div>
                 {configSidebar}

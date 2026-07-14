@@ -47,6 +47,7 @@ export type ExtratoOcrLayoutSaved = {
   imgHeight: number;
   createdAt: string;
   updatedAt: string;
+  valorSignHeuristic?: 'automatic' | 'color_blue_c_red_d' | 'color_blue_d_red_c';
 };
 
 type ExtratoOcrLayoutStore = {
@@ -161,6 +162,7 @@ export function saveExtratoOcrLayout(
     imgHeight: layout.imgHeight,
     createdAt: existingIdx >= 0 ? store.layouts[existingIdx]!.createdAt : now,
     updatedAt: now,
+    valorSignHeuristic: layout.valorSignHeuristic,
   };
   if (existingIdx >= 0) {
     store.layouts[existingIdx] = saved;
@@ -236,5 +238,6 @@ export function saveExtratoBancoParaImportacao(
     faixaFimPagina: base?.faixaFimPagina,
     imgWidth: base?.imgWidth ?? 1,
     imgHeight: base?.imgHeight ?? 1,
+    valorSignHeuristic: base?.valorSignHeuristic,
   });
 }

@@ -693,7 +693,7 @@ export function DocumentColunasModal({
   useEffect(() => {
     if (!isExtratoOcr || !doc?.items?.length || bancoNome.trim()) return;
     const blob = `${doc.ocrFullText ?? ''} ${doc.items.map((i) => i.str).join(' ')}`;
-    if (/banco\s+do\s+brasil|\binternet\s+banking\b.*\bbb\b/i.test(blob)) {
+    if (/banco\s+do\s+brasil|\binternet\s+banking\b.*\bbb\b|cliente\s*[-–]?\s*conta\s+atual|bb\s+rende\s+f[aá]cil/i.test(blob)) {
       setBancoNome('Banco do Brasil');
     }
   }, [isExtratoOcr, doc?.items, doc?.ocrFullText, bancoNome]);
@@ -703,7 +703,7 @@ export function DocumentColunasModal({
       setSavedLayouts([]);
       return;
     }
-    setSavedLayouts(listExtratoOcrLayouts(companyName));
+    setSavedLayouts(listExtratoOcrLayouts(companyName, 'extrato'));
   }, [companyName]);
 
   useEffect(() => {
@@ -909,6 +909,7 @@ export function DocumentColunasModal({
 
     const saved = saveExtratoOcrLayout(companyName, {
       id: layoutEditId ?? undefined,
+      kind: 'extrato',
       bancoNome: bancoNome.trim(),
       contaBanco: contaBanco.trim(),
       ignoreLineWords: ignoreLineWordsText,

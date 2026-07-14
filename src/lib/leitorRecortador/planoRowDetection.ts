@@ -179,6 +179,7 @@ export function extractPlanoDataFromCanvas(
     const positional = extractPlanoDominioFieldsFromItems(rowItems, docWidth, pageBounds);
     const fields: Record<string, string> = { ...positional };
     const cropUrls: Record<string, string> = {};
+    const cropBounds: Record<string, { x: number; y: number; w: number; h: number }> = {};
 
     const partsByCol = assignPlanoRowTokens(rowItems, colPixels, docWidth, columnIds);
     columnIds.forEach((id) => {
@@ -231,8 +232,9 @@ export function extractPlanoDataFromCanvas(
           return /[A-Za-zÀ-ÿ]/.test(raw);
         });
       }
-      const cropBounds = cropBoundsForColumnItems(colItems, col, 1, id === 'descricao');
-      cropUrls[id] = cropCanvasSection(cropBounds.x, cropY, cropBounds.w, cropH);
+      const cb = cropBoundsForColumnItems(colItems, col, 1, id === 'descricao');
+      cropUrls[id] = '';
+      cropBounds[id] = { x: cb.x, y: cropY, w: cb.w, h: cropH };
     });
 
     fields._linhaOcr = linhaCompleta;
@@ -241,6 +243,7 @@ export function extractPlanoDataFromCanvas(
       id: `plano-${pageNumber}-${index}-${Date.now()}`,
       fields,
       cropUrls,
+      cropBounds,
       y: row.y,
       height: row.height,
       pageNumber,

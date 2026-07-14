@@ -120,6 +120,7 @@ export function ExtratoLeitorRecortadorModal({
   const [gridRowCount, setGridRowCount] = useState(8);
   const [detectedRows, setDetectedRows] = useState<{ y: number; height: number }[]>([]);
   const [rows, setRows] = useState<ExtractedRow[]>([]);
+  const [valorSignHeuristic, setValorSignHeuristic] = useState<'automatic' | 'color_blue_c_red_d' | 'color_blue_d_red_c'>('automatic');
   const [exclusionRules, setExclusionRules] = useState<string[]>(DEFAULT_EXCLUSION_RULES);
   const [activeTab, setActiveTab] = useState<'align' | 'results'>('align');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -205,7 +206,7 @@ export function ExtratoLeitorRecortadorModal({
       setSavedLayouts([]);
       return;
     }
-    setSavedLayouts(listExtratoOcrLayouts(companyName));
+    setSavedLayouts(listExtratoOcrLayouts(companyName, 'extrato'));
   }, [companyName]);
 
   useEffect(() => {
@@ -230,6 +231,9 @@ export function ExtratoLeitorRecortadorModal({
           .map((s) => s.trim())
           .filter(Boolean),
       );
+    }
+    if (active.valorSignHeuristic) {
+      setValorSignHeuristic(active.valorSignHeuristic);
     }
   }, [companyName, refreshSavedLayouts]);
 
@@ -448,7 +452,7 @@ export function ExtratoLeitorRecortadorModal({
               stmtYear,
               currentPage,
             )
-            : extractDataFromCanvas(activeCanvas, textItems, columns, filteredForExtract, true),
+            : extractDataFromCanvas(activeCanvas, textItems, columns, filteredForExtract, true, undefined, undefined, { valorSignHeuristic }),
           stmtYear,
         ),
       );
@@ -541,7 +545,7 @@ export function ExtratoLeitorRecortadorModal({
                 stmtYearPage,
                 p,
               )
-              : extractDataFromCanvas(page.canvas, page.textItems, columns, filteredRows, true);
+              : extractDataFromCanvas(page.canvas, page.textItems, columns, filteredRows, true, undefined, undefined, { valorSignHeuristic });
           allExtractedRows = [...allExtractedRows, ...extracted];
         }
       });
@@ -627,6 +631,7 @@ export function ExtratoLeitorRecortadorModal({
         faixaFimPagina: existingLayout?.faixaFimPagina,
         imgWidth: existingLayout?.imgWidth ?? 1,
         imgHeight: existingLayout?.imgHeight ?? 1,
+        valorSignHeuristic: valorSignHeuristic,
       });
       setLayoutEditId(saved.id);
       refreshSavedLayouts();
@@ -655,6 +660,7 @@ export function ExtratoLeitorRecortadorModal({
     );
     const saved = saveExtratoOcrLayout(companyName, {
       id: targetLayoutId,
+      kind: 'extrato',
       bancoNome: bancoNome.trim(),
       contaBanco: contaBanco.trim(),
       ignoreLineWords: exclusionRules.join(', '),
@@ -672,6 +678,7 @@ export function ExtratoLeitorRecortadorModal({
       faixaFimPagina: cropEndPage,
       imgWidth: imgW,
       imgHeight: imgH,
+      valorSignHeuristic: valorSignHeuristic,
     });
     setLayoutEditId(saved.id);
     setActiveExtratoOcrLayout(companyName, saved.id);
@@ -719,6 +726,9 @@ export function ExtratoLeitorRecortadorModal({
           .map((s) => s.trim())
           .filter(Boolean),
       );
+    }
+    if (layout.valorSignHeuristic) {
+      setValorSignHeuristic(layout.valorSignHeuristic);
     }
     if (companyName.trim()) {
       setActiveExtratoOcrLayout(companyName, layout.id);
@@ -977,6 +987,24 @@ export function ExtratoLeitorRecortadorModal({
                               className="w-full border border-brand-border bg-white px-2.5 py-1.5 text-xs font-mono text-brand-text outline-none focus:border-brand-text"
                             />
                           )}
+                        </div>
+                        <div>
+                          <label
+                            htmlFor="valor-sign-heuristic"
+                            className="block text-[10px] font-bold uppercase text-brand-text/60 mb-1"
+                          >
+                            Heurística de Sinais (D/C)
+                          </label>
+                          <select
+                            id="valor-sign-heuristic"
+                            value={valorSignHeuristic}
+                            onChange={(e) => setValorSignHeuristic(e.target.value as any)}
+                            className="w-full border border-brand-border bg-white px-2.5 py-1.5 text-xs text-brand-text outline-none focus:border-brand-text"
+                          >
+                            <option value="automatic">Automático (Texto: D/C, -/+)</option>
+                            <option value="color_blue_c_red_d">Texto Azul é Crédito, Vermelho é Débito</option>
+                            <option value="color_blue_d_red_c">Texto Azul é Débito, Vermelho é Crédito</option>
+                          </select>
                         </div>
                         <div className="flex flex-col gap-1.5">
                           <button

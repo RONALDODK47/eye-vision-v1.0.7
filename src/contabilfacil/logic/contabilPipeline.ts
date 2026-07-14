@@ -76,8 +76,11 @@ export function ocrRowToVisionRazao(row: GenericOcrRow, index: number): VisionBa
   const fromDc = parseValorDc(row.valorDc);
   const deb = debito > 0 ? debito : fromDc.debito;
   const cred = credito > 0 ? credito : fromDc.credito;
-  const codigo = row.codigo?.trim() || '';
-  const classificacao = row.classificacao?.trim() || codigo;
+  const contaPartida = row.contaPartida?.trim() || row.classificacao?.trim() || '';
+  const classificacao = contaPartida || row.classificacao?.trim() || row.codigo?.trim() || '';
+  const codigo =
+    row.codigo?.trim() ||
+    (classificacao.includes('.') ? classificacao.replace(/\./g, '') : classificacao);
   const nome = (row.descricao || row.historico || 'LANCAMENTO').trim();
   if (!codigo && !classificacao && !nome) return null;
 

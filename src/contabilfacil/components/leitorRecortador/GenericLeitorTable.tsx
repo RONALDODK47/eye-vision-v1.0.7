@@ -5,8 +5,68 @@
 
 import React from 'react';
 import { ChevronLeft, ChevronRight, FileSpreadsheet, Filter, HelpCircle, Image, PencilLine, Plus, Trash2, X } from 'lucide-react';
-import type { GenericExtractedRow, LeitorColumnDef } from '../../../lib/leitorRecortador/types';
+import type { GenericExtractedRow, LeitorColumnDef, RenderedPDFPage } from '../../../lib/leitorRecortador/types';
 import { DynamicStyleTable, DynamicStyleTh } from '../../lib/dynamicStyle';
+
+interface CellCropImageProps {
+  canvas: HTMLCanvasElement | null | undefined;
+  bounds: { x: number; y: number; w: number; h: number } | null | undefined;
+  alt: string;
+  invert?: boolean;
+}
+
+function CellCropImage({ canvas, bounds, alt, invert }: CellCropImageProps) {
+  const [url, setUrl] = React.useState<string>('');
+
+  React.useEffect(() => {
+    if (!canvas || !bounds) {
+      setUrl('');
+      return;
+    }
+    try {
+      const docWidth = canvas.width;
+      const docHeight = canvas.height;
+      const x = Math.max(0, Math.min(bounds.x, docWidth - 1));
+      const y = Math.max(0, Math.min(bounds.y, docHeight - 1));
+      const w = Math.max(1, Math.min(bounds.w, docWidth - x));
+      const h = Math.max(1, Math.min(bounds.h, docHeight - y));
+
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = w;
+      cropCanvas.height = h;
+      const cropCtx = cropCanvas.getContext('2d');
+      if (cropCtx) {
+        cropCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
+        setUrl(cropCanvas.toDataURL('image/png'));
+      }
+    } catch (e) {
+      console.error('Lazy crop error:', e);
+      setUrl('');
+    }
+  }, [canvas, bounds]);
+
+  if (!url) {
+    return <span className="text-[10px] text-brand-text/40 italic">Carregando...</span>;
+  }
+
+  const scale = canvas ? (canvas.width > 1000 ? 2.0 : 1.0) : 1.0;
+  const displayHeight = bounds ? bounds.h / scale : 24;
+
+  return (
+    <img
+      src={url}
+      alt={alt}
+      loading="lazy"
+      style={{
+        height: `${displayHeight}px`,
+        maxHeight: '24px',
+        width: 'auto',
+        maxWidth: '100%',
+      }}
+      className={`${invert ? 'invert hue-rotate-180 brightness-125' : ''}`}
+    />
+  );
+}
 
 interface TableViewerProps {
   rows: GenericExtractedRow[];
@@ -15,6 +75,7 @@ interface TableViewerProps {
   exclusionRules: string[];
   setExclusionRules: React.Dispatch<React.SetStateAction<string[]>>;
   fileName?: string;
+  pdfPages?: RenderedPDFPage[];
 }
 
 const PAGE_SIZE = 40;
@@ -26,12 +87,13 @@ export function GenericLeitorTable({
   exclusionRules,
   setExclusionRules,
   fileName,
+  pdfPages,
 }: TableViewerProps) {
   const [invertCrops, setInvertCrops] = React.useState(false);
   const [hoveredRowId, setHoveredRowId] = React.useState<string | null>(null);
   const [newRule, setNewRule] = React.useState('');
   const [page, setPage] = React.useState(0);
-  const [showCrops, setShowCrops] = React.useState(rows.length <= 120);
+  const [showCrops, setShowCrops] = React.useState(true);
 
   const filteredRows = React.useMemo(() => {
     return rows.filter((row) => {
@@ -276,6 +338,10 @@ export function GenericLeitorTable({
                             </td>
                             {columnDefs.map((c) => {
                               const url = row.cropUrls[c.id];
+                              const bounds = row.cropBounds?.[c.id];
+                              const pageCanvas = row.pageNumber
+                                ? pdfPages?.find((p) => p.pageNumber === row.pageNumber)?.canvas
+                                : null;
                               return (
                                 <td key={c.id} className="py-1.5 px-2">
                                   {url ? (
@@ -289,8 +355,17 @@ export function GenericLeitorTable({
                                         }`}
                                       />
                                     </div>
+                                  ) : bounds && pageCanvas ? (
+                                    <div className="bg-white p-1 border border-brand-border flex items-center justify-center max-w-full overflow-hidden h-8">
+                                      <CellCropImage
+                                        canvas={pageCanvas}
+                                        bounds={bounds}
+                                        alt={`Recorte ${c.name}`}
+                                        invert={invertCrops}
+                                      />
+                                    </div>
                                   ) : (
-                                    <div className="text-[10px] text-brand-text/40 italic h-8 flex items-center">
+                                    <div className="text-[10px] text-brand-text/40 italic h-8 flex items-center justify-center">
                                       Sem recorte
                                     </div>
                                   )}

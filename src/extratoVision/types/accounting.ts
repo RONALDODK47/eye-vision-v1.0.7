@@ -31,4 +31,6 @@ export type VisionBalanceteRow = {
   naturezaSaldoInicial?: 'D' | 'C';
   tipo?: 'S' | 'A';
   nivel?: number;
+  isReconciliation?: boolean;
+  importId?: string;
 };

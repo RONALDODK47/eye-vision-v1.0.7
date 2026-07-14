@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar, Filter } from 'lucide-react';
+import { Calendar, Filter, FolderOpen, FileText, X, FileCode, Trash2 } from 'lucide-react';
 import type { VisionBalanceteRow } from '../../extratoVision/types/accounting';
 import ContabilBalanceteComparativo from './ContabilBalanceteComparativo';
 import { parseBrDateToTime } from '../../extratoVision/utils/dateBounds';
@@ -29,6 +29,8 @@ export interface BalanceteTabPanelProps {
   razaoRows: VisionBalanceteRow[];
   onRazaoRowsChange: (rows: VisionBalanceteRow[]) => void;
   folhaRelatorio?: FolhaRelatorioRow[];
+  importedTxts?: Array<{ id: string; filename: string; months: string[]; importedAt: string }>;
+  onDeleteImportedTxt?: (id: string) => void;
 }
 
 function folhaRelatorioToVision(rows: FolhaRelatorioRow[]): VisionBalanceteRow[] {
@@ -44,13 +46,34 @@ function folhaRelatorioToVision(rows: FolhaRelatorioRow[]): VisionBalanceteRow[]
   }));
 }
 
+function brToDate(val: string): string {
+  if (!val) return '';
+  const parts = val.split('/');
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+  return val;
+}
+
+function dateToBr(val: string): string {
+  if (!val) return '';
+  const parts = val.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return val;
+}
+
 export default function BalanceteTabPanel({
   selectedCompany,
   planoContas,
   razaoRows,
   onRazaoRowsChange,
   folhaRelatorio = [],
+  importedTxts = [],
+  onDeleteImportedTxt,
 }: BalanceteTabPanelProps) {
+  const [showTxtsModal, setShowTxtsModal] = useState(false);
   const [periodoDe, setPeriodoDe] = useState('');
   const [periodoAte, setPeriodoAte] = useState('');
   const [periodoConfirmado, setPeriodoConfirmado] = useState<{ de: string; ate: string } | null>(null);
@@ -158,28 +181,23 @@ export default function BalanceteTabPanel({
             )}
           </div>
           <div className="flex flex-wrap items-end gap-3">
+
             <div>
               <label className="text-[9px] font-bold uppercase tracking-wider opacity-60 mb-1 block">De</label>
               <input aria-label="De"
-                type="text"
-                placeholder="DD/MM/AAAA"
-                value={periodoDe}
-                onChange={(e) => setPeriodoDe(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && aplicarPeriodo()}
-                className="w-36 border border-brand-border bg-brand-bg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-brand-border"
-                maxLength={10}
+                type="date"
+                value={brToDate(periodoDe)}
+                onChange={(e) => setPeriodoDe(dateToBr(e.target.value))}
+                className="w-40 border border-brand-border bg-brand-bg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-brand-border"
               />
             </div>
             <div>
               <label className="text-[9px] font-bold uppercase tracking-wider opacity-60 mb-1 block">Até</label>
               <input aria-label="Até"
-                type="text"
-                placeholder="DD/MM/AAAA"
-                value={periodoAte}
-                onChange={(e) => setPeriodoAte(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && aplicarPeriodo()}
-                className="w-36 border border-brand-border bg-brand-bg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-brand-border"
-                maxLength={10}
+                type="date"
+                value={brToDate(periodoAte)}
+                onChange={(e) => setPeriodoAte(dateToBr(e.target.value))}
+                className="w-40 border border-brand-border bg-brand-bg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-brand-border"
               />
             </div>
             <button
@@ -197,6 +215,16 @@ export default function BalanceteTabPanel({
                 className="technical-button-secondary px-3 py-2 text-[10px] font-bold uppercase"
               >
                 Limpar
+              </button>
+            )}
+            {importedTxts.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowTxtsModal(true)}
+                className="technical-button px-3 py-2 text-[10px] font-bold uppercase flex items-center gap-1.5 border-brand-border bg-brand-sidebar/20 hover:bg-brand-sidebar/40 ml-auto"
+              >
+                <FolderOpen size={13} />
+                TXTs Importados ({importedTxts.length})
               </button>
             )}
           </div>
@@ -249,6 +277,84 @@ export default function BalanceteTabPanel({
           empresaNome={selectedCompany}
           setPeriodToolbar={setPeriodToolbar}
         />
+      )}
+
+      {showTxtsModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="technical-panel w-full max-w-2xl bg-brand-bg shadow-xl flex flex-col max-h-[85vh]">
+            {/* Header */}
+            <div className="p-4 border-b border-brand-border bg-brand-sidebar/30 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText size={16} className="text-brand-text" />
+                <h2 className="text-xs font-black uppercase tracking-widest">
+                  TXTs Importados no Balancete
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTxtsModal(false)}
+                className="text-brand-text/60 hover:text-brand-text p-1 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            {/* Body */}
+            <div className="p-4 overflow-y-auto space-y-3 flex-1">
+              <p className="text-[10px] opacity-75 leading-relaxed">
+                Aqui estão listados os arquivos TXT importados nesta empresa. Excluir um arquivo removerá os lançamentos associados a ele, sem afetar outros dados ou as conciliações geradas a partir do extrato.
+              </p>
+              
+              {importedTxts.length === 0 ? (
+                <div className="text-center py-6 text-[10px] uppercase font-bold text-slate-400">
+                  Nenhum arquivo TXT registrado no momento.
+                </div>
+              ) : (
+                <div className="border border-brand-border divide-y divide-brand-border">
+                  {importedTxts.map((txt) => (
+                    <div key={txt.id} className="p-3 flex items-center justify-between gap-4 bg-brand-sidebar/5 hover:bg-brand-sidebar/10 transition-colors">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <FileCode size={14} className="opacity-70 shrink-0" />
+                          <span className="text-xs font-mono font-bold truncate block">{txt.filename}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-[9px] text-brand-text/60">
+                          <span>Importado em: <strong className="font-mono text-brand-text">{txt.importedAt}</strong></span>
+                          <span>·</span>
+                          <span>Meses: <strong className="bg-brand-border text-brand-bg px-1 font-bold">{txt.months.join(', ') || 'Sem lançamentos'}</strong></span>
+                        </div>
+                      </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Tem certeza que deseja excluir o arquivo "${txt.filename}"? Os lançamentos deste arquivo serão removidos.`)) {
+                            onDeleteImportedTxt?.(txt.id);
+                          }
+                        }}
+                        className="text-red-700 hover:text-red-600 hover:bg-red-50 p-1.5 border border-transparent hover:border-red-200 transition-all shrink-0"
+                        title="Excluir do balancete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* Footer */}
+            <div className="p-3 border-t border-brand-border bg-brand-sidebar/10 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowTxtsModal(false)}
+                className="technical-button px-4 py-1.5 text-[10px] font-black uppercase"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

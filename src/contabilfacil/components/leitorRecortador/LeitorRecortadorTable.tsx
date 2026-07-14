@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Dummy comment to trigger VS Code TS cache reload
 import React from 'react';
 import type { ExtractedRow } from '../../../lib/leitorRecortador/types';
 import { Trash2, TrendingDown, TrendingUp, HelpCircle, FileSpreadsheet, Plus, AlertCircle, Filter, X, Check, EyeOff, Wallet, DollarSign, Image, PencilLine } from 'lucide-react';
@@ -34,6 +35,7 @@ export function LeitorRecortadorTable({
   const [invertCrops, setInvertCrops] = React.useState(false);
   const [hoveredRowId, setHoveredRowId] = React.useState<string | null>(null);
   const [newRule, setNewRule] = React.useState('');
+  const [showMonthlyBalanceModal, setShowMonthlyBalanceModal] = React.useState(false);
   const [saldoAnterior, setSaldoAnterior] = React.useState<number>(() => {
     const saved = localStorage.getItem('saldo_anterior');
     return saved ? parseLocaleNumber(saved, 0) : 0;
@@ -174,6 +176,7 @@ export function LeitorRecortadorTable({
 
         {rows.length > 0 && (
           <div className="flex items-center gap-3 flex-wrap">
+
             <button
               onClick={() => setInvertCrops(!invertCrops)}
               className={`technical-button flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold cursor-pointer ${invertCrops ? 'bg-brand-sidebar text-brand-text' : 'text-brand-text/60'}`}
@@ -210,6 +213,21 @@ export function LeitorRecortadorTable({
           </div>
         )}
       </div>
+
+      {/* Saldos Diários Button Bar */}
+      {rows.length > 0 && (
+        <div className="flex items-center justify-between px-6 py-2 bg-brand-sidebar border-b border-brand-border">
+          <span className="text-[10px] font-bold text-brand-text/50 uppercase tracking-widest">Dados Convertidos (Texto Editável)</span>
+          <button
+            onClick={() => setShowMonthlyBalanceModal(true)}
+            className="technical-button flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+            title="Visualizar os saldos acumulados por dia"
+          >
+            <TrendingUp className="w-3.5 h-3.5" />
+            Saldos Diários
+          </button>
+        </div>
+      )}
 
       {/* Bento Grid containing Saldo Anterior, Entradas, Saídas and Saldo Final */}
       {rows.length > 0 && (() => {
@@ -497,7 +515,8 @@ export function LeitorRecortadorTable({
                                 <img
                                   src={row.dateCropUrl}
                                   alt="Recorte Data"
-                                  className={`max-h-9 object-contain opacity-90 hover:opacity-100 transition-all ${ invertCrops ? 'invert hue-rotate-180 brightness-125' : '' }`}
+                                  style={{ maxHeight: '16px', maxWidth: '90%', objectFit: 'contain' }}
+                                  className={`opacity-90 hover:opacity-100 transition-all ${ invertCrops ? 'invert hue-rotate-180 brightness-125' : '' }`}
                                   referrerPolicy="no-referrer"
                                 />
                               </div>
@@ -513,7 +532,8 @@ export function LeitorRecortadorTable({
                                 <img
                                   src={row.historyCropUrl}
                                   alt="Recorte Histórico"
-                                  className={`max-h-9 object-contain opacity-90 hover:opacity-100 transition-all ${ invertCrops ? 'invert hue-rotate-180 brightness-125' : '' }`}
+                                  style={{ maxHeight: '24px', maxWidth: '100%', objectFit: 'contain' }}
+                                  className={`opacity-90 hover:opacity-100 transition-all ${ invertCrops ? 'invert hue-rotate-180 brightness-125' : '' }`}
                                   referrerPolicy="no-referrer"
                                 />
                               </div>
@@ -525,16 +545,17 @@ export function LeitorRecortadorTable({
                           {/* Value Crop Column */}
                           <td className="py-3 px-3">
                             {row.valueCropUrl ? (
-                              <div className="bg-white p-1 border border-brand-border flex items-center justify-end max-w-full overflow-hidden select-none h-11">
+                              <div className="bg-white p-1 border border-brand-border flex items-center justify-center max-w-full overflow-hidden select-none h-11">
                                 <img
                                   src={row.valueCropUrl}
                                   alt="Recorte Valor"
-                                  className={`max-h-9 object-contain opacity-90 hover:opacity-100 transition-all ${ invertCrops ? 'invert hue-rotate-180 brightness-125' : '' }`}
+                                  style={{ maxHeight: '16px', maxWidth: '90%', objectFit: 'contain' }}
+                                  className={`opacity-90 hover:opacity-100 transition-all ${ invertCrops ? 'invert hue-rotate-180 brightness-125' : '' }`}
                                   referrerPolicy="no-referrer"
                                 />
                               </div>
                             ) : (
-                              <div className="text-[10px] text-brand-text/40 italic h-11 flex items-center justify-end">Sem recorte</div>
+                              <div className="text-[10px] text-brand-text/40 italic h-11 flex items-center justify-center">Sem recorte</div>
                             )}
                           </td>
                         </tr>
@@ -696,6 +717,152 @@ export function LeitorRecortadorTable({
           </div>
         </div>
       )}
+
+      {showMonthlyBalanceModal && (() => {
+        const dailyGroups = new Map<string, { day: number; month: number; year: number; positive: number; negative: number }>();
+
+        filteredRows.forEach((row) => {
+          if (!row.dateText) return;
+          const parts = row.dateText.split('/');
+          if (parts.length < 2) return;
+          const day = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10);
+          let year = parts[2] ? parseInt(parts[2], 10) : new Date().getFullYear();
+          if (isNaN(day) || isNaN(month) || isNaN(year)) return;
+          if (year < 100) year += 2000;
+
+          const key = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+          let val = 0;
+          if (row.valueText) {
+            const clean = row.valueText.replace(/[CDcd]/g, '').replace(/\s/g, '');
+            const parsed = parseLocaleNumber(clean, 0);
+            val = Math.abs(parsed);
+          }
+
+          if (!dailyGroups.has(key)) {
+            dailyGroups.set(key, { day, month, year, positive: 0, negative: 0 });
+          }
+          const group = dailyGroups.get(key)!;
+          if (row.isNegative) {
+            group.negative += val;
+          } else {
+            group.positive += val;
+          }
+        });
+
+        const sortedGroups = Array.from(dailyGroups.entries()).sort((a, b) => {
+          const yearDiff = a[1].year - b[1].year;
+          if (yearDiff !== 0) return yearDiff;
+          const monthDiff = a[1].month - b[1].month;
+          if (monthDiff !== 0) return monthDiff;
+          return a[1].day - b[1].day;
+        });
+
+        // Compute running balance: each day opens with previous day's closing balance
+        let runningBalance = saldoAnterior || 0;
+        const groupsWithBalance = sortedGroups.map(([key, group]) => {
+          const openingBalance = runningBalance;
+          const net = group.positive - group.negative;
+          const closingBalance = Math.abs(openingBalance + net) < 0.005 ? 0 : Math.round((openingBalance + net) * 100) / 100;
+          runningBalance = closingBalance;
+          return { key, group, openingBalance, net, closingBalance };
+        });
+
+        const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        return (
+          <div className="fixed inset-0 bg-brand-text/50 backdrop-blur-[2px] flex items-center justify-center z-50 p-4 pointer-events-auto">
+            <div className="bg-white border border-brand-border shadow-[4px_4px_0_0_#141414] w-full max-w-3xl max-h-[85vh] flex flex-col">
+              <div className="px-6 py-4 border-b border-brand-border flex items-center justify-between bg-brand-sidebar">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-500" />
+                  <h3 className="font-semibold text-brand-text text-sm">Resumo de Saldos Diários</h3>
+                  {saldoAnterior !== 0 && (
+                    <span className="text-[10px] text-brand-text/50 font-mono bg-brand-sidebar border border-brand-border px-2 py-0.5">
+                      Saldo Anterior: R$ {fmt(saldoAnterior)}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowMonthlyBalanceModal(false)}
+                  className="text-brand-text/50 hover:text-brand-text text-lg cursor-pointer border-none bg-transparent font-bold"
+                  aria-label="Fechar"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="p-4 overflow-y-auto flex flex-col gap-3">
+                <div className="border border-brand-border">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-brand-sidebar border-b border-brand-border text-[10px] font-bold text-brand-text/80 uppercase">
+                      <tr>
+                        <th className="p-3">Data</th>
+                        <th className="p-3 text-right">Receitas (+)</th>
+                        <th className="p-3 text-right">Despesas (-)</th>
+                        <th className="p-3 text-right font-bold">Saldo do Dia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupsWithBalance.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="p-4 text-center text-brand-text/50">
+                            Nenhuma transação com data válida disponível.
+                          </td>
+                        </tr>
+                      ) : (
+                        groupsWithBalance.map(({ key, group, net, closingBalance }) => {
+                          const netRounded = Math.abs(net) < 0.005 ? 0 : Math.round(net * 100) / 100;
+                          const isDayNeg = netRounded < -0.005;
+                          const isAccNeg = closingBalance < -0.005;
+
+                          return (
+                            <tr key={key} className="border-b border-brand-border hover:bg-brand-sidebar/30">
+                              <td className="p-3 font-semibold text-brand-text">{key}</td>
+                              <td className="p-3 text-right text-emerald-600">
+                                R$ {fmt(group.positive)}
+                              </td>
+                              <td className="p-3 text-right text-rose-600">
+                                R$ {fmt(group.negative)}
+                              </td>
+                              <td className={`p-3 text-right font-bold ${isDayNeg ? 'text-rose-600' : netRounded > 0.005 ? 'text-emerald-600' : 'text-brand-text'}`}>
+                                R$ {fmt(netRounded)}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                    {groupsWithBalance.length > 0 && (
+                      <tfoot className="bg-brand-sidebar border-t-2 border-brand-border text-[10px] font-bold uppercase">
+                        <tr>
+                          <td className="p-3 text-brand-text/60">Total</td>
+                          <td className="p-3 text-right text-emerald-600">
+                            R$ {fmt(groupsWithBalance.reduce((s, g) => s + g.group.positive, 0))}
+                          </td>
+                          <td className="p-3 text-right text-rose-600">
+                            R$ {fmt(groupsWithBalance.reduce((s, g) => s + g.group.negative, 0))}
+                          </td>
+                          <td className="p-3 text-right font-bold text-brand-text">—</td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </div>
+
+              <div className="px-6 py-4 border-t border-brand-border flex justify-end bg-brand-sidebar">
+                <button
+                  onClick={() => setShowMonthlyBalanceModal(false)}
+                  className="technical-button px-4 py-2 text-xs font-semibold cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

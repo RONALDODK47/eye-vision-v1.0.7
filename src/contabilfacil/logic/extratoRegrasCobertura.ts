@@ -658,6 +658,21 @@ export function isContaNominalEmpresa(name: string): boolean {
 }
 
 /**
+ * Verifica se a descrição do extrato é genuinamente genérica.
+ * Retorna true se, após remover termos bancários comuns e números, a descrição fica vazia.
+ * Se sobrar qualquer palavra (ex. nome de empresa como CONCEPT, ELGIN, etc.), considera específica.
+ */
+export function isDescricaoRealmenteGenerica(descricao: string): boolean {
+  const norm = normalizeExtratoMatchText(descricao);
+  const semGenericos = norm
+    .replace(/\b(PIX|EMIT|ENV|PAG|SAIDA|PIXEMIT|TED|DOC|PAGAMENTO|PAGTO|BOLETO|TITULO|TEF|COMPE|FORNEC|DEB|PGTO|TIT|SISPAG|RECEBIDO|RECEB|REC|RECEBIMENTO|DEPOSITO|CREDITO|CRED|LIQ|COBRAN|COBRANCA|SALDO|ANTERIOR|DIA|EXTRATO|LAN[CÇ]AMENTO|MOVIMENTO|RENDE|F[AÁ]CIL|RENDAFACIL|BB|BANCO|DO|BRASIL|DE|A|O|DA|DO|PARA|EM|E|COB|JUROS|TARIFA|SERVI[CÇ]OS?|M[EÊ]S|ANO|LTD|LTDA|EIRELI|S\/A|SA|ME|EPP|COBRANÇAS?)\b/g, ' ')
+    .replace(/[^A-Z]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return semGenericos.length === 0;
+}
+
+/**
  * Pagamento a fornecedor / recebimento de cliente (terceiros) —
  * deve ir para conta GERAL, nunca por razão social.
  */
@@ -673,6 +688,9 @@ export function isLancamentoFornecedorOuClienteGenerico(
     return false;
   }
   if (/TARIFA|IOF|JUROS|DARF|GPS|IMPOSTO|TRIBUTO|FOLHA|SALARIO|FGTS|INSS/.test(s)) {
+    return false;
+  }
+  if (!isDescricaoRealmenteGenerica(description)) {
     return false;
   }
   if (nature === 'D') {

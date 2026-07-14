@@ -2700,11 +2700,16 @@ export function mapOcrRowsToImportItems(
         const fromDc = parseValorDc(row.valorDc);
         const deb = debito > 0 ? debito : fromDc.debito;
         const cred = credito > 0 ? credito : fromDc.credito;
+        const contaPartida = row.contaPartida?.trim() || row.classificacao?.trim() || '';
+        const classificacao = contaPartida || row.classificacao?.trim() || row.codigo?.trim() || '';
+        const codigo =
+          row.codigo?.trim() ||
+          (classificacao.includes('.') ? classificacao.replace(/\./g, '') : classificacao);
         items.push({
           id: crypto.randomUUID(),
           dataInicio: normalizeDateIso(row.data),
-          codigo: row.codigo?.trim() || '',
-          classificacao: row.classificacao?.trim() || row.codigo?.trim() || '',
+          codigo,
+          classificacao,
           descricao: (row.descricao || 'LANCAMENTO').toUpperCase(),
           tipo: undefined,
           saldoInicial: 0,
@@ -2713,7 +2718,7 @@ export function mapOcrRowsToImportItems(
           saldoFinal: deb - cred,
           natureza: fromDc.nature ?? (deb >= cred ? 'D' : 'C'),
         });
-        logs.push(`Lançamento "${row.descricao || row.codigo || index + 1}" importado.`);
+        logs.push(`Lançamento "${row.descricao || contaPartida || row.codigo || index + 1}" importado.`);
       } else if (dataType === 'folha') {
         const descricao = (row.descricao || 'LANCAMENTO FOLHA').toUpperCase();
         const fromDc = parseValorDc(row.valorDc);

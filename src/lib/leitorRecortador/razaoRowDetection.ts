@@ -24,12 +24,12 @@ export type RazaoTextRow = {
   classificacaoConta?: string;
 };
 
-function toPosicionado(item: PDFTextItem): OcrPosicionadoItem {
-  return { str: item.text, x: item.x, y: item.y, w: item.width, h: item.height };
+function toPosicionado(item: PDFTextItem, scale = 1.0): OcrPosicionadoItem {
+  return { str: item.text, x: item.x / scale, y: item.y / scale, w: item.width / scale, h: item.height / scale };
 }
 
-function fromPosicionado(item: OcrPosicionadoItem): PDFTextItem {
-  return { text: item.str, x: item.x, y: item.y, width: item.w, height: item.h };
+function fromPosicionado(item: OcrPosicionadoItem, scale = 1.0): PDFTextItem {
+  return { text: item.str, x: item.x * scale, y: item.y * scale, width: item.w * scale, height: item.h * scale };
 }
 
 function linhaTexto(cluster: OcrPosicionadoItem[]): string {
@@ -70,7 +70,11 @@ function clusterRazaoLinhasFisicas(items: OcrPosicionadoItem[]): OcrPosicionadoI
 
 /** Agrupa lançamentos do Razão Domínio (data + histórico multi-linha). */
 export function detectRazaoRowsFromText(textItems: PDFTextItem[]): RazaoTextRow[] {
-  const lines = clusterRazaoLinhasFisicas(textItems.map(toPosicionado));
+  if (textItems.length === 0) return [];
+  const maxX = Math.max(...textItems.map((item) => item.x + item.width));
+  const scale = maxX > 950 ? 2.0 : 1.0;
+
+  const lines = clusterRazaoLinhasFisicas(textItems.map((it) => toPosicionado(it, scale)));
   const rows: RazaoTextRow[] = [];
   let currentClassificacao = '';
   let pending: OcrPosicionadoItem[] | null = null;
@@ -85,9 +89,9 @@ export function detectRazaoRowsFromText(textItems: PDFTextItem[]): RazaoTextRow[
     const minY = Math.min(...pending.map((i) => i.y));
     const maxY = Math.max(...pending.map((i) => i.y + i.h));
     rows.push({
-      y: minY,
-      height: Math.max(maxY - minY, 8),
-      items: pending.map(fromPosicionado),
+      y: minY * scale,
+      height: Math.max(maxY - minY, 8) * scale,
+      items: pending.map((it) => fromPosicionado(it, scale)),
       classificacaoConta: currentClassificacao || undefined,
     });
     pending = null;
@@ -171,6 +175,7 @@ export function extractRazaoDataFromCanvas(
     const linhaCompleta = linhaCompletaFromItems(rowItems);
     const fields: Record<string, string> = {};
     const cropUrls: Record<string, string> = {};
+    const cropBounds: Record<string, { x: number; y: number; w: number; h: number }> = {};
 
     const partsByCol = assignRazaoRowTokens(rowItems, colPixels, docWidth, columnIds);
     columnIds.forEach((id) => {
@@ -190,13 +195,15 @@ export function extractRazaoDataFromCanvas(
         cropUrls[id] = '';
         return;
       }
-      cropUrls[id] = cropCanvasSection(col.startX, cropY, col.width, cropH);
+      cropUrls[id] = '';
+      cropBounds[id] = { x: col.startX, y: cropY, w: col.width, h: cropH };
     });
 
     return {
       id: `p${pageNumber}-r${index + 1}`,
       fields,
       cropUrls,
+      cropBounds,
       y: row.y,
       height: row.height,
       pageNumber,

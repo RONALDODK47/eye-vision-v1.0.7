@@ -70,6 +70,7 @@ export function LeitorRecortadorWorkspace({
   const [startColState, setStartColState] = useState<ColumnRange | null>(null);
   const [startHState, setStartHState] = useState<number>(0);
   const [showGuides, setShowGuides] = useState<boolean>(true);
+  const [isCroppedPDF, setIsCroppedPDF] = useState<boolean>(false);
   const dragRafRef = useRef<number | null>(null);
   const cropStartPctRef = useRef(cropStartPct);
   const cropEndPctRef = useRef(cropEndPct);
@@ -89,7 +90,7 @@ export function LeitorRecortadorWorkspace({
     cropEndPageRef.current = cropEndPage;
   }, [cropEndPage]);
 
-  // Render original canvas onto our display canvas with correct fitting
+  // Render original canvas onto our display canvas with correct fitting & optional visual crop masking
   useEffect(() => {
     if (!canvasElement || !canvasDisplayRef.current) return;
 
@@ -97,13 +98,64 @@ export function LeitorRecortadorWorkspace({
     const ctx = displayCanvas.getContext('2d');
     if (!ctx) return;
 
+    const w = canvasElement.width;
+    const h = canvasElement.height;
+
     // Set internal dimensions equal to the source canvas
-    displayCanvas.width = canvasElement.width;
-    displayCanvas.height = canvasElement.height;
+    displayCanvas.width = w;
+    displayCanvas.height = h;
 
     // Draw the source canvas content
     ctx.drawImage(canvasElement, 0, 0);
-  }, [canvasElement]);
+
+    if (isCroppedPDF) {
+      const getColPixels = (col: ColumnRange) => {
+        return {
+          startX: (col.startX / 100) * w,
+          width: (col.width / 100) * w,
+        };
+      };
+
+      const dateCol = getColPixels(columns.date);
+      const histCol = getColPixels(columns.history);
+      const valCol  = getColPixels(columns.value);
+
+      // ── Scissor-cut effect ──────────────────────────────────────────────
+      // Clear the entire display canvas to transparent (shows white bg through),
+      // then paint ONLY the column strips from the source at their original positions.
+      // Non-column areas stay transparent — looks exactly like paper cut with scissors.
+      ctx.clearRect(0, 0, w, h);
+
+      const strips: { sx: number; sw: number }[] = [
+        { sx: dateCol.startX, sw: dateCol.width },   // exact guide bounds
+        { sx: histCol.startX, sw: histCol.width },   // exact guide bounds
+        { sx: valCol.startX,  sw: valCol.width  },   // exact guide bounds (C/D captured by text filter)
+      ];
+
+      for (const { sx, sw } of strips) {
+        // Clamp to canvas bounds
+        const safeX = Math.max(0, sx);
+        const safeW = Math.min(sw, w - safeX);
+        if (safeW <= 0) continue;
+
+        // Apply vertical crop limits if on boundary pages
+        let syTop = 0;
+        let syBot = h;
+        if (currentPage === cropStartPage && cropStartPct > 0)
+          syTop = (cropStartPct / 100) * h;
+        if (currentPage === cropEndPage && cropEndPct < 100)
+          syBot = (cropEndPct / 100) * h;
+        const stripH = Math.max(0, syBot - syTop);
+        if (stripH <= 0) continue;
+
+        ctx.drawImage(
+          canvasElement,
+          safeX, syTop, safeW, stripH,   // source rect
+          safeX, syTop, safeW, stripH    // dest rect (same position)
+        );
+      }
+    }
+  }, [canvasElement, isCroppedPDF, columns, currentPage, cropStartPage, cropEndPage, cropStartPct, cropEndPct]);
 
   const handleMouseDown = (
     e: React.MouseEvent | React.TouchEvent,
@@ -264,6 +316,18 @@ export function LeitorRecortadorWorkspace({
           </label>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsCroppedPDF(!isCroppedPDF)}
+              disabled={!canvasElement}
+              className={`technical-button flex items-center gap-1.5 px-3 py-2 text-xs font-semibold cursor-pointer ${
+                isCroppedPDF ? 'bg-orange-500/10 border-orange-500 text-orange-400 font-bold' : ''
+              }`}
+              title="Deixar visível somente as colunas demarcadas e ocultar o resto do PDF"
+            >
+              <Maximize2 className={`w-3.5 h-3.5 ${isCroppedPDF ? 'text-orange-400' : ''}`} />
+              {isCroppedPDF ? 'Restaurar PDF Completo' : 'Recortar PDF'}
+            </button>
+
             {/* Crop All Pages (only if PDF and > 1 page exists) - This is the primary button now! */}
             {pdfPages && pdfPages.length > 1 && onApplyCropAll ? (
               <>
@@ -633,7 +697,7 @@ export function LeitorRecortadorWorkspace({
               {/* Document display Canvas */}
               <canvas
                 ref={canvasDisplayRef}
-                className="block w-full h-auto"
+                className="block w-full h-auto bg-white"
               />
             </div>
           ) : (

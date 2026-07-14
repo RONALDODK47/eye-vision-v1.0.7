@@ -62,16 +62,33 @@ export function assignRazaoRowTokens(
   });
   const sorted = [...rowItems].sort((a, b) => a.x - b.x);
   for (const item of sorted) {
+    const cx = item.x + item.width / 2;
     let bestId: string | null = null;
-    let bestFrac = 0;
+
+    // 1. Encontra se o centro do item está contido na coluna (sem padding, maior precisão)
     for (const col of colPixels) {
-      const frac = fracInColumn(item, col.startX, col.endX, Math.min(6, imgWidth * 0.003));
-      if (frac > bestFrac) {
-        bestFrac = frac;
+      if (cx >= col.startX && cx <= col.endX) {
         bestId = col.id;
+        break;
       }
     }
-    if (bestId && bestFrac >= 0.35) {
+
+    // 2. Se o centro não estiver contido, usamos a maior fração de sobreposição
+    if (!bestId) {
+      let bestFrac = 0;
+      for (const col of colPixels) {
+        const frac = fracInColumn(item, col.startX, col.endX, Math.min(6, imgWidth * 0.003));
+        if (frac > bestFrac) {
+          bestFrac = frac;
+          bestId = col.id;
+        }
+      }
+      if (bestFrac < 0.35) {
+        bestId = null;
+      }
+    }
+
+    if (bestId) {
       parts[bestId]!.push(item.text.trim());
     }
   }

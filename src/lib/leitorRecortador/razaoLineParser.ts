@@ -54,10 +54,19 @@ export function mergeRazaoFieldsFromLine(
   if (dataMatch && !out.data?.trim()) out.data = dataMatch[0];
 
   if (classificacaoConta?.trim()) {
+    out.contaPartida = classificacaoConta.trim();
     out.classificacao = classificacaoConta.trim();
     if (!out.codigo?.trim()) {
       out.codigo = classificacaoConta.replace(/\./g, '');
     }
+  }
+
+  if (
+    !out.contaContrapartida?.trim() &&
+    out.codigo?.trim() &&
+    (!classificacaoConta?.trim() || out.codigo.trim() !== classificacaoConta.replace(/\./g, ''))
+  ) {
+    out.contaContrapartida = out.codigo.trim();
   }
 
   const descParts: string[] = [];

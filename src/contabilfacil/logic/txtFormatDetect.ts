@@ -16,10 +16,11 @@ export function detectContabilTxtFormat(text: string): ContabilTxtFormat {
   const sample = text.replace(/^\uFEFF/, '').trimStart();
   if (!sample) return 'unknown';
 
+  // Eval Lançamentos first to avoid regex collision in fixed-width plano format
+  if (isDominioLancamentosTxt(sample)) return 'dominio_lanc';
   if (isPlanoSemicolonFormat(sample)) return 'plano_semicolon';
   if (isPlanoFixedWidthFormat(sample)) return 'plano_dominio';
   if (/\|I010\|/i.test(sample)) return 'plano_sped';
-  if (isDominioLancamentosTxt(sample)) return 'dominio_lanc';
   if (isTxtPlusDominio(sample)) return 'txtplus';
 
   const lines = sample.split(/\r?\n/).filter((l) => l.trim().length > 0);

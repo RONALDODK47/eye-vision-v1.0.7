@@ -44,6 +44,7 @@ export type GenericExtractedRow = {
   y: number;
   height: number;
   pageNumber?: number;
+  cropBounds?: Record<string, { x: number; y: number; w: number; h: number }>;
 };
 
 export type PDFTextItem = {

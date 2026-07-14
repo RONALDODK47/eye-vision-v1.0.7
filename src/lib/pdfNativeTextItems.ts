@@ -1614,10 +1614,11 @@ export function suggestPlanoContasColumns(
 const RAZAO_HEADER_LABELS: { id: string; re: RegExp }[] = [
   { id: 'data', re: /^data$/i },
   { id: 'descricao', re: /n[uú]mero|hist[oó]rico/i },
-  { id: 'codigo', re: /cta\.?\s*c\.?\s*part/i },
+  { id: 'contaContrapartida', re: /cta\.?\s*c\.?\s*part/i },
   { id: 'debito', re: /^d[eé]bito$/i },
   { id: 'credito', re: /^cr[eé]dito$/i },
-  { id: 'ignorar_saldo', re: /^saldo/i },
+  { id: 'saldoExercicio', re: /^saldo[\s-]*exerc/i },
+  { id: 'saldoPeriodo', re: /^saldo$/i },
 ];
 
 function isRazaoHeaderRow(row: PosicionadoItem[]): boolean {
@@ -1680,10 +1681,12 @@ function suggestRazaoColumnsByLayout(items: PosicionadoItem[], imgWidth: number)
   return [
     { id: 'data', x: Math.max(0, dateX - 4), w: imgWidth * 0.08, y: headerY },
     { id: 'descricao', x: imgWidth * 0.05, w: imgWidth * 0.38, y: headerY },
-    { id: 'codigo', x: imgWidth * 0.44, w: imgWidth * 0.1, y: headerY },
+    { id: 'contaPartida', x: imgWidth * 0.35, w: imgWidth * 0.12, y: headerY },
+    { id: 'contaContrapartida', x: imgWidth * 0.48, w: imgWidth * 0.1, y: headerY },
     { id: 'debito', x: imgWidth * 0.55, w: imgWidth * 0.1, y: headerY },
     { id: 'credito', x: imgWidth * 0.66, w: imgWidth * 0.12, y: headerY },
-    { id: 'ignorar_saldo', x: imgWidth * 0.78, w: imgWidth * 0.2, y: headerY },
+    { id: 'saldoPeriodo', x: imgWidth * 0.78, w: imgWidth * 0.1, y: headerY },
+    { id: 'saldoExercicio', x: imgWidth * 0.88, w: imgWidth * 0.12, y: headerY },
   ];
 }
 
@@ -1728,23 +1731,87 @@ export function suggestRazaoDominioColumns(
   const colors: Record<string, { color: string; border: string }> = {
     data: { color: 'bg-violet-500', border: 'border-violet-500' },
     descricao: { color: 'bg-emerald-500', border: 'border-emerald-500' },
-    codigo: { color: 'bg-blue-500', border: 'border-blue-500' },
-    debito: { color: 'bg-red-500', border: 'border-red-500' },
-    credito: { color: 'bg-emerald-600', border: 'border-emerald-600' },
-    ignorar_saldo: { color: 'bg-zinc-400', border: 'border-zinc-500' },
+    contaPartida: { color: 'bg-cyan-500', border: 'border-cyan-500' },
+    contaContrapartida: { color: 'bg-blue-500', border: 'border-blue-500' },
+    valorDc: { color: 'bg-orange-500', border: 'border-orange-500' },
+    saldoPeriodo: { color: 'bg-red-500', border: 'border-red-500' },
+    saldoExercicio: { color: 'bg-indigo-500', border: 'border-indigo-500' },
   };
+  const byId = new Map(hits.map((h) => [h.id, h] as const));
+  const dataHit = byId.get('data');
+  const descHit = byId.get('descricao');
+  const contraHit = byId.get('contaContrapartida');
+  const debHit = byId.get('debito');
+  const credHit = byId.get('credito');
+  const saldoPeriodoHit = byId.get('saldoPeriodo');
+  const saldoExercicioHit = byId.get('saldoExercicio');
 
   const columns: GenericColunaDef[] = [];
-  for (let i = 0; i < hits.length; i++) {
-    const h = hits[i];
-    const left = i === 0 ? 0 : (hits[i - 1].x + hits[i - 1].w + h.x) / 2;
-    const right = i === hits.length - 1 ? imgWidth : (h.x + h.w + hits[i + 1].x) / 2;
-    const meta = colors[h.id] ?? { color: 'bg-zinc-400', border: 'border-zinc-500' };
+  if (dataHit) {
     columns.push({
-      id: h.id,
-      start: Math.max(0, left - pad),
-      end: Math.min(imgWidth, right + pad),
-      color: meta.color,
+      id: 'data',
+      start: Math.max(0, dataHit.x - pad),
+      end: Math.min(imgWidth, dataHit.x + dataHit.w + pad),
+      color: colors.data.color,
+    });
+  }
+  if (descHit) {
+    const descEndAnchor = contraHit?.x ?? debHit?.x ?? imgWidth * 0.48;
+    columns.push({
+      id: 'descricao',
+      start: Math.max(0, descHit.x - pad),
+      end: Math.min(imgWidth, Math.max(descHit.x + descHit.w, descEndAnchor - pad)),
+      color: colors.descricao.color,
+    });
+  }
+  const partidaStart = descHit ? descHit.x + descHit.w * 0.58 : imgWidth * 0.34;
+  const partidaEnd = contraHit ? Math.max(partidaStart + imgWidth * 0.05, contraHit.x - pad) : imgWidth * 0.48;
+  columns.push({
+    id: 'contaPartida',
+    start: Math.max(0, partidaStart),
+    end: Math.min(imgWidth, partidaEnd),
+    color: colors.contaPartida.color,
+  });
+  if (contraHit) {
+    const contraRight = debHit?.x ?? contraHit.x + contraHit.w + pad;
+    columns.push({
+      id: 'contaContrapartida',
+      start: Math.max(0, contraHit.x - pad),
+      end: Math.min(imgWidth, Math.max(contraHit.x + contraHit.w + pad, contraRight - pad)),
+      color: colors.contaContrapartida.color,
+    });
+  }
+  if (debHit || credHit) {
+    const valorStart = Math.max(0, Math.min(debHit?.x ?? credHit?.x ?? imgWidth * 0.55, credHit?.x ?? debHit?.x ?? imgWidth * 0.66) - pad);
+    const valorEnd = Math.min(
+      imgWidth,
+      Math.max(
+        (debHit?.x ?? 0) + (debHit?.w ?? 0),
+        (credHit?.x ?? 0) + (credHit?.w ?? 0),
+      ) + pad,
+    );
+    columns.push({
+      id: 'valorDc',
+      start: valorStart,
+      end: Math.max(valorStart + 20, valorEnd),
+      color: colors.valorDc.color,
+    });
+  }
+  if (saldoPeriodoHit) {
+    const saldoPeriodoEnd = saldoExercicioHit ? saldoExercicioHit.x - pad : saldoPeriodoHit.x + saldoPeriodoHit.w + pad;
+    columns.push({
+      id: 'saldoPeriodo',
+      start: Math.max(0, saldoPeriodoHit.x - pad),
+      end: Math.min(imgWidth, Math.max(saldoPeriodoHit.x + saldoPeriodoHit.w + pad, saldoPeriodoEnd)),
+      color: colors.saldoPeriodo.color,
+    });
+  }
+  if (saldoExercicioHit) {
+    columns.push({
+      id: 'saldoExercicio',
+      start: Math.max(0, saldoExercicioHit.x - pad),
+      end: Math.min(imgWidth, saldoExercicioHit.x + saldoExercicioHit.w + pad),
+      color: colors.saldoExercicio.color,
     });
   }
 

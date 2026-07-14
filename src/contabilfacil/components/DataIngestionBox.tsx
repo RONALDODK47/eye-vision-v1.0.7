@@ -281,7 +281,10 @@ interface DataIngestionBoxProps {
   title: string;
   onImport: (items: any[], saldoAnterior?: number) => void;
   /** Razão contábil bruta (VisionBalanceteRow[]) — substitui import anterior. */
-  onRazaoImport?: (rows: import('../../extratoVision/types/accounting').VisionBalanceteRow[]) => void;
+  onRazaoImport?: (
+    rows: import('../../extratoVision/types/accounting').VisionBalanceteRow[],
+    filename?: string,
+  ) => void;
   /** OCR de cronograma (PDF/imagem) com colunas do parcelamento antigo. */
   onParcelamentoOcrImport?: (data: ParcelamentoPlanilhaImport) => void;
   /** Lançamentos OCR não importados (aba extrato — botão LOG no cabeçalho). */
@@ -414,6 +417,81 @@ export default function DataIngestionBox({
 
   // Smart Parser for line-by-line input
   const parseTxtContent = (text: string): any[] => {
+    if (text.trim().startsWith('010000')) {
+      const fileLines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+      const parsedEntries: any[] = [];
+      let currentDate = '';
+      let current03: any = null;
+
+      fileLines.forEach((line) => {
+        if (line.startsWith('02')) {
+          if (line.length >= 20) {
+            currentDate = line.substring(10, 20).trim();
+          }
+        } else if (line.startsWith('03')) {
+          if (current03) {
+            parsedEntries.push(current03);
+            current03 = null;
+          }
+          if (line.length >= 54) {
+            const deb = line.substring(13, 23).replace(/^0+/, '').trim();
+            const cred = line.substring(23, 33).replace(/^0+/, '').trim();
+            const valStr = line.substring(33, 47).replace(/^0+/, '').trim();
+            const cents = parseInt(valStr || '0', 10);
+            const value = cents / 100;
+            const history = line.substring(54).trim();
+
+            current03 = {
+              dataInicio: currentDate,
+              descricao: history,
+              debito: deb ? value : 0,
+              credito: cred ? value : 0,
+              debReduced: deb,
+              credReduced: cred,
+              rawVal: value,
+            };
+          }
+        } else if (current03 && !line.startsWith('01') && !line.startsWith('02') && !line.startsWith('03')) {
+          current03.descricao = (current03.descricao + ' ' + line).trim();
+        }
+      });
+
+      if (current03) {
+        parsedEntries.push(current03);
+      }
+
+      const finalItems: any[] = [];
+      parsedEntries.forEach((item) => {
+        if (item.debReduced) {
+          finalItems.push({
+            id: crypto.randomUUID(),
+            dataInicio: item.dataInicio,
+            codigo: item.debReduced,
+            classificacao: item.debReduced,
+            descricao: item.descricao,
+            debito: item.rawVal,
+            credito: 0,
+            saldoFinal: item.rawVal,
+            natureza: 'D',
+          });
+        }
+        if (item.credReduced) {
+          finalItems.push({
+            id: crypto.randomUUID(),
+            dataInicio: item.dataInicio,
+            codigo: item.credReduced,
+            classificacao: item.credReduced,
+            descricao: item.descricao,
+            debito: 0,
+            credito: item.rawVal,
+            saldoFinal: -item.rawVal,
+            natureza: 'C',
+          });
+        }
+      });
+      return finalItems;
+    }
+
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const parsedItems: any[] = [];
     const logs: string[] = [];
@@ -642,7 +720,15 @@ export default function DataIngestionBox({
       const columnIds =
         kind === 'plano'
           ? ['codigoReduzido', 'codigoClassificacao', 'descricao', 'tipo', 'nivel']
-          : ['data', 'codigo', 'classificacao', 'descricao', 'debito', 'credito', 'valorDc'];
+          : [
+            'data',
+            'descricao',
+            'contaPartida',
+            'contaContrapartida',
+            'valorDc',
+            'saldoPeriodo',
+            'saldoExercicio',
+          ];
       let templateColumns = buildDefaultColumnMapping(columnIds);
       const extractedRows = [];
 
@@ -744,7 +830,7 @@ export default function DataIngestionBox({
         setErrorMsg('O parser leu o PDF Domínio, mas nenhum lançamento válido foi convertido.');
         return;
       }
-      onRazaoImport?.(normalizeRazaoImport(items));
+      onRazaoImport?.(normalizeRazaoImport(items), file.name);
       setImportedLogs([
         `${items.length} lançamento(s) importado(s) do PDF Razão Domínio.`,
         ...logs,
@@ -849,7 +935,7 @@ export default function DataIngestionBox({
         setErrorMsg('Nenhum lançamento convertido a partir do OCR.');
         return;
       }
-      onRazaoImport?.(items);
+      onRazaoImport?.(items, ocrFileName);
       setImportedLogs(logs);
       setSuccessMsg(`OCR CONCLUÍDO! ${items.length} lançamento(s) no razão.`);
       return;
@@ -1007,7 +1093,10 @@ export default function DataIngestionBox({
         if (items.length === 0) {
           setErrorMsg('Nenhum registro convertido. Verifique o arquivo ou use o modelo TXT.');
         } else if (dataType === 'balancete') {
-          onRazaoImport?.(items as import('../../extratoVision/types/accounting').VisionBalanceteRow[]);
+           onRazaoImport?.(
+            items as import('../../extratoVision/types/accounting').VisionBalanceteRow[],
+            file.name,
+          );
           setImportedLogs(logs);
           setSuccessMsg(`CONVERSÃO CONCLUÍDA! ${items.length} lançamento(s) no razão.`);
         } else if (dataType === 'plano') {
@@ -1169,7 +1258,7 @@ export default function DataIngestionBox({
         } else if (!onRazaoImport) {
           setErrorMsg('Importação de razão indisponível nesta aba. Use Razão / Balancete.');
         } else {
-          onRazaoImport(visionRows);
+          onRazaoImport(visionRows, file.name);
           setImportedLogs([`${visionRows.length} lançamento(s) Domínio importado(s) no razão.`]);
           setSuccessMsg(`RAZÃO IMPORTADO! ${visionRows.length} lançamento(s) carregado(s).`);
         }
@@ -1200,7 +1289,7 @@ export default function DataIngestionBox({
           if (razaoRows.length === 0) {
             setErrorMsg('Nenhuma linha TXT+ válida encontrada.');
           } else {
-            onRazaoImport?.(razaoRows);
+            onRazaoImport?.(razaoRows, file.name);
             setImportedLogs([`${razaoRows.length} lançamento(s) TXT+ importado(s) no razão.`]);
             setSuccessMsg(`IMPORTAÇÃO TXT+! ${razaoRows.length} lançamento(s) no razão.`);
           }
@@ -1237,7 +1326,7 @@ export default function DataIngestionBox({
         if (razaoRows.length === 0) {
           setErrorMsg('Nenhum lançamento válido no arquivo de razão.');
         } else {
-          onRazaoImport?.(razaoRows);
+          onRazaoImport?.(razaoRows, file.name);
           setSuccessMsg(`IMPORTAÇÃO CONCLUÍDA! ${razaoRows.length} lançamento(s) no razão.`);
         }
       } else if (dataType === 'plano') {

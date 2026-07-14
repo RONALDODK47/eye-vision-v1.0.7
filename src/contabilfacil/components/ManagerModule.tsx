@@ -317,6 +317,7 @@ export default function ManagerModule({
   const [folhaPayroll, setFolhaPayroll] = useState<PayrollRecord[]>([]);
   const [folhaRelatorio, setFolhaRelatorio] = useState<FolhaRelatorioRow[]>([]);
   const [razaoRows, setRazaoRows] = useState<VisionBalanceteRow[]>([]);
+  const [importedTxts, setImportedTxts] = useState<Array<{ id: string; filename: string; months: string[]; importedAt: string }>>([]);
 
   // Interactive inputs for entries
   const [showAddPlano, setShowAddPlano] = useState(false);
@@ -727,6 +728,8 @@ export default function ManagerModule({
         setSaldoAnteriorExtrato(readSaldoAnteriorExtrato(companyScope));
         setFolhaPayroll(readManagerData<PayrollRecord>(companyScope, 'folha'));
         setFolhaRelatorio(readManagerData<FolhaRelatorioRow>(companyScope, 'folhaRelatorio'));
+        const keyTxts = `contabilfacil_${companyStorageSlug(companyScope)}_imported_txts`;
+        setImportedTxts(readPersistedLocalStorageJson<any[]>(keyTxts, []));
         const storedRazao = normalizeRazaoImport(readManagerData<VisionBalanceteRow>(companyScope, 'razao'));
         if (storedRazao.length > 0) {
           setRazaoRows(storedRazao);
@@ -821,10 +824,53 @@ export default function ManagerModule({
     void flushPersistenceAfterCriticalWrite();
   };
 
-  const saveRazao = (list: VisionBalanceteRow[]) => {
-    const normalized = normalizeRazaoImport(list);
+  const saveRazao = (list: VisionBalanceteRow[], filename?: string) => {
+    const reconciled = razaoRows.filter((r) => r.isReconciliation);
+    let importId: string | undefined = undefined;
+    if (filename) {
+      importId = 'import-' + Date.now();
+      const monthsSet = new Set<string>();
+      list.forEach((row) => {
+        if (row.data) {
+          const parts = row.data.split('/');
+          if (parts.length === 3) {
+            monthsSet.add(`${parts[1]}/${parts[2]}`);
+          }
+        }
+      });
+      const months = Array.from(monthsSet);
+      const newMeta = {
+        id: importId,
+        filename,
+        months,
+        importedAt: new Date().toLocaleString('pt-BR'),
+      };
+      const key = `contabilfacil_${companyStorageSlug(selectedCompany)}_imported_txts`;
+      const updatedMetaList = [...importedTxts, newMeta];
+      setImportedTxts(updatedMetaList);
+      writePersistedLocalStorageJson(key, updatedMetaList);
+    }
+
+    const imported = list.map((r) => ({
+      ...r,
+      isReconciliation: false,
+      importId: r.importId ?? importId,
+    }));
+    const merged = [...reconciled, ...imported];
+    const normalized = normalizeRazaoImport(merged);
     setRazaoRows(normalized);
     writeManagerDataNow(selectedCompany, 'razao', normalized);
+    void flushPersistenceAfterCriticalWrite();
+  };
+
+  const deleteImportedTxt = (id: string) => {
+    const remainingRows = razaoRows.filter((r) => r.importId !== id);
+    const remainingTxts = importedTxts.filter((t) => t.id !== id);
+    setRazaoRows(remainingRows);
+    writeManagerDataNow(selectedCompany, 'razao', remainingRows);
+    const key = `contabilfacil_${companyStorageSlug(selectedCompany)}_imported_txts`;
+    setImportedTxts(remainingTxts);
+    writePersistedLocalStorageJson(key, remainingTxts);
     void flushPersistenceAfterCriticalWrite();
   };
 
@@ -2090,6 +2136,8 @@ export default function ManagerModule({
                       razaoRows={razaoRows}
                       onRazaoRowsChange={saveRazao}
                       folhaRelatorio={folhaRelatorio}
+                      importedTxts={importedTxts}
+                      onDeleteImportedTxt={deleteImportedTxt}
                     />
                   </div>
                   <div className="lg:col-span-4 space-y-6">
@@ -2109,7 +2157,7 @@ export default function ManagerModule({
                           saveRazao(migrateLegacyBalanceteToRazao(newItems as BalanceteRow[]));
                         }
                       }}
-                      onRazaoImport={(rows) => saveRazao(rows)}
+                      onRazaoImport={(rows, fname) => saveRazao(rows, fname)}
                     />
                   </div>
                 </div>
